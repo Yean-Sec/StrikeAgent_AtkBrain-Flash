@@ -1,0 +1,27 @@
+StrikeAgent Non-Commercial License
+Copyright (c) 2026 夜安团队 SEC
+
+本仓库开源，源代码可以阅读、学习、非商用修改与非商用分发。
+
+许可范围（免费）：
+  - 个人学习、教学演示、学术研究；
+  - 在已获书面授权的环境中做安全测试或 CTF / 评测；
+  - 基于本仓库做非商用衍生，并保留本许可证全文与版权声明。
+
+禁止任何商业用途，包括但不限于售卖、SaaS、云服务、外包、
+内部生产系统、收费培训、集成进收费产品，或以本软件提供有偿服务。
+禁止删除或淡化本许可证与版权声明。
+禁止将本软件用于未获授权的网络或系统。
+
+商用请联系：gavenmiya@outlook.com
+
+未在上文明示授予的权利，由版权人保留。
+本软件按「现状」提供，不附带任何明示或默示担保。
+
+---
+
+This repository is open source for non-commercial use: learning,
+research, and authorized security testing. Commercial use is not allowed
+without a separate written license.
+
+Commercial inquiries: gavenmiya@outlook.com

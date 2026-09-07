@@ -1,0 +1,26 @@
+services:
+  backend:
+    image: python:3.12-bookworm
+    working_dir: /app/backend
+    volumes:
+      - ./backend:/app/backend
+    command: bash -lc "pip install -r requirements.txt && python -m atkbrain.main"
+    ports:
+      - "5003:5003"
+    environment:
+      ATKBRAIN_HOST: 0.0.0.0
+      ATKBRAIN_PORT: "5003"
+      PYTHONUNBUFFERED: "1"
+  frontend:
+    image: node:20-bookworm
+    working_dir: /app/frontend
+    volumes:
+      - ./frontend:/app/frontend
+    environment:
+      ATKBRAIN_API_ORIGIN: http://backend:5003
+      ATKBRAIN_FRONTEND_PORT: "5001"
+    command: bash -lc "npm install && npm run dev -- --host 0.0.0.0 --port 5001 --strictPort"
+    ports:
+      - "5001:5001"
+    depends_on:
+      - backend

@@ -1,0 +1,36 @@
+[Unit]
+Description=StrikeAgent_AtkBrain-Flash API backend (uvicorn :5003)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__/backend
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/root
+Environment=ATKBRAIN_HOST=0.0.0.0
+Environment=ATKBRAIN_PORT=5003
+Environment=ATKBRAIN_FRONTEND_PORT=5001
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin
+EnvironmentFile=-__REPO__/backend/data/atkbrain-claude.env
+ExecStartPre=/bin/mkdir -p __REPO__/backend/data/logs
+ExecStart=/usr/bin/python3 -m atkbrain.main
+Restart=always
+RestartSec=3
+TimeoutStopSec=40
+KillMode=mixed
+KillSignal=SIGTERM
+
+StandardOutput=append:__REPO__/backend/data/logs/backend.log
+StandardError=append:__REPO__/backend/data/logs/backend.err.log
+SyslogIdentifier=atkbrain-backend
+
+MemoryMax=12G
+MemoryHigh=10G
+TasksMax=4096
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

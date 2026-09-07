@@ -1,0 +1,41 @@
+<!-- 漏洞卡片母版：复制参考报告 .vf（①简介 / 技术成因 · ②利用方式 · ③修复方式 now/root + details.ev）。禁止 .vbar。 -->
+<article class="vf crit" id="vuln-01">
+<div class="vhead">
+<div class="vtitle-row"><span class="sev-chip crit">严重</span><h3>示例：未授权访问导致敏感数据可读</h3></div>
+<div class="vmeta">
+<span>类型 unauth</span>
+<span>状态 <b style="color:var(--ok)">已验证</b></span>
+</div></div>
+<div class="vbody">
+<div class="vsec"><h4><span class="tick">①</span> 简介 / 技术成因</h4>
+<p>接口在未鉴权情况下返回业务数据，任意访问者可直接读取。</p>
+<p>可导致敏感信息泄露，并作为后续利用的入口。</p>
+</div>
+<div class="vsec"><h4><span class="tick">②</span> 利用方式（编号分步复现）</h4>
+<ol>
+<li>在浏览器或 Burp Repeater 中打开目标接口。</li>
+<li>不携带会话 Cookie，发送原始 GET 请求。</li>
+<li>确认响应为 200 且正文含业务数据特征。</li>
+</ol>
+<pre>curl -sk 'https://example.invalid/api/resource'</pre>
+<p style="font-size:13px;color:var(--muted)"><b>前置条件：</b>攻击前置条件见验证证据、PoC 与关联节点。</p>
+<p style="font-size:13px;color:var(--muted)"><b>影响：</b>影响以已验证证据为准；应结合关联资产与权限边界进行复核。</p>
+</div>
+<div class="vsec"><h4><span class="tick g">③</span> 修复方式</h4>
+<div class="fix-grid">
+<div class="fix-box"><h5 class="now">⚠ 立即缓解</h5>
+<ul>
+<li>所有数据接口默认鉴权，拒绝匿名访问。</li>
+</ul></div>
+<div class="fix-box"><h5 class="root">✔ 根治</h5>
+<ul>
+<li>按角色最小化授权，禁止越权读取。</li>
+</ul></div></div>
+</div>
+<details class="ev"><summary>证据 / PoC 复现（点击展开）</summary>
+<div class="ev-body">
+<div class="row"><span class="k">证据</span><span>HTTP 200 · 响应含业务数据</span></div>
+<div class="row"><span class="k">PoC curl</span></div>
+<pre>curl -sk 'https://example.invalid/api/resource'</pre>
+</div></details>
+</div></article>

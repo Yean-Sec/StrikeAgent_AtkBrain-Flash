@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title><!-- SLOT:title -->授权渗透测试交付报告<!-- /SLOT:title --></title>
+<style>
+:root{
+ --primary:#cc785c;
+ --primary-active:#a9583e;
+ --ink:#141413;
+ --body:#3d3d3a;
+ --body-strong:#252523;
+ --muted:#6c6a64;
+ --muted-soft:#8e8b82;
+ --hairline:#e6dfd8;
+ --hairline-soft:#ebe6df;
+ --canvas:#faf9f5;
+ --surface-soft:#f5f0e8;
+ --surface-card:#efe9de;
+ --surface-cream-strong:#e8e0d2;
+ --surface-dark:#181715;
+ --surface-dark-elevated:#252320;
+ --surface-dark-soft:#1f1e1b;
+ --on-dark:#faf9f5;
+ --on-dark-soft:#a09d96;
+ --accent-teal:#5db8a6;
+ --accent-amber:#e8a55a;
+ --success:#5db872;
+ --warning:#d4a017;
+ --error:#c64545;
+ --node-danger:#f08c2a;
+ --node-vuln:#c64545;
+ --node-goal:#ef3b3b;
+ --lateral:#6d5cf0;
+ --paper:var(--canvas);
+ --card:var(--surface-card);
+ --coral:var(--primary);
+ --coral-deep:var(--primary-active);
+ --hair:var(--hairline);
+ --crit:var(--error);
+ --high:var(--warning);
+ --med:var(--muted-soft);
+ --ok:var(--success);
+ --dark:var(--surface-dark);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--canvas);color:var(--body);font-family:"Noto Sans SC","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:15px;line-height:1.75}
+h1,h2,h3,h4,h5{color:var(--ink);font-family:inherit;line-height:1.35}
+a{color:var(--primary-active);text-decoration:none}
+a:hover{text-decoration:underline}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"Cascadia Mono","JetBrains Mono",Consolas,monospace}
+pre{background:var(--surface-dark);color:var(--on-dark);border-radius:12px;padding:16px 18px;overflow-x:auto;font-size:12.5px;line-height:1.6;white-space:pre;margin:10px 0}
+pre .c{color:var(--on-dark-soft)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+/* ---------- 封面 ---------- */
+.cover{background:var(--surface-dark);color:var(--on-dark);padding:84px 0 64px;position:relative;overflow:hidden}
+.cover .grain{position:absolute;inset:0;background:
+ radial-gradient(900px 340px at 12% -10%,rgba(204,120,92,.16),transparent 60%),
+ radial-gradient(700px 300px at 95% 15%,rgba(93,184,166,.10),transparent 55%)}
+.cover .inner{position:relative;max-width:1180px;margin:0 auto;padding:0 28px}
+.cover .brand{display:flex;align-items:center;gap:10px;font-size:13px;letter-spacing:.14em;color:var(--on-dark-soft);text-transform:uppercase}
+.cover .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--primary);display:inline-block}
+.cover .tag{margin-top:18px;display:inline-block;border:1px solid rgba(204,120,92,.5);color:var(--primary);border-radius:999px;padding:4px 16px;font-size:13px;letter-spacing:.08em}
+.cover h1{font-size:46px;font-weight:800;margin:26px 0 10px;color:var(--on-dark);letter-spacing:.02em}
+.cover h1 .accent{color:var(--primary)}
+.cover .sub{font-size:17px;color:var(--on-dark-soft);max-width:760px}
+.cover .meta{display:flex;flex-wrap:wrap;gap:12px;margin-top:34px}
+.cover .meta .m{background:var(--surface-dark-elevated);border:1px solid var(--surface-dark-soft);border-radius:12px;padding:10px 18px;font-size:13px;color:var(--on-dark-soft)}
+.cover .meta .m b{color:var(--on-dark);font-weight:600}
+.cover .rule{height:3px;background:linear-gradient(90deg,var(--primary) 0%,var(--primary) 34%,var(--accent-teal) 34%,var(--accent-teal) 66%,var(--accent-amber) 66%);width:100%;max-width:1180px;margin:0 auto;position:relative}
+.cover .goal-badge{margin-top:30px;display:inline-flex;align-items:center;gap:10px;background:var(--surface-dark-elevated);border:1px solid rgba(239,59,59,.45);border-radius:12px;padding:10px 20px;color:var(--on-dark)}
+.cover .goal-badge .flag{color:var(--node-goal);font-weight:700;font-size:14px}
+/* ---------- 区块 ---------- */
+section.sec{margin-top:64px}
+.sec-head{display:flex;align-items:baseline;gap:14px;border-bottom:2px solid var(--hairline);padding-bottom:12px;margin-bottom:28px}
+.sec-head .num{font-size:22px;font-weight:800;color:var(--primary)}
+.sec-head h2{font-size:26px;font-weight:800}
+.sec-head .en{color:var(--muted-soft);font-size:13px;letter-spacing:.1em;text-transform:uppercase}
+.sec-sub{color:var(--muted);font-size:14px;margin:-14px 0 22px}
+/* ---------- KPI ---------- */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.kpi{background:var(--surface-card);border:1px solid var(--hairline);border-radius:12px;padding:18px 20px;position:relative;overflow:hidden}
+.kpi .k-num{font-size:34px;font-weight:800;color:var(--ink);line-height:1.1}
+.kpi .k-num small{font-size:15px;font-weight:600;color:var(--muted)}
+.kpi .k-label{font-size:13px;color:var(--muted);margin-top:6px}
+.kpi .k-ico{position:absolute;right:14px;top:14px;font-size:20px;opacity:.55}
+.kpi.crit .k-num{color:var(--crit)}.kpi.high .k-num{color:var(--high)}.kpi.ok .k-num{color:var(--ok)}
+.kpi.goal{background:var(--surface-dark);border-color:var(--surface-dark)}
+.kpi.goal .k-num{color:var(--node-goal)}.kpi.goal .k-label{color:var(--on-dark-soft)}
+.kpi.teal .k-num{color:var(--accent-teal)}
+/* ---------- 图表 ---------- */
+.charts{display:grid;grid-template-columns:1.2fr 1fr;gap:20px}
+.chart-card{background:var(--surface-card);border:1px solid var(--hairline);border-radius:12px;padding:20px 22px}
+.chart-card h4{font-size:15px;margin-bottom:14px;color:var(--body-strong)}
+.chart-card .note{font-size:12.5px;color:var(--muted);margin-top:8px}
+/* ---------- 资产卡片 ---------- */
+.assets{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.asset{background:var(--surface-card);border:1px solid var(--hairline);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:8px;box-shadow:0 6px 18px rgba(20,20,19,.04)}
+.asset.danger{}
+.asset.warn{}
+.asset .a-name{font-weight:700;color:var(--body-strong);font-size:15px;font-family:ui-monospace,Consolas,monospace}
+.asset .a-role{font-size:13px;color:var(--muted)}
+.asset .a-badges{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:11.5px;border-radius:999px;padding:2px 10px;font-weight:600;border:1px solid var(--hairline);background:var(--surface-soft);color:var(--muted)}
+.chip.crit{background:rgba(198,69,69,.10);border-color:rgba(198,69,69,.35);color:var(--crit)}
+.chip.high{background:rgba(212,160,23,.12);border-color:rgba(212,160,23,.4);color:#a07c10}
+.chip.ok{background:rgba(93,184,114,.12);border-color:rgba(93,184,114,.4);color:#3e8f52}
+.chip.teal{background:rgba(93,184,166,.12);border-color:rgba(93,184,166,.4);color:#2f8575}
+.asset .a-desc{font-size:13px;color:var(--body)}
+.asset .a-line{font-size:12.5px;color:var(--muted);border-top:1px dashed var(--hairline);padding-top:8px}
+/* ---------- 漏洞卡片 ---------- */
+.vf{background:var(--surface-card);border:1px solid var(--hairline);border-radius:12px;margin-bottom:28px;overflow:hidden;position:relative}
+
+
+
+
+
+.vhead{padding:20px 24px 14px 24px;background:var(--surface-soft);border-bottom:1px solid var(--hairline-soft)}
+.vtitle-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.vtitle-row h3{font-size:18px;font-weight:800;flex:1;min-width:220px}
+.sev-chip{font-size:12px;font-weight:700;border-radius:6px;padding:3px 12px;color:#fff}
+.sev-chip.crit{background:var(--crit)}
+.sev-chip.high{background:var(--high)}
+.sev-chip.med{background:var(--muted-soft)}
+.sev-chip.low{background:var(--muted)}
+.vmeta{font-size:12.5px;color:var(--muted);margin-top:8px;display:flex;gap:14px;flex-wrap:wrap}
+.vbody{padding:6px 24px 20px 24px}
+.vsec{margin-top:18px}
+.vsec h4{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.vsec h4 .tick{color:var(--primary);font-weight:800}
+.vsec h4 .tick.g{color:var(--ok)}
+.vsec h4 .tick.r{color:var(--crit)}
+.vsec p{font-size:14px;margin:8px 0;color:var(--body)}
+.vsec ol{margin:8px 0 8px 22px;font-size:14px;color:var(--body)}
+.vsec ol li{margin:6px 0}
+.fix-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+.fix-box{background:var(--surface-soft);border:1px solid var(--hairline);border-radius:10px;padding:14px 16px}
+.fix-box h5{font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:7px}
+.fix-box h5.now{color:var(--warning)}
+.fix-box h5.root{color:var(--success)}
+.fix-box ul{margin-left:18px;font-size:13.5px;color:var(--body)}
+.fix-box li{margin:5px 0}
+details.ev{margin-top:16px;background:var(--canvas);border:1px solid var(--hairline);border-radius:10px}
+details.ev summary{cursor:pointer;padding:11px 16px;font-size:13.5px;font-weight:600;color:var(--primary-active);list-style:none}
+details.ev summary::before{content:"▸ ";color:var(--primary)}
+details.ev[open] summary::before{content:"▾ "}
+details.ev .ev-body{padding:4px 16px 14px;font-size:13px;color:var(--body)}
+details.ev .ev-body .row{margin:6px 0}
+details.ev .ev-body .k{color:var(--muted);font-size:12px;display:inline-block;min-width:86px}
+/* ---------- 汇总表 ---------- */
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--surface-card);border-radius:12px;overflow:hidden}
+.tbl th{background:var(--surface-dark);color:var(--on-dark);text-align:left;padding:10px 14px;font-size:12.5px;letter-spacing:.04em}
+.tbl td{padding:9px 14px;border-top:1px solid var(--hairline-soft);vertical-align:top}
+.tbl tr:nth-child(even) td{background:rgba(255,255,255,.35)}
+.tbl .s-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}.charts,.fix-grid,.grid2,.assets{grid-template-columns:1fr}.cover h1{font-size:34px}}
+
+
+/* ---------- 执行摘要双栏（图一样式） ---------- */
+.sum-grid{display:grid;grid-template-columns:1.15fr .95fr;gap:16px;margin-top:8px}
+@media(max-width:900px){.sum-grid{grid-template-columns:1fr}}
+.sum-card{background:var(--surface-card);border:1px solid var(--hairline);border-radius:14px;padding:20px 22px;box-shadow:0 6px 18px rgba(20,20,19,.04)}
+.sum-card h3{font-size:15px;font-weight:800;color:var(--ink);margin:0 0 12px;display:flex;align-items:center;gap:8px}
+.sum-card h3 .dot{width:8px;height:8px;border-radius:50%;background:var(--primary);display:inline-block}
+.sum-card p{font-size:13.5px;line-height:1.75;color:var(--body);margin:0 0 10px}
+.sum-card ul{margin:0;padding:0;list-style:none}
+.sum-card ul li{position:relative;padding:5px 0 5px 16px;font-size:13.5px;line-height:1.65;color:var(--body)}
+.sum-card ul li::before{content:"";position:absolute;left:0;top:13px;width:6px;height:6px;border-radius:50%;background:var(--primary);opacity:.75}
+.sum-card .concl{margin:0;padding:0;list-style:none}
+.sum-card .concl li{padding:8px 0;border-bottom:1px dashed var(--hairline-soft);font-size:13.5px;line-height:1.6;display:flex;gap:10px;align-items:flex-start}
+.sum-card .concl li:last-child{border-bottom:0}
+.sum-card .tag-sev{flex:0 0 auto;font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;margin-top:2px}
+.sum-card .tag-sev.crit{background:rgba(198,69,69,.12);color:var(--error)}
+.sum-card .tag-sev.high{background:rgba(212,160,23,.14);color:#a07c10}
+.sum-card .tag-sev.med{background:rgba(142,139,130,.14);color:var(--muted)}
+.sum-foot{margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.7;background:var(--surface-soft);border:1px solid var(--hairline);border-radius:12px;padding:12px 16px}
+/* 验证图例放 SVG 外，避免裁切 */
+.verify-panel{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.verify-panel svg{flex:0 0 auto;max-width:220px}
+.verify-legend{flex:1;min-width:180px;display:flex;flex-direction:column;gap:10px}
+.verify-legend .row{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--body)}
+.verify-legend i{width:12px;height:12px;border-radius:3px;flex:0 0 auto}
+.verify-legend b{color:var(--ink);margin-left:4px}
+
+/* ---------- 关键攻击路径（紧凑） ---------- */
+.path-board{background:var(--surface-soft);border:1px solid var(--hairline);border-radius:14px;padding:18px 16px 14px;margin-top:8px}
+.path-rows{display:flex;flex-direction:column;gap:8px}
+.path-row{display:flex;align-items:stretch;justify-content:center;gap:0;flex-wrap:nowrap}
+.pn{background:#fffdf8;border:1.5px solid var(--hairline);border-radius:10px;padding:10px 12px;width:210px;min-width:190px;max-width:210px;flex:0 0 210px;box-shadow:0 3px 10px rgba(20,20,19,.04);position:relative}
+.pn .pk{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:lowercase;margin-bottom:2px}
+.pn .pt{font-size:12.5px;font-weight:700;color:var(--ink);line-height:1.3;margin-bottom:2px}
+.pn .pd{font-size:11px;color:var(--muted);line-height:1.4}
+.pn.info{border-color:rgba(93,184,166,.55)}.pn.info .pk{color:var(--accent-teal)}
+.pn.warn{border-color:rgba(232,165,90,.65)}.pn.warn .pk{color:#c4842a}
+.pn.crit{border-color:rgba(198,69,69,.55)}.pn.crit .pk{color:var(--error)}
+.pn.goal{background:var(--error);border-color:var(--error);color:#fff;box-shadow:0 6px 16px rgba(198,69,69,.26)}
+.pn.goal .pk{color:#ffd0d0}.pn.goal .pt{color:#fff}.pn.goal .pd{color:rgba(255,255,255,.88)}
+.parrow{display:flex;align-items:center;justify-content:center;width:64px;min-width:64px;padding:0 4px;color:var(--muted);font-size:10px;font-weight:600;flex-direction:column;gap:2px;flex:0 0 64px;text-align:center;line-height:1.25}
+.parrow .line{width:100%;height:2px;background:linear-gradient(90deg,var(--hairline),var(--primary),var(--hairline));border-radius:2px;position:relative}
+.parrow .line::after{content:"";position:absolute;right:-1px;top:50%;transform:translateY(-50%);border:4px solid transparent;border-left-color:var(--primary)}
+.parrow .arr{display:none}
+.parrow.down{width:100%;min-width:0;padding:4px 0;flex-direction:column;gap:3px;align-items:center}
+.parrow.down .line{width:2px;height:22px;background:linear-gradient(180deg,var(--hairline),var(--primary));border-radius:2px}
+.parrow.down .line::after{right:auto;left:50%;top:auto;bottom:-1px;transform:translateX(-50%);border:4px solid transparent;border-top-color:var(--primary);border-left-color:transparent}
+.path-legend{display:flex;flex-wrap:wrap;gap:10px 14px;margin-top:12px;padding-top:10px;border-top:1px dashed var(--hairline);font-size:11.5px;color:var(--muted)}
+.path-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.path-legend .l-crit{background:var(--error)}
+.path-legend .l-warn{background:#e8a55a}
+.path-legend .l-info{background:var(--accent-teal)}
+.path-legend .l-goal{background:var(--node-goal)}
+.path-caption{margin-top:12px;font-size:13px;color:var(--body);line-height:1.65;background:#fffdf8;border:1px solid var(--hairline);border-radius:10px;padding:12px 14px}
+@media(max-width:980px){
+ .path-row{flex-wrap:wrap;justify-content:flex-start}
+ .parrow{width:48px;min-width:48px;flex-basis:48px}
+ .pn{flex:1 1 180px;max-width:none;width:auto}
+}
+
+
+
+
+/* ---------- 资产关系图 ---------- */
+.asset-map{background:var(--surface-soft);border:1px solid var(--hairline);border-radius:16px;padding:24px 22px 18px;margin:8px 0 22px;box-shadow:0 6px 18px rgba(20,20,19,.04)}
+.asset-map h4{font-size:14px;font-weight:800;color:var(--body-strong);margin:0 0 6px}
+.asset-map .am-sub{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55;max-width:900px}
+.asset-map svg{width:100%;height:auto;display:block;background:#fffdf8;border:1px solid var(--hairline);border-radius:14px}
+.asset-map .am-legend{display:flex;flex-wrap:wrap;gap:12px 18px;margin-top:12px;font-size:12px;color:var(--muted)}
+.asset-map .am-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.am-svc-list{margin-top:14px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
+@media(max-width:800px){.am-svc-list{grid-template-columns:1fr}}
+.am-svc-list .am-item{background:#fffdf8;border:1px solid var(--hairline);border-radius:10px;padding:8px 12px;font-size:12.5px;line-height:1.45;color:var(--body)}
+.am-svc-list .am-item b{color:var(--ink);font-weight:700}
+.am-svc-list .am-item.hot{border-color:rgba(198,69,69,.45);background:rgba(198,69,69,.05)}
+.am-svc-list .am-item .k{color:var(--muted);font-size:11px}
+
+/* ---------- PDF / WeasyPrint ---------- */
+@page{size:A4;margin:14mm 12mm 16mm 12mm}
+@media print{
+ body{background:#fff;font-size:12.5px}
+ .cover{padding:48px 0 36px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ .cover h1{font-size:32px}
+ section.sec{margin-top:36px;break-before:auto}
+ .sec-head{break-after:avoid}
+ .vf{break-inside:avoid;margin-bottom:18px}
+ .vhead{break-after:avoid}
+ .kpi,.pn,.asset,.sum-card,.chart-card{break-inside:avoid}
+ .path-board,.asset-map{break-inside:avoid}
+ footer{break-before:avoid}
+ a{color:inherit;text-decoration:none}
+}
+/* WeasyPrint also honors some print rules outside @media */
+.vf{break-inside:avoid}
+.vhead{break-after:avoid}
+.sec-head{break-after:avoid}
+
+/* 封面色条在 header 外；页脚与跳转链接为参考报告结构所用 */
+.rule{height:3px;background:linear-gradient(90deg,var(--primary) 0%,var(--primary) 34%,var(--accent-teal) 34%,var(--accent-teal) 66%,var(--accent-amber) 66%);width:100%}
+footer{margin:80px 0 40px;border-top:1px solid var(--hairline);padding-top:20px;color:var(--muted-soft);font-size:12.5px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.anchor{font-size:12.5px;color:var(--primary-active);white-space:nowrap}
+
+</style>
+</head>
+<body>
+<header class="cover"><div class="grain"></div><div class="inner">
+<div class="brand"><span class="dot"></span>授权渗透测试交付报告</div>
+<!-- SLOT:cover-meta -->
+<!-- /SLOT:cover-meta -->
+</div></header>
+<div class="rule"></div>
+<main class="wrap">
+<section class="sec" id="summary">
+<div class="sec-head"><span class="num">01</span><h2>执行摘要</h2><span class="en">Executive Summary</span></div>
+<!-- SLOT:summary -->
+<!-- /SLOT:summary -->
+<!-- SLOT:kpis -->
+<!-- /SLOT:kpis -->
+</section>
+<section class="sec" id="stats">
+<div class="sec-head"><span class="num">02</span><h2>漏洞统计分布</h2><span class="en">Severity &amp; Verification</span></div>
+<!-- SLOT:charts -->
+<!-- /SLOT:charts -->
+</section>
+<section class="sec" id="path">
+<div class="sec-head"><span class="num">03</span><h2>关键攻击路径</h2><span class="en">Attack Path</span></div>
+<!-- SLOT:path -->
+<!-- /SLOT:path -->
+</section>
+<section class="sec" id="assets">
+<div class="sec-head"><span class="num">04</span><h2>资产画像</h2><span class="en">Assets in Scope</span></div>
+<!-- SLOT:assets -->
+<!-- /SLOT:assets -->
+</section>
+<section class="sec" id="list">
+<div class="sec-head"><span class="num">05</span><h2>漏洞清单总表</h2><span class="en">Findings Index</span></div>
+<!-- SLOT:index-table -->
+<!-- /SLOT:index-table -->
+</section>
+<section class="sec" id="critical">
+<div class="sec-head"><span class="num">06</span><h2>严重漏洞</h2><span class="en">Critical Findings</span></div>
+<!-- SLOT:findings-critical -->
+<!-- /SLOT:findings-critical -->
+</section>
+<section class="sec" id="high">
+<div class="sec-head"><span class="num">07</span><h2>高危漏洞</h2><span class="en">High Findings</span></div>
+<!-- SLOT:findings-high -->
+<!-- /SLOT:findings-high -->
+</section>
+<section class="sec" id="medium">
+<div class="sec-head"><span class="num">08</span><h2>中危漏洞</h2><span class="en">Medium Findings</span></div>
+<!-- SLOT:findings-medium -->
+<!-- /SLOT:findings-medium -->
+</section>
+<section class="sec" id="low">
+<div class="sec-head"><span class="num">09</span><h2>低危漏洞</h2><span class="en">Low Findings</span></div>
+<!-- SLOT:findings-low -->
+<!-- /SLOT:findings-low -->
+</section>
+<!-- SLOT:footer -->
+<!-- /SLOT:footer -->
+</main>
+</body></html>

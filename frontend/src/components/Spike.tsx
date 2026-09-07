@@ -1,0 +1,15 @@
+// AF 连字：奶油底、墨色字、F 臂后一笔赤陶斜楔。无山顶菱形。
+export function Spike({ size = 28 }: { size?: number }) {
+  return (
+    <svg className="spike" width={size} height={size} viewBox="0 0 80 80" aria-hidden>
+      <rect width="80" height="80" rx="14" fill="#faf9f5" />
+      <path fill="#cc785c" d="M50 33 74 27l2.4 11.5-24 6z" />
+      <g fill="#141413">
+        <path d="M37 8 9 68h11l11-28 6-32z" />
+        <rect x="36" y="8" width="12" height="60" />
+        <path d="M48 8h25l-3.2 11H48z" />
+        <path d="M48 30h18l-3 11H48z" />
+      </g>
+    </svg>
+  );
+}

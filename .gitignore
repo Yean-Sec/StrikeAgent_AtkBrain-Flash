@@ -1,0 +1,39 @@
+# runtime: projects, loot, reports, sqlite, logs, local secrets
+backend/data/
+backend/data/**
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# secrets — never publish
+atkbrain-claude.env
+**/*.env
+!**/.env.example
+
+# python / node
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+backend/.venv/
+backend/.pytest_cache/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# local IDE / debug
+.cursor/
+*.log
+
+# archives
+*.tar
+*.tar.gz
+*.tgz
+StrikeAgent_AtkBrain-Flash.tar.gz
+agent.tar.gz
+
+# local replay dumps (not source)
+demo/replay.json
+frontend/public/replay.json

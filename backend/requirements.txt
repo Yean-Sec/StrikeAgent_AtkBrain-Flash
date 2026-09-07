@@ -1,0 +1,23 @@
+# Web 框架
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+
+# 数据与校验
+aiosqlite>=0.20
+pydantic>=2.7
+pydantic-settings>=2.3
+
+# 图与评分
+networkx>=3.3
+
+# Claude 驱动
+claude-agent-sdk>=0.1.0
+
+# HTTP
+httpx>=0.27
+
+# 报告
+jinja2>=3.1
+weasyprint>=62
+markdown>=3.6
