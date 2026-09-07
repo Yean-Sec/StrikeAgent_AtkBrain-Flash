@@ -10,15 +10,23 @@
 
 <h1 align="center">StrikeAgent_AtkBrain-Flash</h1>
 
+<p align="center">
+  <img src="docs/assets/coined-triad.gif" alt="本项目提出：自循环 · 自监督 · 自进化" width="920" />
+</p>
+
 此项目由夜安团队开发，旨在探索 AI 渗透方面的能力。希望做点有自己思想的东西而不是Ai千篇一律随便搞出来的dome
 
 下面的控制台和交付报告来自一次真实授权测试，不是演示稿。单位、公网地址、账号已换成内网靶场占位，只保留攻击过程和报告版式。
 
-## 产品页面展示
+## 架构
+
+控制台调度猎面；攻击图驱动自循环；监督只在轮次边界出方案；收工把可迁移手法蒸馏进记忆库，回灌下一局。
 
 <p align="center">
-  <img src="docs/assets/coined-triad.gif" alt="自循环 · 自监督 · 自进化" width="920" />
+  <img src="docs/assets/architecture.png" alt="StrikeAgent_AtkBrain-Flash 架构" width="920" />
 </p>
+
+## 产品页面展示
 
 新建项目：单目标 / 集群，红队（getshell）或 CTF。
 
@@ -148,25 +156,7 @@ sudo scripts/atkbrain-up.sh
 
 浏览器打开 **http://127.0.0.1:5001/**。局域网其它机器用 `http://<kali-ip>:5001/`。
 
-### 日常运维
-
-| 命令 | 作用 |
-| --- | --- |
-| `sudo scripts/atkbrain-up.sh` | 首次安装并启动前后端 |
-| `sudo scripts/atkbrain-backend.sh restart` | 重启 API |
-| `sudo scripts/atkbrain-frontend.sh restart` | 重启控制台 |
-| `sudo scripts/atkbrain-backend.sh status` | 看 unit + `/api/health` |
-| `sudo scripts/atkbrain-frontend.sh status` | 看 unit + `:5001` HTTP 状态码 |
-| `sudo scripts/atkbrain-backend.sh logs` | `journalctl` 最近日志 |
-| `sudo scripts/atkbrain-frontend.sh logs` | 同上 |
-| `sudo scripts/atkbrain-backend.sh stop` | 停后端 |
-| `sudo scripts/atkbrain-frontend.sh stop` | 停前端 |
-
-改完 Python / 提示词之后只 `backend.sh restart`；改完前端代码 Vite 一般会自己热更新，不行再 `frontend.sh restart`。
-
-不要在临时终端里再起一份 `python3 -m atkbrain.main` 或 `npm run dev`，会和 systemd 抢 5001 / 5003。
-
-检查是否起来：
+确认起来：
 
 ```bash
 curl -sS http://127.0.0.1:5003/api/health
