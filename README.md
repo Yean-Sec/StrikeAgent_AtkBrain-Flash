@@ -1,8 +1,14 @@
-![StrikeAgent](docs/assets/icon.svg)![×](docs/assets/times.svg)![夜安团队 SEC](docs/assets/brand.jpg)
+<p align="center">
+  <img src="docs/assets/icon.svg" width="128" height="128" alt="StrikeAgent" />
+  <img src="docs/assets/times.svg" width="48" height="128" alt="×" />
+  <img src="docs/assets/brand.jpg" width="128" height="128" alt="夜安团队 SEC" />
+</p>
 
-StrikeAgent × 夜安团队 SEC
+<p align="center">
+  <sub>StrikeAgent × 夜安团队 SEC</sub>
+</p>
 
-# StrikeAgent_AtkBrain-Flash
+<h1 align="center">StrikeAgent_AtkBrain-Flash</h1>
 
 ![本项目提出：自循环 · 自监督 · 自进化](docs/assets/coined-triad.gif)
 
@@ -18,15 +24,19 @@ StrikeAgent × 夜安团队 SEC
 
 新建项目：单目标 / 集群，红队（getshell）或 CTF。
 
-![新建项目](docs/assets/create-project.png)
+![新建项目](docs/assets/ScreenShot_2026-09-07_213431_146.png)
 
 控制台：攻击图、时间线、漏洞、对话。
 
-![控制台](docs/assets/console.jpg)
+![控制台](docs/assets/ScreenShot_2026-09-07_220023_410.png)
 
 内网横向：橙线为 RCE 路径，紫实线为已控跨主机，紫虚线为跳板可达。
 
-![内网横向](docs/assets/lateral.jpg)
+![内网横向](docs/assets/ScreenShot_2026-09-07_220034_635.png)
+
+## 交付报告
+
+ <p><i>此报告为一次真实的授权业务场景</i></p>
 
 交付报告：[打开 HTML](docs/demo/intranet-lab-report.html)
 
