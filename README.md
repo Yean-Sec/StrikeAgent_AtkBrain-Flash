@@ -201,3 +201,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/
 学习、研究和授权测试可以阅读、修改、非商用分发。售卖、SaaS、外包、把本软件用于收费服务等商业用途，请联系 [gavenmiya@outlook.com](mailto:gavenmiya@outlook.com)。
 
 本软件仅限在已获明确授权的环境中使用。使用即表示你已获得目标环境的授权，并自行承担合规与后果。作者与夜安团队 SEC 不对滥用、数据损坏或法律纠纷负责。
+
+交流群目前已满。关注公众号「夜安团队SEC」，联系我们拉进群。
+
+<p align="center">
+  <img src="docs/assets/wechat-oa.png" alt="夜安团队SEC 公众号名片" width="354" />
+</p>
