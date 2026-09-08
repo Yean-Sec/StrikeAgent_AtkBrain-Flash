@@ -144,6 +144,36 @@ def _raw_http(parsed: dict) -> str:
     return "\n".join(lines)
 
 
+def _norm_blob(text: str | None) -> str:
+    return re.sub(r"\s+", "", str(text or ""))
+
+
+def _covered_by(fragment: str | None, *blobs: str | None) -> bool:
+    """fragment 已被其它段落完整包含时不再复述。"""
+    frag = _norm_blob(fragment)
+    if len(frag) < 32:
+        return False
+    return any(frag in _norm_blob(b) for b in blobs if b)
+
+
+def _strip_embedded_mechanism(root: str, mechanism: str) -> str:
+    """漏洞说明里不要再嵌一整段「漏洞原理」。"""
+    if not (root or "").strip():
+        return root
+    parts = re.split(r"(?=【)", root)
+    mech_n = _norm_blob(mechanism)
+    kept: list[str] = []
+    for p in parts:
+        if not p.strip():
+            continue
+        if p.startswith("【漏洞原理】"):
+            continue
+        if mech_n and len(mech_n) > 48 and mech_n in _norm_blob(p) and not p.startswith("【现象】"):
+            continue
+        kept.append(p)
+    return "".join(kept).strip() or root
+
+
 def _node_detail(finding: dict) -> str:
     node = finding.get("related_node") or {}
     detail = node.get("detail") if isinstance(node, dict) else None
@@ -253,8 +283,6 @@ def deterministic_mechanism(finding: dict, parsed: dict | None = None) -> str:
     inj = [k for k, v in pairs if re.search(r"['\"#;<>]|--|/\*|%27|%22|\$\(", v)]
     inj_txt = "、".join(f"`{k}`" for k in inj) if inj else "PoC 中的可控输入"
     loc = url or (finding.get("node_key") or "未采集 URL")
-    nd = _node_detail(finding)
-
     by_cat = {
         "sqli": (
             f"类别为 SQL 注入。应用把调用方可控数据拼进 SQL，而不是使用绑定参数。"
@@ -325,15 +353,9 @@ def deterministic_mechanism(finding: dict, parsed: dict | None = None) -> str:
     }
     core = by_cat.get(cat) or (
         f"类别标记为 `{cat}`。标题：{title or '未命名'}。入口 `{method} {loc}`。"
-        "原理以本条证据和关联节点为准，不套用其它类别的利用模型。"
+        "原理以本条证据为准，不套用其它类别的利用模型。"
     )
-    extra = []
-    if nd:
-        extra.append("关联节点对缺陷的记录：\n" + nd)
-    extra.append(
-        "原理分析禁止引入 PoC/证据未出现的第二个参数、隐藏接口或 CVE 编号。"
-    )
-    return core + "\n\n" + "\n\n".join(extra)
+    return core + "\n\n原理分析禁止引入 PoC/证据未出现的第二个参数、隐藏接口或 CVE 编号。"
 
 
 def deterministic_root_cause(finding: dict) -> str:
@@ -342,15 +364,14 @@ def deterministic_root_cause(finding: dict) -> str:
     title = finding.get("title") or "（无标题）"
     desc = (finding.get("description") or "").strip()
     loc = (finding.get("node_key") or "").strip()
+    nd = _node_detail(finding)
     parts: list[str] = []
 
     parts.append(f"【现象】{title}。严重度 `{finding.get('severity') or 'info'}`，类别 `{cat}`。")
-    if desc:
+    if desc and not _covered_by(desc, title):
         parts.append("【测试人员描述】\n" + desc)
-    else:
+    elif not desc:
         parts.append("【测试人员描述】未采集独立 description 字段。")
-
-    parts.append("【漏洞原理】\n" + deterministic_mechanism(finding, parsed))
 
     if parsed and parsed.get("url"):
         parts.append(
@@ -366,8 +387,7 @@ def deterministic_root_cause(finding: dict) -> str:
             + " 复现时只能依据证据里出现的方法和路径，禁止补全未出现的路由。"
         )
 
-    nd = _node_detail(finding)
-    if nd and nd not in desc:
+    if nd and not _covered_by(nd, desc):
         parts.append("【关联节点记录】\n" + nd)
 
     sigs = expected_signals(finding)
@@ -378,9 +398,6 @@ def deterministic_root_cause(finding: dict) -> str:
         )
     else:
         parts.append("【与证据的对应】证据中没有抽出可引用的报错/回显特征；复核时不要把单纯超时当成漏洞成立。")
-
-    if loc:
-        parts.append(f"【图上位置】节点 `{loc}`。")
     return "\n\n".join(parts)
 
 
@@ -644,6 +661,17 @@ def apply_deterministic_writeup(finding: dict, *, poc: dict | None = None) -> di
         out["mechanism"] = deterministic_mechanism(out, parsed)
     if not (out.get("root_cause") or "").strip():
         out["root_cause"] = deterministic_root_cause(out)
+    else:
+        out["root_cause"] = _strip_embedded_mechanism(
+            str(out.get("root_cause") or ""), str(out.get("mechanism") or ""),
+        )
+    nd = _node_detail(out)
+    if _covered_by(nd, out.get("description"), out.get("root_cause"), out.get("mechanism")):
+        out["node_detail_unique"] = ""
+    else:
+        out["node_detail_unique"] = nd
+    from ..graph.model import secondary_review_narrative
+    out["secondary_review"] = secondary_review_narrative(out)
     if not (out.get("impact_detail") or "").strip():
         out["impact_detail"] = deterministic_impact(out)
     if not (out.get("affected_scope") or "").strip():
@@ -805,6 +833,8 @@ async def _ai_one_writeup(finding: dict) -> dict | None:
         max_turns=1,
         permission_mode="dontAsk",
         setting_sources=[],
+        skills=[],
+        plugins=[],
         cwd=str(settings.data_dir),
         max_buffer_size=8 * 1024 * 1024,
     )

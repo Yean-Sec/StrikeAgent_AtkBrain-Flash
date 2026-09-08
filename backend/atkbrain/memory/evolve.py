@@ -1,7 +1,6 @@
-"""自进化：把 episode 蒸馏成可迁移剧本，按指纹取回并回灌下一局。
+"""自进化：高危/严重洞或 flag 才用 Claude Code 蒸馏成跨局剧本。
 
-写（episode）→ 蒸（lesson / playbook）→ 取（retrieve）→ 用（指挥官/监督）→ 强化（赢加分、输衰减）。
-剧本不含 IP/URL/题面路径；只留手法、线索、失败族、战术链。
+CTF 与红队共用同一份 lesson（project_id 为空）。不写机械路线，不蒸失败局。
 """
 from __future__ import annotations
 
@@ -25,6 +24,8 @@ from .methodology import (
 
 _MIN_CONF = 0.18
 _MAX_CONF = 0.95
+EVOLVE_MILESTONES = frozenset({"getflag", "high_critical_finding"})
+_HIGH = frozenset({"high", "critical"})
 
 
 def lesson_key(*, when: list[str], do: list[str], avoid: list[str], chain: str) -> str:
@@ -59,20 +60,51 @@ def _confidence(wins: int, fails: int, uses: int) -> float:
     return max(_MIN_CONF, min(_MAX_CONF, base))
 
 
-def episode_worth_ai_refine(episode: dict | None) -> bool:
-    """空猎/无手法的 episode 不要再开一轮 evolve LLM（浪费配额、污染会话标题）。"""
+def finding_qualifies_for_evolve(row: dict | None) -> bool:
+    """高危/严重才蒸：有二次评级用评级；没有则须二次验证成功，再看入库严重度。"""
+    if not isinstance(row, dict):
+        return False
+    vs = str(row.get("verification_status") or "verified").strip().lower()
+    if vs not in ("verified", "flaky", ""):
+        return False
+    from ..graph.model import normalize_redteam_rating
+    rt = normalize_redteam_rating(row.get("redteam_rating"))
+    if rt:
+        return rt in _HIGH
+    try:
+        sec = bool(int(row.get("secondary_verified") or 0))
+    except (TypeError, ValueError):
+        sec = bool(row.get("secondary_verified"))
+    if not sec:
+        return False
+    sev = str(row.get("severity") or "").strip().lower()
+    return sev in _HIGH
+
+
+def episode_qualifies_for_evolve(episode: dict | None) -> bool:
+    """只蒸 flag 或高危/严重洞对应的 episode。失败/空猎/纯 getshell 不蒸。"""
     if not episode or episode.get("skipped"):
         return False
+    oc = str(episode.get("outcome") or "").strip().lower()
+    if oc == "flag":
+        return True
     c = episode.get("content") if isinstance(episode.get("content"), dict) else episode
     if not isinstance(c, dict):
         return False
-    for key in ("techniques", "failed_techniques", "winning_chain", "winning_path", "cues", "findings"):
-        val = c.get(key)
-        if isinstance(val, str) and val.strip():
+    ms = str(c.get("milestone") or episode.get("milestone") or "").strip().lower()
+    if ms in EVOLVE_MILESTONES:
+        return True
+    ach = c.get("achievements") or []
+    if any(str(a).strip().lower() in ("getflag", "flag") for a in ach):
+        return True
+    for f in c.get("findings") or []:
+        if isinstance(f, dict) and finding_qualifies_for_evolve(f):
             return True
-        if isinstance(val, (list, tuple, set)) and any(str(x).strip() for x in val):
-            return True
-    return bool(distill_content(c, str(episode.get("outcome") or ""), str(c.get("target_fp") or "*")))
+    return False
+
+
+def episode_worth_ai_refine(episode: dict | None) -> bool:
+    return episode_qualifies_for_evolve(episode)
 
 
 def distill_content(content: dict | None, outcome: str, target_fp: str = "*") -> dict | None:
@@ -136,13 +168,19 @@ def _merge_lesson(old: dict, incoming: dict) -> dict:
     rule = str(incoming.get("rule") or old.get("rule") or "")
     if len(str(old.get("rule") or "")) > len(rule):
         rule = str(old.get("rule") or rule)
+    idea = str(incoming.get("idea") or old.get("idea") or "")
+    method = str(incoming.get("method") or old.get("method") or "")
+    route = str(incoming.get("route") or old.get("route") or chain)
     merged = {
         "lesson_key": old.get("lesson_key") or incoming.get("lesson_key"),
-        "rule": rule[:240],
+        "rule": rule[:360],
         "when": when,
         "do": do,
         "avoid": avoid,
         "chain": chain,
+        "route": route,
+        "method": method,
+        "idea": idea,
         "wins": wins,
         "fails": fails,
         "uses": uses,
@@ -167,7 +205,12 @@ def _merge_lesson(old: dict, incoming: dict) -> dict:
 
 async def upsert_lesson(draft: dict, *, episode_id: str | None = None) -> dict | None:
     draft = scrub_lesson(draft)
-    if not draft or not (draft.get("do") or draft.get("avoid") or draft.get("chain")):
+    if not draft:
+        return None
+    if not (
+        draft.get("do") or draft.get("avoid") or draft.get("chain")
+        or (draft.get("method") and draft.get("idea"))
+    ):
         return None
     draft["lesson_key"] = draft.get("lesson_key") or lesson_key(
         when=draft.get("when") or [], do=draft.get("do") or [],
@@ -207,6 +250,7 @@ async def upsert_lesson(draft: dict, *, episode_id: str | None = None) -> dict |
 
 
 async def evolve_from_episode_id(episode_id: str) -> dict | None:
+    """用 Claude Code 蒸馏这一条合格 episode。不用机械映射。"""
     if not episode_id:
         return None
     row = await db.fetchone("SELECT * FROM memory WHERE id=?", (episode_id,))
@@ -215,10 +259,28 @@ async def evolve_from_episode_id(episode_id: str) -> dict | None:
     content = _loads(row["content"]) if isinstance(row.get("content"), str) else (row.get("content") or {})
     if not isinstance(content, dict):
         content = {}
-    draft = distill_content(content, str(row.get("outcome") or ""), str(row.get("target_fp") or "*"))
-    if not draft:
+    episode = {
+        "id": row.get("id"),
+        "outcome": row.get("outcome"),
+        "target_fp": row.get("target_fp") or "*",
+        "content": content,
+        "milestone": content.get("milestone"),
+        "achievements": content.get("achievements") or [],
+        "findings": content.get("findings") or [],
+    }
+    if not episode_qualifies_for_evolve(episode):
         return None
-    return await upsert_lesson(draft, episode_id=episode_id)
+    if not bool(getattr(settings, "evolve_ai", True)):
+        return None
+    try:
+        applied = await ai_refine_playbook(
+            recent_episodes=[episode],
+            playbook=await list_playbook(limit=12),
+        )
+    except Exception:
+        return None
+    kept = [x for x in (applied or []) if x.get("action") != "retire"]
+    return (kept[-1] if kept else None)
 
 
 def _graph_signals(project: dict | None, graph: dict | None) -> tuple[set[str], str]:
@@ -254,6 +316,9 @@ def serialize_lesson_row(row: dict) -> dict:
         "do": content.get("do") or [],
         "avoid": content.get("avoid") or [],
         "chain": content.get("chain") or "",
+        "route": content.get("route") or "",
+        "method": content.get("method") or "",
+        "idea": content.get("idea") or "",
         "confidence": content.get("confidence"),
         "wins": content.get("wins"),
         "fails": content.get("fails"),
@@ -287,15 +352,12 @@ async def list_playbook(*, limit: int = 40) -> list[dict]:
 async def retrieve_lessons(
     project: dict | None, graph: dict | None, *, limit: int = 6, bump_uses: bool = False,
 ) -> list[dict]:
-    """按当前图上的技术栈/线索/战术取可迁移剧本。CTF 不匹配具体主机或题号。"""
+    """按当前图上的技术栈/线索/战术取可迁移剧本。CTF 与红队共用，不匹配具体主机或题号。"""
     rows = await db.fetchall(
         "SELECT * FROM memory WHERE kind='lesson' ORDER BY created_at DESC LIMIT 80",
     )
     if not rows:
         return []
-    from ..objective import objective_allows_flag
-    cfg = (project or {}).get("config") or {}
-    strict = objective_allows_flag(cfg.get("objective") or cfg.get("track"))
     signals, fp = _graph_signals(project, graph)
     ranked: list[tuple[float, dict]] = []
     for r in rows:
@@ -309,7 +371,11 @@ async def retrieve_lessons(
         item["do"] = clean.get("do") or []
         item["avoid"] = clean.get("avoid") or []
         item["chain"] = clean.get("chain") or ""
-        score = _score_lesson(clean, signals, fp, strict=strict)
+        item["route"] = clean.get("route") or ""
+        item["method"] = clean.get("method") or ""
+        item["idea"] = clean.get("idea") or ""
+        # CTF 与红队同一把尺子：图上要有栈/线索/战术交集才回灌。
+        score = _score_lesson(clean, signals, fp, strict=True)
         if score <= 0:
             continue
         ranked.append((score, item))
@@ -361,7 +427,7 @@ def format_lessons_block(lessons: list[dict]) -> str:
         return ""
     from .methodology import format_methodology
     lines = [
-        "## 进化经验（可迁移手法。只作思路启发：按当前图上的栈/线索选用并当场验证；"
+        "## 进化经验（CTF 与红队共用。只作思路启发：按当前图上的栈/线索选用并当场验证；"
         "禁止当作本题步骤清单，禁止套用 IP/路径/题号/payload）"
     ]
     for it in lessons[:6]:
@@ -371,9 +437,12 @@ def format_lessons_block(lessons: list[dict]) -> str:
             do=list(c.get("do") or []),
             avoid=list(c.get("avoid") or []),
             chain=str(c.get("chain") or ""),
+            route=str(c.get("route") or ""),
+            method=str(c.get("method") or ""),
+            idea=str(c.get("idea") or ""),
         )
         if text:
-            lines.append("- " + text[:220])
+            lines.append("- " + text[:360])
     if len(lines) <= 1:
         return ""
     return "\n".join(lines)
@@ -403,13 +472,18 @@ def avoid_from_lessons(lessons: list[dict]) -> set[str]:
     return out
 
 
-EVOLVE_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的进化编辑。任务：把实战 episode 收成可迁移手法。
-只保留：技术栈名、线索名（如 inject_surface）、战术名（如 sqli/ssti/ssrf）、失败策略族、类型链（entry → vuln(sqli)）。
-禁止：IP、主机、端口、题号、URL、题面路径、flag 原文、getflag 当手法、Intent id、具体 payload。
-when 只能是技术栈或线索名；do/avoid 只能是战术名。
-已有剧本可修订或退休，不要重复同一条。
+EVOLVE_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的进化编辑。只把已经确认的高危/严重漏洞或 flag 收口，蒸馏成 CTF 与红队都能用的经验。
+
+每条必须同时给出三种可迁移内容：
+- idea：思想（为什么这条路值得走）
+- method：方式方法（怎么推进，不写具体 payload）
+- route：路线（类型链，如 entry → vuln(sqli) → foothold）
+when 只能是技术栈或线索名（php/java/auth_surface/inject_surface 等）。
+do/avoid 只能是战术名（sqli/ssti/ssrf/file_read_chain/weaponize/content_enum 等）。
+禁止：IP、主机、端口、题号、URL、题面路径、flag 原文、getflag 当手法、Intent id、具体 payload、机械罗列工具名。
+已有剧本可修订或退休，不要重复同一条。最多 3 条。
 只输出 JSON：
-{"lessons":[{"action":"upsert|retire","rule":"...","when":["php"],"do":["sqli"],"avoid":["content_enum"],"chain":"entry → service(http) → vuln(sqli)"}]}
+{"lessons":[{"action":"upsert|retire","idea":"...","method":"...","route":"entry → vuln(sqli)","when":["php"],"do":["sqli"],"avoid":["content_enum"],"chain":"entry → vuln(sqli)"}]}
 action=retire 时 rule 或 lesson_key 指出要降权的旧条。
 """
 
@@ -437,14 +511,14 @@ def parse_evolve_lessons(text: str) -> list[dict]:
     if not isinstance(items, list):
         return []
     out: list[dict] = []
-    for it in items[:12]:
+    for it in items[:3]:
         if not isinstance(it, dict):
             continue
         action = str(it.get("action") or "upsert").lower()
         when = _norm_list(it.get("when"))
         do = _norm_list(it.get("do"))
         avoid = _norm_list(it.get("avoid"))
-        chain = str(it.get("chain") or "")
+        chain = str(it.get("chain") or it.get("route") or "")
         rule = sanitize_approach(str(it.get("rule") or ""))
         if action == "retire":
             out.append({"action": "retire", "rule": rule, "lesson_key": it.get("lesson_key")})
@@ -453,6 +527,9 @@ def parse_evolve_lessons(text: str) -> list[dict]:
             "when": when, "do": do, "avoid": avoid, "chain": chain,
             "cues": when, "techniques": do, "failed_techniques": avoid,
             "rule": rule,
+            "idea": it.get("idea") or "",
+            "method": it.get("method") or "",
+            "route": it.get("route") or chain,
         })
         if not got:
             continue
@@ -497,7 +574,7 @@ async def _retire_lesson(spec: dict) -> None:
 
 
 async def ai_refine_playbook(*, recent_episodes: list[dict], playbook: list[dict]) -> list[dict]:
-    """Hunt 结束后可选的 AI 修订。失败则返回空，不影响机械蒸馏。"""
+    """用 Claude Code 蒸馏合格 episode。失败返回空，不回退机械映射。"""
     if not bool(getattr(settings, "evolve_ai", True)):
         return []
     import asyncio
@@ -507,27 +584,50 @@ async def ai_refine_playbook(*, recent_episodes: list[dict], playbook: list[dict
     from ..agents.session import _get_spawn_sem
 
     ep_lines = []
-    for e in recent_episodes[:8]:
-        c = e.get("content") or e
-        d = distill_content(c, str(e.get("outcome") or ""), str(e.get("target_fp") or "*"))
-        if not d:
+    for e in recent_episodes[:4]:
+        if not episode_qualifies_for_evolve(e):
             continue
+        c = e.get("content") if isinstance(e.get("content"), dict) else (e.get("content") or e or {})
+        if not isinstance(c, dict):
+            c = {}
+        findings = []
+        for f in c.get("findings") or []:
+            if isinstance(f, dict):
+                findings.append(
+                    f"{f.get('category')}/{f.get('severity')}"
+                    f"{'/rt='+str(f.get('redteam_rating')) if f.get('redteam_rating') else ''}"
+                    f"{'/2nd' if f.get('secondary_verified') else ''}"
+                )
         ep_lines.append(
-            f"- outcome={e.get('outcome')} when={d.get('when')} do={d.get('do')} "
-            f"avoid={d.get('avoid')} chain={d.get('chain')}"
+            " - ".join(x for x in (
+                f"outcome={e.get('outcome') or c.get('outcome')}",
+                f"milestone={c.get('milestone') or ''}",
+                f"stack={c.get('tech') or e.get('target_fp') or ''}",
+                f"chain={sanitize_approach(str(c.get('winning_chain') or ''))}",
+                f"techniques={c.get('techniques') or []}",
+                f"avoid={c.get('failed_techniques') or []}",
+                f"cues={c.get('cues') or []}",
+                f"findings={findings}",
+                f"approach={sanitize_approach(str(c.get('approach') or ''))}",
+            ) if x)
         )
+    if not ep_lines:
+        return []
     pb_lines = []
     for p in playbook[:12]:
         c = scrub_lesson(p.get("content") or p)
         if not c:
             continue
         pb_lines.append(
-            f"- key={c.get('lesson_key')} conf={c.get('confidence')} "
-            f"when={c.get('when')} do={c.get('do')} avoid={c.get('avoid')} chain={c.get('chain')}"
+            f"- key={c.get('lesson_key')} idea={c.get('idea')} method={c.get('method')} "
+            f"route={c.get('route') or c.get('chain')} when={c.get('when')} do={c.get('do')}"
         )
     prompt = (
-        "# 最近 episode\n" + ("\n".join(ep_lines) or "（无）")
-        + "\n\n# 当前剧本\n" + ("\n".join(pb_lines) or "（空）")
+        "# 本局已确认的高危/严重洞或 flag 收口（禁止照抄题面路径）\n"
+        + "\n".join(ep_lines)
+        + "\n\n# 当前共用剧本（CTF/红队同一份，不要重复）\n"
+        + ("\n".join(pb_lines) or "（空）")
+        + "\n\n请蒸馏最多 3 条：思想、方式方法、路线。"
     )
     model = (getattr(settings, "evolve_model", None) or "").strip() or (
         (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
@@ -543,6 +643,8 @@ async def ai_refine_playbook(*, recent_episodes: list[dict], playbook: list[dict
         max_turns=1,
         permission_mode="dontAsk",
         setting_sources=[],
+        skills=[],
+        plugins=[],
         cwd=str(settings.data_dir),
         max_buffer_size=8 * 1024 * 1024,
     )
@@ -564,7 +666,10 @@ async def ai_refine_playbook(*, recent_episodes: list[dict], playbook: list[dict
             await _retire_lesson(spec)
             applied.append(spec)
         else:
-            row = await upsert_lesson(spec)
+            row = await upsert_lesson(
+                spec,
+                episode_id=str((recent_episodes[0] or {}).get("id") or "") or None,
+            )
             if row:
                 applied.append(row)
     return applied
@@ -573,25 +678,31 @@ async def ai_refine_playbook(*, recent_episodes: list[dict], playbook: list[dict
 async def evolve_after_run(
     *, episode: dict | None, applied_ids: list[str], won: bool, project_id: str | None = None,
 ) -> dict:
-    """跑完一局：蒸馏新 episode、强化用过的剧本、可选 AI 修订。"""
+    """跑完一局：仅 flag / 高危严重洞才蒸馏或强化。失败局、中危洞、空猎不改剧本。"""
+    del project_id, won
+    full = episode if isinstance(episode, dict) else None
+    if full and full.get("id") and not isinstance(full.get("content"), dict):
+        row = await db.fetchone("SELECT * FROM memory WHERE id=?", (full["id"],))
+        if row:
+            content = _loads(row["content"]) if isinstance(row.get("content"), str) else (row.get("content") or {})
+            if not isinstance(content, dict):
+                content = {}
+            full = {
+                **full,
+                "outcome": row.get("outcome") or full.get("outcome"),
+                "content": content,
+                "milestone": content.get("milestone"),
+                "achievements": content.get("achievements") or [],
+                "findings": content.get("findings") or [],
+            }
+    ok = episode_qualifies_for_evolve(full)
     distilled = None
-    if episode and not episode.get("skipped") and episode.get("id"):
-        distilled = await evolve_from_episode_id(str(episode["id"]))
-    await reinforce_lessons(applied_ids, won=won)
-    ai_n = 0
-    if bool(getattr(settings, "evolve_ai", True)) and episode_worth_ai_refine(episode):
-        try:
-            recent = await db.fetchall(
-                """SELECT id, outcome, target_fp, content FROM memory
-                   WHERE kind='episode' ORDER BY created_at DESC LIMIT 8""",
-            )
-            eps = []
-            for r in recent or []:
-                c = _loads(r["content"]) if isinstance(r.get("content"), str) else (r.get("content") or {})
-                eps.append({"outcome": r.get("outcome"), "target_fp": r.get("target_fp"), "content": c or {}})
-            pb = await list_playbook(limit=12)
-            applied = await ai_refine_playbook(recent_episodes=eps, playbook=pb)
-            ai_n = len(applied)
-        except Exception:
-            ai_n = 0
-    return {"distilled": bool(distilled), "reinforced": len(applied_ids), "ai_revised": ai_n}
+    if ok and full and not full.get("skipped") and full.get("id"):
+        distilled = await evolve_from_episode_id(str(full["id"]))
+    if ok:
+        await reinforce_lessons(applied_ids, won=True)
+    return {
+        "distilled": bool(distilled),
+        "reinforced": len(applied_ids or []) if ok else 0,
+        "ai_revised": 1 if distilled else 0,
+    }

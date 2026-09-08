@@ -110,6 +110,7 @@ class RenameProjectReq(BaseModel):
 
 class ConcurrencyReq(BaseModel):
     value: int
+    track: str | None = None  # redteam | ctf；缺省按红队，避免旧客户端改到 CTF 槽
 
 
 class BatchDeleteReq(BaseModel):
@@ -168,12 +169,17 @@ async def get_settings():
 
 @router.post("/settings/concurrency")
 async def set_concurrency(req: ConcurrencyReq):
-    """设置项目并发；返回联动后的项目/Claude 并发展示。"""
-    val = await manager.set_concurrency(req.value)
+    """按赛道设置项目并发；Claude Code 展示为两道合计。"""
+    val = await manager.set_concurrency(req.value, track=req.track or "redteam")
+    snap = manager.snapshot()
     return {
-        "concurrency_limit": val,
-        "cap": settings.max_project_concurrency_cap,
-        "claude": manager.snapshot()["claude"],
+        "concurrency_limit": snap["concurrency_limit"],
+        "cap": snap["cap"],
+        "track": "ctf" if str(req.track or "").strip().lower() in ("ctf", "flag", "benchmark") else "redteam",
+        "value": val,
+        "redteam": snap["redteam"],
+        "ctf": snap["ctf"],
+        "claude": snap["claude"],
     }
 
 

@@ -37,3 +37,11 @@ agent.tar.gz
 # local replay dumps (not source)
 demo/replay.json
 frontend/public/replay.json
+
+# local / unpublished
+docs/assets/viewpoint.png
+docs/assets/slogan.svg
+backend/tests/test_concurrency_split.py
+backend/tests/test_http_graph_land.py
+backend/tests/test_kali_kit.py
+backend/tests/test_spiral.py

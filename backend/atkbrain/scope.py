@@ -176,8 +176,152 @@ def is_internal_tld(host: str) -> bool:
     return h.endswith((".internal", ".local", ".localdomain", ".lan", ".intra", ".corp", ".svc"))
 
 
+_IFACE_INET_RE = re.compile(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})/(\d{1,2})\b")
+# 过宽前缀（VPN /8）会把 CTF 的 10.0.0.0/8 入口吞进「物理机内网」；只把常见局域网前缀当 LAN。
+_LAN_PREFIX_MIN = 16
+_LAN_PREFIX_MAX = 30
+_IPV4_MAX = 0xFFFFFFFF
+# 小于等于端口号的十进制不当成 IPv4，避免把 nmap --top-ports 100 当成 0.0.0.100。
+_IPV4_INT_MIN = 65536
+
+
+def _ipv4_octet(part: str) -> int | None:
+    p = (part or "").strip().lower()
+    if not p:
+        return None
+    try:
+        if p.startswith("0x"):
+            n = int(p, 16)
+        elif len(p) > 1 and p.startswith("0") and set(p) <= set("01234567"):
+            n = int(p, 8)
+        elif p.isdigit():
+            n = int(p, 10)
+        else:
+            return None
+    except ValueError:
+        return None
+    return n
+
+
+def _inet_aton_parts(nums: list[int]) -> int:
+    """BSD inet_aton：127.1 → 127.0.0.1，127.0.1 → 127.0.0.1。"""
+    if len(nums) == 4:
+        if not all(0 <= x <= 255 for x in nums):
+            raise ValueError("octet")
+        a, b, c, d = nums
+        return (a << 24) | (b << 16) | (c << 8) | d
+    if len(nums) == 3:
+        a, b, c = nums
+        if a > 255 or b > 255 or c > 0xFFFF:
+            raise ValueError("short")
+        return (a << 24) | (b << 16) | c
+    if len(nums) == 2:
+        a, b = nums
+        if a > 255 or b > 0xFFFFFF:
+            raise ValueError("short")
+        return (a << 24) | b
+    raise ValueError("parts")
+
+
+def coerce_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """把直连目标里的十进制/十六进制/八进制/短写 IPv4 以及映射 IPv6 收成标准地址。
+
+    只用于守卫判定真实连接，不改作业对象字符串本身。
+    """
+    h = (host or "").strip().lower().rstrip(".")
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    if h.startswith("::ffff:") and _IP_RE.match(h[7:]):
+        h = h[7:]
+    try:
+        ip = ipaddress.ip_address(h)
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            return ip.ipv4_mapped
+        return ip
+    except ValueError:
+        pass
+    if re.fullmatch(r"0x[0-9a-f]+", h):
+        try:
+            n = int(h, 16)
+            if 0 <= n <= _IPV4_MAX:
+                return ipaddress.IPv4Address(n)
+        except Exception:
+            return None
+        return None
+    if h.isdigit():
+        try:
+            n = int(h, 10)
+            if _IPV4_INT_MIN <= n <= _IPV4_MAX:
+                return ipaddress.IPv4Address(n)
+        except Exception:
+            return None
+        return None
+    if "." in h:
+        parts = h.split(".")
+        if 2 <= len(parts) <= 4:
+            nums: list[int] = []
+            for p in parts:
+                v = _ipv4_octet(p)
+                if v is None:
+                    return None
+                nums.append(v)
+            try:
+                return ipaddress.IPv4Address(_inet_aton_parts(nums))
+            except Exception:
+                return None
+    return None
+
+
+def canonical_host(host: str) -> str:
+    ip = coerce_ip(host)
+    if ip is not None:
+        return str(ip)
+    return _norm_host(host)
+
+
 def is_attacker_identity(host: str) -> bool:
-    return False
+    """本机网卡或回环：不能当立足点。不含整段物理局域网（题目可能和 Kali 同网段）。"""
+    h = _norm_host(host)
+    if not h:
+        return False
+    key = canonical_host(h)
+    if is_loopback(h) or is_loopback(key):
+        return True
+    selves = local_self_hosts()
+    return h in selves or key in selves
+
+
+def _iface_ipv4() -> list[tuple[ipaddress.IPv4Address, ipaddress.IPv4Network]]:
+    """本机非回环 IPv4 及网卡前缀。读失败则空列表。"""
+    rows: list[tuple[ipaddress.IPv4Address, ipaddress.IPv4Network]] = []
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["ip", "-o", "-4", "addr", "show"],
+            text=True, timeout=2, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return rows
+    for line in (out or "").splitlines():
+        cols = line.split()
+        if len(cols) < 4:
+            continue
+        iface = cols[1].rstrip(":")
+        if iface == "lo" or iface.startswith("lo:"):
+            continue
+        m = _IFACE_INET_RE.search(line)
+        if not m:
+            continue
+        try:
+            ip = ipaddress.IPv4Address(m.group(1))
+            prefix = int(m.group(2))
+            net = ipaddress.IPv4Network(f"{m.group(1)}/{prefix}", strict=False)
+        except Exception:
+            continue
+        if ip.is_loopback:
+            continue
+        rows.append((ip, net))
+    return rows
 
 
 def local_self_hosts() -> set[str]:
@@ -204,7 +348,121 @@ def local_self_hosts() -> set[str]:
             s.close()
     except Exception:
         pass
+    for ip, _net in _iface_ipv4():
+        out.add(_norm_host(str(ip)))
     return out
+
+
+def local_self_networks() -> list[ipaddress.IPv4Network]:
+    """物理机局域网前缀（/16–/30）。过宽前缀不收录，以免吞掉题目网段。"""
+    nets: list[ipaddress.IPv4Network] = []
+    seen: set[str] = set()
+    for _ip, net in _iface_ipv4():
+        if net.prefixlen < _LAN_PREFIX_MIN or net.prefixlen > _LAN_PREFIX_MAX:
+            continue
+        key = str(net)
+        if key not in seen:
+            seen.add(key)
+            nets.append(net)
+    return nets
+
+
+def _ipv4_in_authorized(ip: ipaddress.IPv4Address, authorized: set[str] | None) -> bool:
+    for raw in authorized or ():
+        other = coerce_ip(raw)
+        if isinstance(other, ipaddress.IPv4Address) and other == ip:
+            return True
+        if _norm_host(raw) == str(ip):
+            return True
+    return False
+
+
+def attacker_loopback_forbidden(
+    host: str,
+    *,
+    authorized: set[str] | None = None,
+) -> str | None:
+    """Kali 直连回环会打到本机，不是题目入口。入口本身就是回环时放行。"""
+    h = _norm_host(host)
+    if not h:
+        return None
+    ch = canonical_host(h)
+    if not (is_loopback(h) or is_loopback(ch)):
+        return None
+    for raw in authorized or ():
+        a = _norm_host(raw)
+        if not a:
+            continue
+        ca = canonical_host(a)
+        if is_loopback(a) or is_loopback(ca) or ca == ch or a == h:
+            return None
+    return f"{ch} 是回环地址，禁止直连本机"
+
+
+def attacker_lan_forbidden(
+    host: str,
+    *,
+    self_hosts: set[str] | None = None,
+    self_networks: list[ipaddress.IPv4Network] | None = None,
+    authorized: set[str] | None = None,
+) -> str | None:
+    """Kali 直连物理机网卡或办公网段：禁止。题目入口若就在该网段，只拦网卡本身。"""
+    h = _norm_host(host)
+    if not h:
+        return None
+    selves = {_norm_host(x) for x in (self_hosts if self_hosts is not None else local_self_hosts())}
+    key = canonical_host(h)
+    if key in selves or h in selves:
+        ip_self = coerce_ip(key)
+        if isinstance(ip_self, ipaddress.IPv4Address) and _ipv4_in_authorized(ip_self, authorized):
+            return None
+        return f"{key} 是本机网卡，禁止直连物理机"
+    ip = coerce_ip(h)
+    if not isinstance(ip, ipaddress.IPv4Address):
+        return None
+    if _ipv4_in_authorized(ip, authorized):
+        return None
+    nets = list(self_networks if self_networks is not None else local_self_networks())
+    hit = [n for n in nets if ip in n]
+    if not hit:
+        return None
+    auth_ips: list[ipaddress.IPv4Address] = []
+    for raw in authorized or ():
+        other = coerce_ip(raw)
+        if isinstance(other, ipaddress.IPv4Address):
+            auth_ips.append(other)
+    if any(any(a in n for a in auth_ips) for n in hit):
+        return None
+    return f"{ip} 落在本机网段 {hit[0]}，禁止直连物理机内网"
+
+
+def attacker_lan_scan_forbidden(
+    net: ipaddress.IPv4Network,
+    *,
+    self_hosts: set[str] | None = None,
+    self_networks: list[ipaddress.IPv4Network] | None = None,
+    authorized: set[str] | None = None,
+) -> str | None:
+    """nmap/masscan 扫到物理机网段：禁止。即使题目和 Kali 同网段，也不许扫整段。"""
+    if not isinstance(net, ipaddress.IPv4Network):
+        return None
+    if net.prefixlen == 32:
+        return attacker_lan_forbidden(
+            str(net.network_address),
+            self_hosts=self_hosts,
+            self_networks=self_networks,
+            authorized=authorized,
+        )
+    selves = {_norm_host(x) for x in (self_hosts if self_hosts is not None else local_self_hosts())}
+    for raw in selves:
+        ip = coerce_ip(raw)
+        if isinstance(ip, ipaddress.IPv4Address) and ip in net:
+            return f"禁止扫描覆盖本机网卡的网段 {net}"
+    nets = list(self_networks if self_networks is not None else local_self_networks())
+    for sn in nets:
+        if net.overlaps(sn):
+            return f"禁止扫描本机网段 {sn}"
+    return None
 
 
 def is_platform_endpoint(
@@ -215,10 +473,11 @@ def is_platform_endpoint(
     self_ports: set[int] | None = None,
 ) -> bool:
     """勿打本机控制台端口，也勿把物理机网卡 IP 当作业目标。"""
-    h = _norm_host(host)
+    h = canonical_host(host)
     if not h:
         return False
     extra = {_norm_host(x) for x in (self_hosts if self_hosts is not None else local_self_hosts())}
+    extra |= {canonical_host(x) for x in extra}
     # 物理机网卡：任意端口均视为平台自保护
     if h in extra and not is_loopback(h):
         return True
@@ -231,7 +490,20 @@ def is_platform_endpoint(
 
 
 def scan_network_forbidden_reason(token: str, scope: "Scope", extra_self: set[str] | None = None) -> str | None:
-    return None
+    raw = (token or "").strip()
+    if "/" not in raw:
+        return None
+    try:
+        net = ipaddress.ip_network(raw, strict=False)
+    except Exception:
+        return None
+    if not isinstance(net, ipaddress.IPv4Network):
+        return None
+    auth: set[str] = set()
+    if scope is not None:
+        auth |= {_norm_host(str(t).split(":")[0]) for t in (scope.targets or []) if t}
+        auth |= {_norm_host(str(i)) for i in (scope.ips or []) if i}
+    return attacker_lan_scan_forbidden(net, self_hosts=extra_self, authorized=auth)
 
 
 def forbidden_project_target_reason(host: str) -> str | None:

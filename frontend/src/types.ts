@@ -104,6 +104,8 @@ export interface FindingDetail extends Finding {
   prerequisites?: string;
   remediation?: string;
   cvss_explanation?: string;
+  secondary_review?: string;
+  node_detail_unique?: string;
 }
 
 export interface Graph {

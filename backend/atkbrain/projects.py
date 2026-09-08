@@ -270,7 +270,7 @@ async def unstick_transient_resource_errors() -> int:
 
 
 async def reclassify_hunt_failures() -> int:
-    """图空转 / 轮次或时长硬停的存量项目从 idle/completed/stopped 改到 error（失败区）。"""
+    """图空转 / 时长硬停（及 SRC 轮次硬停）的存量项目从 idle/completed/stopped 改到 error（失败区）。"""
     from .project_status import HUNT_FAILED_REASONS
 
     rows = await db.fetchall(

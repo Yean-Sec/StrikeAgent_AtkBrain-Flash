@@ -11,18 +11,18 @@ from collections.abc import Awaitable, Callable
 from ..config import settings
 from ..agents.session import _get_spawn_sem, is_retryable_connect_error
 
-SUPERVISOR_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的监督智能体，不是执行层。
-指挥官刚打完一轮；你根据简报里的全部信息判断局面，给出下一轮可执行方案。
+SUPERVISOR_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的御主，不是执行层。
+每轮从者开打前你先下令；根据简报里的全部信息判断局面，给出本轮可执行任务。
 
 职责
 - 只读简报里的攻击图（与控制台图例相同）：目标 / 服务 / 危险点 / 漏洞 / 凭证 / 立足点 / 信息；★GETSHELL 表示已拿到命令执行；RCE 最优路径是橙线；内网横向是紫线（shell→新目标）。再读开放 Intent、否证、flag、局面摘要、「已给过的方案」。不要向执行层要工具流水。
 - 「已给过的方案」是你自己每一份方案的完整记录。写第 N 份必须对照第 1…N-1 份：出 C 必须同时看见 A 和 B，不能只看最近一份。未执行 → 收紧同一路线包，禁止另起同义散文；空转满阈值循环会作废旧包并再问你。已执行无收口 → 说明相对前面哪一步改了。不要装作这是第一次开口，也不要把已否证/已忽略的方案换措辞再写一遍。
 - 判断：进展是否真实、是否把「一种观测失败」写成「攻击面关闭」、入口是否挂了、是否该武器化/过门/提权/横向/夺旗。
 - 给出下一轮可执行方案：当前方案未跑满且有新观测时加深同一面；假钥匙意图、图停滞、已有凭证/活体表面还在入口枚举时必须换方向。
-- must_intents / prefer_tactics / defer_families 是硬约束。循环会编成绑定并验收：指挥官未执行则收紧同一份绑定，不会再写一份同义散文。空字段由循环按图补全。
-- 只在轮次边界、当前验证已经结束后复盘。简报里本轮认领的 Intent 仍开放 → hold=true 表示继续当前路线包（可并行子智能体），禁止另起同义散文或改打目录枚举。
-- CTF：唯一目标是正确 flag。题面给出的账号、路径、文件优先于自造字典；交旗优先于把题审完。本题必有解：禁止 rockyou / 千万级词表 / hashcat 全库去撞哈希或登录；个位数默认口令失败不要升级字典，回到已验证通道抽数据。RCE / getshell / 橙线高亮都是手段。图上的边权乘积（常见自动补边 0.55）不是夺旗概率，禁止当进度或收工信号。
-- 红队：最高指令是 GETSHELL（report_shell 即收工）。工作循环是测试→验证→高危/严重 finding→推向命令执行；尚未 GETSHELL 则对下一活体面再来一圈。finding 不单独收工。不要因为已有一条已验证洞就停测其它活体面。
+- must_intents / prefer_tactics / defer_families 是硬约束。循环会编成绑定并验收：从者未执行则收紧同一份绑定，不会再写一份同义散文。空字段由循环按图补全。
+- 每轮都开口。简报里本轮认领的 Intent 仍开放 → hold=true 表示继续当前路线包（可并行子智能体），禁止另起同义散文或改打目录枚举。
+- CTF：唯一目标是正确 flag。题面给出的账号、路径、文件优先于自造字典；交旗优先于把题审完。本题必有解：禁止 rockyou / 超过 10 万行的词表 / hashcat 全库去撞哈希或登录；个位数默认口令失败不要升级字典，回到已验证通道抽数据。RCE / getshell / 橙线高亮都是手段。图上的边权乘积（常见自动补边 0.55）不是夺旗概率，禁止当进度或收工信号。
+- 红队：最高指令是 GETSHELL（report_shell 即收工）。工作循环是测试→验证→高危/严重 finding→推向命令执行；尚未 GETSHELL 则对下一活体面再来一圈。finding 不单独收工。不要因为已有一条已验证洞就停测其它活体面。CTF 与红队一律禁止超过 10 万行的词表（目录/子域/host/口令/哈希/端口全表）。
 
 决策顺序（必须按简报事实走，禁止写死某题打法）
 1. 引用：下一步必须能指到简报中的节点 / Intent / 否证 / 发现。写不出引用就说明没读图。
@@ -45,8 +45,8 @@ SUPERVISOR_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的监督智能体，�
 - 目标不变：红队以 report_shell 收工；CTF 以正确 flag 数齐收工。不要停题。CTF 不要因为「快 RCE 了」或橙线概率去换路、收工或停猎。
 - 禁止破坏性写入；SQLi 只用读证明。
 - 不要打本机控制台端口或攻击机网卡 IP。
-- 枚举不要开局全端口或大字典路径：跳过 small；先中型字典 / top-1000 端口，无新命中再升 large。next_plan 禁止点名一上来跑 -p- 或 big/large 表。
-- 循环钉一份路线包并强制执行：must_intents 最多 3 条，必须是不同 tactic、指向不同图节点的正交假说，指挥官同一轮 Task 并行验证可行性。看似一份方案，其实是多条路线。至少一条必须能否证当前主叙事（同一输入面换观测通道 vs 换门/换词表），禁止三条都建立在「该面已闭合」上，禁止把竞争假说写成「仅当其它路线无果」。禁止三条同义复述，禁止把目录枚举+登录爆破+全端口当三条路线。已验证可利用发现后：must 至少一格消耗该洞推向 GETSHELL；其余格打其它尚未验证的活体面，继续测→证→高危/严重。禁止三格都回头做目录枚举/指纹，不要把整个猎收成只打一条走廊。
+- 枚举走三圈小/中/大，打过再扩，各面独立升档。第 1 圈（小）只打当前入口：top-100、common.txt。第 2 圈（中）top-1000、中档目录、dnsmap。第 3 圈（大）活体后 -p-；目录不再升词表（禁止 dirbuster medium），改为递归/扩展名/备份/nikto。简报「已覆盖」已跑过的扫描禁止再点名。禁止开局 -p- 或超 10 万行词表。
+- 循环钉一份路线包并强制执行：must_intents 最多 3 条，必须是不同 tactic、指向不同图节点的正交假说，从者同一轮 Task 并行验证可行性。看似一份方案，其实是多条路线。至少一条必须能否证当前主叙事（同一输入面换观测通道 vs 换门/换词表），禁止三条都建立在「该面已闭合」上，禁止把竞争假说写成「仅当其它路线无果」。禁止三条同义复述，禁止把目录枚举+登录爆破+全端口当三条路线。已验证可利用发现后：must 至少一格消耗该洞推向 GETSHELL；其余格打其它尚未验证的活体面，继续测→证→高危/严重。禁止三格都回头做目录枚举/指纹，不要把整个猎收成只打一条走廊。
 - 简报若有「战术族」计数或「可迁移战术」族名：must 必须覆盖不同族；身份验证（hop_auth）与未授权可达（access_control）同时占格，不要用三格全写 hop_auth。
 - 已验证读/包含/注入但尚未 GETSHELL：must 至少一格是利用下一跳（weaponize / impact_escalate / finding_rce_close / finding_sqli_chain），禁止三格都是同一读面加深（file_read_chain / finding_read_loot / filter_bypass）。其余格可打其它活体面继续验证高危/严重。禁止把利用族整族写入 defer_families。禁止把 channel_oracle / api_contract / fingerprint / content_enum 当收口。hold=false。
 
@@ -56,7 +56,7 @@ SUPERVISOR_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的监督智能体，�
   "stall": "none|infra|method|chain|postex",
   "hold": false,
   "rebind_entry": false,
-  "next_plan": "给指挥官的下一轮方案（可执行，含委派与验证步骤，指向图上的点）",
+  "next_plan": "给从者的本轮任务（可执行，含委派与验证步骤，指向图上的点）",
   "must_intents": ["开放 Intent 的 id，最多 3 个，tactic 必须互异"],
   "prefer_tactics": ["strategy_key 末段战术名，如 weaponize、finding_sqli_chain"],
   "defer_families": ["本轮应避开的策略族，如 content_enum"],
@@ -70,8 +70,38 @@ must_intents 只能引用简报里出现过的 Intent id。
 prefer_tactics 优先选简报里已有、尚未做完的战术，不要发明题面专用 payload。
 """
 
-SUPERVISOR_RUNTIME_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的运行时审查，不是执行层。
-CTF 单题已跑过一段时间；根据简报判断这一猎是否还值得继续。不要写某题 payload。
+_ENUM_SHARED = (
+    "- 枚举走三圈小/中/大，打过再扩，各面独立升档。"
+    "第 1 圈（小）只打当前入口：top-100、common.txt。"
+    "第 2 圈（中）top-1000、中档目录、dnsmap。"
+    "第 3 圈（大）活体后 -p-；目录不再升词表（禁止 dirbuster medium），改为递归/扩展名/备份/nikto。"
+    "简报「已覆盖」已跑过的扫描禁止再点名。禁止开局 -p- 或超 10 万行词表。"
+)
+_ENUM_CTF = (
+    "- CTF 不走螺旋升圈。唯一目标是尽快交正确 flag。"
+    "先看本题入口活体（源码/注释/robots/题面路径/账号），像 flag 立刻交；立刻 web-exploit 打题面功能，不要先扫完再看。"
+    "题面已给出变换/编码/协议/文件时写脚本或直接打，不要把 nmap/ffuf 当下一步。"
+    "next_plan / must_intents 开局禁止把 nmap、top-ports、ffuf、common.txt、directory-list、fingerprint、content_enum 当主线或占满三格。"
+    "三格 must 应是题面利用假说。没有旗才允许一格后台 recon：跳过 small，top-1000 / 中档目录为止，不得挡交旗。"
+    "评测邻题始终越界。简报「已覆盖」已跑过的扫描不要再点名。禁止开局 -p- 或超 10 万行的表。"
+)
+_ENUM_REDTEAM = (
+    "- 红队螺旋三圈小/中/大。连续 6 个御主方案无高质量增长（已验证洞/凭证/立足点/能力边）才进入下一圈；有增长则留在当前圈。"
+    "进入该圈必须做该圈完整清单，不要因为小圈做过就省略。"
+    "第 1 圈（小）只打当前入口：top-100、common.txt，旁站关；禁止抢跑 top-1000、-p-、中档目录、旁站当攻击面。"
+    "第 2 圈（中）top-1000、中档目录、dnsmap、旁站（同 IP vhost / 兄弟域，每个旁站自己从第 1 圈开）。"
+    "第 3 圈（大）活体后 -p-；目录不再升词表（禁止 dirbuster medium），改为递归/扩展名/备份/nikto。"
+    "禁止开局 -p- 或超 10 万行词表。"
+)
+
+
+def supervisor_system_prompt(objective: str | None = None) -> str:
+    from ..objective import objective_allows_flag
+    extra = _ENUM_CTF if objective_allows_flag(objective) else _ENUM_REDTEAM
+    return SUPERVISOR_SYSTEM.replace(_ENUM_SHARED, extra)
+
+SUPERVISOR_RUNTIME_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的御主，不是执行层。
+本轮是运行时审查：CTF 单题已跑过一段时间，由你判断这一猎是否还值得继续。不要写某题 payload。循环不会按轮次硬停，停或续跑只看你的 continue。
 
 必须输出 continue。
 continue=false：暂停本猎（idle，不算失败），可人工复盘后再次启动。思路已穷尽，或剩余时限内不可能收口。入口暂时不通不算穷尽。
@@ -84,7 +114,7 @@ flag 数已齐必须 continue=false。
 {
   "continue": true,
   "diagnosis": "一句话局面判断（须引用简报事实）",
-  "next_plan": "若继续：给指挥官的下一步（可空，最多三条）"
+  "next_plan": "若继续：给从者的下一步（可空，最多三条）"
 }
 """
 
@@ -265,6 +295,15 @@ def refine_supervisor_plan(
         plan.defer_families = [
             t for t in (plan.defer_families or []) if t != "channel_oracle"
         ]
+        from .advisor_bind import (
+            ORACLE_DIAG, ORACLE_KEEP, strip_premature_timing_bans,
+            surface_false_close,
+        )
+        plan.ban_repeats = strip_premature_timing_bans(plan.ban_repeats)
+        blob_plan = f"{plan.next_plan or ''} {plan.diagnosis or ''}"
+        if surface_false_close(blob_plan):
+            plan.next_plan = ORACLE_KEEP
+            plan.diagnosis = ORACLE_DIAG
     return plan
 
 
@@ -302,12 +341,12 @@ def parse_supervisor_plan(text: str) -> SupervisorPlan:
 
 
 def format_ai_steer(plan: SupervisorPlan, *, pivots: int, extra_guide: str = "") -> str:
-    lines = [f"【AI监督 · 等同人工指令 · 方案 #{pivots}】"]
+    lines = [f"【御主 · 等同人工指令 · 方案 #{pivots}】"]
     if plan.diagnosis:
         lines.append("判断：" + plan.diagnosis)
     if plan.next_plan:
         lines.append(plan.next_plan.strip())
-    lines.append("顾问=操作员：本段必须当对话框人工指令执行，禁止当评语忽略。")
+    lines.append("御主=操作员：本段必须当对话框人工指令执行，禁止当评语忽略。")
     if extra_guide.strip():
         lines.append(extra_guide.strip())
     if plan.must_intents:
@@ -324,7 +363,7 @@ def format_ai_steer(plan: SupervisorPlan, *, pivots: int, extra_guide: str = "")
 
 
 def parse_runtime_review(raw: str) -> dict:
-    """运行时审查：解析失败默认续跑，避免误停。"""
+    """御主运行时审查：解析失败默认续跑，避免误停。"""
     text = (raw or "").strip()
     data = None
     if text:
@@ -385,12 +424,12 @@ async def _on_supervisor_pre_tool_use(_input, _tool_use_id, _hook_context) -> di
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": "顾问禁止工具，只输出 JSON",
+            "permissionDecisionReason": "御主禁止工具，只输出 JSON",
         },
     }
 
 
-_ONESHOT_CONFIG_ERR = "顾问会话配置错误：一次性提问不能挂 can_use_tool，本轮不重试。"
+_ONESHOT_CONFIG_ERR = "御主会话配置错误：一次性提问不能挂 can_use_tool，本轮不重试。"
 
 
 def is_oneshot_prompt_config_error(exc: BaseException | str) -> bool:
@@ -467,18 +506,18 @@ async def _query_text_guarded(prompt: str, opts, timeout: float, *, abandon_sec:
 async def consult_supervisor(
     brief: str, *, timeout: float | None = None, system_prompt: str | None = None,
 ) -> SupervisorPlan:
-    """一次性、无工具的 Claude Code 查询。拉起 CLI 与指挥官共用 spawn 闸。
+    """一次性、无工具的 Claude Code 查询。拉起 CLI 与从者共用 spawn 闸。
 
-    initialize / 空回复按指挥官同一套握手重试；单次生成超时抛给外层用原简报再问。
+    initialize / 空回复按从者同一套握手重试；单次生成超时抛给外层用原简报再问。
     """
-    wait = float(timeout if timeout is not None else getattr(settings, "supervisor_timeout_sec", 300) or 300)
+    wait = float(timeout if timeout is not None else getattr(settings, "supervisor_timeout_sec", 360) or 360)
     opts = supervisor_query_options(system_prompt=system_prompt)
     retries = max(1, int(getattr(settings, "claude_connect_retries", 4) or 4))
     last_exc: BaseException | None = None
     for attempt in range(1, retries + 1):
         try:
             async with _get_spawn_sem():
-                blob = await _query_text_guarded(brief, opts, max(20.0, wait))
+                blob = await _query_text_guarded(brief, opts, max(0.05, wait))
             if blob:
                 return parse_supervisor_plan(blob)
             last_exc = TimeoutError("supervisor_empty_reply")
@@ -509,24 +548,32 @@ async def await_supervisor_plan(
     on_wait: Callable[[int, str, float], Awaitable[None]] | None = None,
     consult: Callable[..., Awaitable[SupervisorPlan]] | None = None,
 ) -> SupervisorPlan:
-    """问 Claude Code 给出可用方案。超时后原简报再问，不压短。
+    """问 Claude Code 给出可用方案。总墙钟内原简报再问，不压短。
 
-    顾问是 Claude Code 一次性会话（约 1M 上下文）。超时是拉起 CLI / 生成墙钟，
-    不是上下文装不下。supervisor_consult_max_attempts=0 时不封顶。
-    CancelledError 立即中断。
+    御主是 Claude Code 一次性会话。timeout 是拉起 CLI + 生成 + 重试的总等待，
+    到点必须失败，从者按自己的思路继续。supervisor_consult_max_attempts=0
+    时只受总墙钟约束。CancelledError 立即中断。
     """
+    import time as _time
+
     ask = consult or consult_supervisor
-    wait = float(timeout if timeout is not None else getattr(settings, "supervisor_timeout_sec", 300) or 300)
+    total = float(timeout if timeout is not None else getattr(settings, "supervisor_timeout_sec", 360) or 360)
     max_attempts = int(getattr(settings, "supervisor_consult_max_attempts", 0) or 0)
     base = float(getattr(settings, "supervisor_consult_retry_base_sec", 4.0) or 0)
     current = brief
     attempt = 0
     last_err = "监督未返回"
+    deadline = _time.monotonic() + max(0.0, total)
 
     while True:
+        remaining = deadline - _time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"{last_err}（简报 {len(current)} 字）。已达 {total:.0f}s 总等待。"
+            )
         attempt += 1
         try:
-            plan = await ask(current, timeout=wait)
+            plan = await ask(current, timeout=remaining)
             if plan_is_usable(plan):
                 return plan
             last_err = "监督返回空方案"
@@ -541,6 +588,10 @@ async def await_supervisor_plan(
                 f"{last_err}（简报 {len(current)} 字）。已达重试上限。"
             )
         delay = 0.0 if base <= 0 else min(30.0, base * attempt)
+        if _time.monotonic() + delay >= deadline:
+            raise TimeoutError(
+                f"{last_err}（简报 {len(current)} 字）。已达 {total:.0f}s 总等待。"
+            )
         if on_wait is not None:
             await on_wait(attempt, last_err, delay)
         if delay > 0:
@@ -548,7 +599,7 @@ async def await_supervisor_plan(
 
 
 async def consult_runtime_review(brief: str, *, timeout: float | None = None) -> dict:
-    """CTF 运行时审查。失败/空输出默认续跑。"""
+    """CTF 御主运行时审查。失败/空输出默认续跑。"""
     try:
         plan = await consult_supervisor(
             brief, timeout=timeout, system_prompt=SUPERVISOR_RUNTIME_SYSTEM,

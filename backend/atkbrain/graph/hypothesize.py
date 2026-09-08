@@ -75,9 +75,25 @@ _UNIFORM_ERROR_PAGE_RE = re.compile(
 )
 _INPUT_SURFACE_FALSE_CLOSE_RE = re.compile(
     r"(?:登录|口令|认证|输入|表单|参数|注入)面.{0,16}(?:关闭|已死|已闭合|穷尽)|"
-    r"(?:该|此)面(?:已死|关闭)|面已关",
+    r"(?:该|此)面(?:已死|关闭)|面已关|"
+    r"通道级否证|确定性\s*500|死面|输入无关|无条件崩溃",
     re.I,
 )
+_SURFACE_PATH_RE = re.compile(r"(?:https?://[^\s/]+)?(/[A-Za-z][A-Za-z0-9._-]{0,63})")
+_SURFACE_WORD_RE = re.compile(
+    r"[a-z]{3,}|"
+    r"登录|口令|认证|表单|资产|报销|后台",
+    re.I,
+)
+_SURFACE_STOP = frozenset({
+    "danger", "info", "vuln", "http", "https", "www", "html",
+    "always", "error", "page", "uniform", "status", "cookie",
+    "crash", "closed", "none", "null", "diff", "query", "param",
+    "post", "get", "svc", "service", "target", "goal", "host",
+    "tcp", "udp", "port", "flask", "gunicorn", "werkzeug",
+    "the", "and", "for", "from", "with", "ams",
+})
+_SURFACE_PATH_STOP = frozenset({"/http", "/https", "/tcp", "/udp"})
 _AUTHZ_HIT_RE = re.compile(r"\b(401|403)\b|unauthorized|www-authenticate", re.I)
 # 「通道否证 / 同体 4xx」是一种观测，不是把跳板整族写成死。
 _CHANNEL_NEGATION_RE = re.compile(
@@ -474,31 +490,82 @@ def _channel_oracle_intents(
     return out
 
 
+def _surface_tokens(node: dict | None) -> frozenset[str]:
+    """同一输入面的弱标识：URL 路径，或 key/标题里的登录、login 一类词。"""
+    if not isinstance(node, dict):
+        return frozenset()
+    key = str(node.get("key") or "")
+    title = str(node.get("title") or "")
+    text = f"{key} {title}"
+    paths = []
+    for raw in _SURFACE_PATH_RE.findall(text):
+        p = str(raw or "").lower().rstrip("/")
+        if p and p not in _SURFACE_PATH_STOP:
+            paths.append(p)
+    if paths:
+        return frozenset(paths)
+    rest = key.split(":", 1)[-1] if ":" in key else key
+    out: set[str] = set()
+    for w in _SURFACE_WORD_RE.findall(f"{rest} {title}"):
+        s = str(w or "").lower()
+        if s and s not in _SURFACE_STOP:
+            out.add(s)
+    return frozenset(out)
+
+
+def _node_has_channel_diff(node: dict | None) -> bool:
+    if not isinstance(node, dict):
+        return False
+    blob = _blob(node)
+    title = str(node.get("title") or "")
+    return bool(_CHANNEL_DIFF_RE.search(blob) or _CHANNEL_DIFF_RE.search(title))
+
+
+def _node_uniform_or_false_close(node: dict | None) -> bool:
+    """该节点仍是单通道/假关闭：本面还要换观测通道。"""
+    if not isinstance(node, dict):
+        return False
+    ntype = str(node.get("type") or "").lower()
+    blob = _blob(node)
+    title = str(node.get("title") or "")
+    if ntype in ("danger", "vuln"):
+        if _node_has_channel_diff(node):
+            return False
+        text = f"{title} {blob}"
+        return bool(
+            _UNIFORM_OBS_RE.search(blob) or _UNIFORM_OBS_RE.search(title)
+            or _INPUT_SURFACE_FALSE_CLOSE_RE.search(text)
+        )
+    if ntype == "info":
+        return _info_needs_channel_oracle(blob, title)
+    return False
+
+
 def needs_channel_oracle(graph: dict | None) -> bool:
     """参数面只有状态码/正文一类观测：输入面未关，还要换通道。
 
-    图上任一危险点/漏洞已经出现耗时/长度/布尔差分，通道就算找到了。
-    残留的「恒定错误页/已闭合」节点不再把整图钉在换通道上。
-    指挥官把假关闭写成 info 时同样钉住换通道，避免只打指纹。
+    按节点/输入面判断：某一面出现耗时/长度/布尔差分，只结算那一面。
+    其它面上的恒定错误页/假关闭仍钉住换通道。
+    御主把假关闭写成 info 时同样钉住，避免只打指纹。
     """
     if not graph:
         return False
-    has_uniform = False
-    for n in graph.get("nodes") or []:
-        if not isinstance(n, dict):
-            continue
+    nodes = [n for n in (graph.get("nodes") or []) if isinstance(n, dict)]
+    settled: set[str] = set()
+    for n in nodes:
         ntype = str(n.get("type") or "").lower()
-        blob = _blob(n)
-        title = str(n.get("title") or "")
-        if ntype in ("danger", "vuln"):
-            if _CHANNEL_DIFF_RE.search(blob) or _CHANNEL_DIFF_RE.search(title):
-                return False
-            if _UNIFORM_OBS_RE.search(blob) or _UNIFORM_OBS_RE.search(title):
-                has_uniform = True
-        elif ntype == "info":
-            if _info_needs_channel_oracle(blob, title):
-                has_uniform = True
-    return has_uniform
+        if ntype not in ("danger", "vuln", "info"):
+            continue
+        if _node_has_channel_diff(n):
+            settled |= set(_surface_tokens(n))
+    for n in nodes:
+        if not _node_uniform_or_false_close(n):
+            continue
+        toks = _surface_tokens(n)
+        if toks and settled and (toks & settled):
+            continue
+        return True
+    return False
 
 
 def _blob(node: dict) -> str:
@@ -897,7 +964,7 @@ def hypotheses_for_node(
                 _mk(key, "auth_surface",
                     f"枚举 {title} 的登录/鉴权/管理入口并测默认口令与弱鉴权{cred_sfx}",
                     rationale="多数 Web 服务的高价值面在认证边界", est=0.62, severity=sev, node=node),
-                _mk(key, "content_enum", f"对 {title} 做目录与脚本文件枚举（先中型字典，无新命中再上大表；跳过小表）",
+                _mk(key, "content_enum", f"对 {title} 做目录与脚本文件枚举（先看入口已知路径与源码；禁止超 10 万行词表）",
                     rationale="未链接脚本常无目录命中；无扩展名扫描不能当内容枚举完成", est=0.58, severity=sev, node=node),
             ])
             if _node_looks_like_gadget(blob, tags, title):

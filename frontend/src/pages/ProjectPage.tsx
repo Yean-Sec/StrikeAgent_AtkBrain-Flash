@@ -380,7 +380,7 @@ export function ProjectPage() {
                 <span className="pulse-dot" style={{ background: statusColor[shownStatus] || colors.muted }} />
                 <span className="muted" style={{ fontSize: 13 }}>{statusLabel[shownStatus] || shownStatus}</span>
                 {queued ? (
-                  <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="已启动，等待顶部「并发项目」空出槽位后才会真正开跑">等并发槽</span>
+                  <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="已启动，等待本赛道（红队或 CTF）并发槽空出后才会真正开跑">等并发槽</span>
                 ) : null}
                 {stopReason === "entry_dead" ? (
                   <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="入口连续不可达；站点恢复后可再启动">入口不可达</span>
@@ -397,7 +397,7 @@ export function ProjectPage() {
               <span
                 className="muted"
                 style={{ fontSize: 13 }}
-                title="沿橙线各边 weight 的乘积，只给控制台看。不是校准过的 getshell/夺旗概率，不参与调度、收工或顾问决策。"
+                title="沿橙线各边 weight 的乘积，只给控制台看。不是校准过的 getshell/夺旗概率，不参与调度、收工或御主决策。"
               >
                 RCE 概率 ≈ <b style={{ color: colors.primary }}>{graph.rce_path?.likelihood ?? 0}</b>
               </span>
@@ -429,7 +429,7 @@ export function ProjectPage() {
         </div>
         <div className="card-cream project-side-pane">
           <div className="tabs project-side-tabs">
-            {([["timeline", "时间线"], ["findings", `漏洞 ${visibleFindings.length || ""}`], ["services", `发现的服务 ${serviceCount || ""}`], ["memory", "自进化"], ["supervisor", `自监督 ${supervisorCount || ""}`]] as const).map(([k, label]) => (
+            {([["timeline", "时间线"], ["findings", `漏洞 ${visibleFindings.length || ""}`], ["services", `发现的服务 ${serviceCount || ""}`], ["memory", "自进化"], ["supervisor", `自循环 ${supervisorCount || ""}`]] as const).map(([k, label]) => (
               <div key={k} className={`tab ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>{label}</div>
             ))}
           </div>

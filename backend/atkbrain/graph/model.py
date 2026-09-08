@@ -95,6 +95,93 @@ def coerce_goal_node_type(key: str, ntype: str, tags: list | None = None) -> str
     return "danger"
 
 
+# key 前缀 → 节点类型。只用于把 info 空壳升到前缀类型，不把已声明的更强类型降回去。
+_KEY_TYPE_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("target:", "target"),
+    ("svc:", "service"),
+    ("service:", "service"),
+    ("danger:", "danger"),
+    ("vuln:", "vuln"),
+    ("cred:", "credential"),
+    ("credential:", "credential"),
+    ("foothold:", "foothold"),
+    ("honeypot:", "honeypot"),
+    ("goal:", "goal"),
+)
+_TYPE_RANK: dict[str, int] = {
+    "info": 0,
+    "service": 1,
+    "danger": 2,
+    "honeypot": 2,
+    "credential": 3,
+    "vuln": 4,
+    "foothold": 5,
+    "target": 6,
+    "goal": 7,
+}
+
+
+def infer_node_type_from_key(key: str) -> str | None:
+    k = str(key or "").strip().lower()
+    if not k:
+        return None
+    for prefix, ntype in _KEY_TYPE_PREFIXES:
+        if k.startswith(prefix):
+            return ntype
+    return None
+
+
+def humanize_node_key(key: str) -> str:
+    raw = str(key or "").strip()
+    if not raw:
+        return raw
+    inferred = infer_node_type_from_key(raw)
+    if not inferred:
+        return raw
+    rest = raw.split(":", 1)[-1].strip()
+    return rest or raw
+
+
+def coerce_declared_node_type(key: str, ntype: str, tags: list | None = None) -> str:
+    """key 前缀是 vuln:/foothold: 等时，禁止用 type=info 占位。已声明的更强类型保留。"""
+    declared = coerce_goal_node_type(key, ntype or "info", tags)
+    inferred = infer_node_type_from_key(key)
+    if not inferred:
+        return declared or "info"
+    if inferred == "goal":
+        return coerce_goal_node_type(key, "goal", tags)
+    if _TYPE_RANK.get(declared or "info", 0) < _TYPE_RANK.get(inferred, 0):
+        return inferred
+    return declared or inferred
+
+
+def placeholder_node_spec(key: str) -> tuple[str, str, str, list[str]]:
+    """边/旗引用了还不存在的节点时的占位：(type, title, severity, tags)。"""
+    ntype = coerce_declared_node_type(key, infer_node_type_from_key(key) or "info")
+    title = humanize_node_key(key)
+    if ntype == "vuln":
+        sev = "high"
+    elif ntype in ("foothold", "goal"):
+        sev = "critical"
+    elif ntype == "danger":
+        sev = "medium"
+    else:
+        sev = "info"
+    return ntype, title, sev, ["placeholder"]
+
+
+def is_placeholder_node(key: str, title: str | None, detail, tags: list | None) -> bool:
+    tagset = {str(t).lower() for t in (tags or [])}
+    if "placeholder" in tagset:
+        return True
+    empty_detail = detail in (None, "", {}, [])
+    if isinstance(detail, str) and not detail.strip():
+        empty_detail = True
+    if str(title or "") in (str(key or ""), humanize_node_key(key)) and empty_detail:
+        return True
+    return False
+
+
 def agent_goal_reserved_error(key: str, ntype: str, tags: list | None = None) -> str | None:
     """add_node 不得直接落已达成的 shell/flag，须走 report_shell / report_flag。"""
     if ntype != "goal":
@@ -220,6 +307,80 @@ def display_finding_severity(row: Any) -> str:
         return rt
     sev = (_get("severity") or "info").strip().lower()
     return sev if sev in SEVERITY_ORDER else "info"
+
+
+_RT_RATING_ZH = {
+    "critical": "严重", "high": "高危", "medium": "中危", "low": "低危", "info": "信息",
+}
+
+
+def redteam_rating_label(raw: str | None) -> str:
+    rt = normalize_redteam_rating(raw)
+    if not rt:
+        return "未评级"
+    return _RT_RATING_ZH.get(rt, rt)
+
+
+def secondary_review_error(
+    secondary_verified: bool,
+    rating: str | None,
+    rationale: str | None,
+) -> str | None:
+    """二次验证与红队评级必须同一轮完成；缺一则拒绝。首次上报两者都不填则放行。"""
+    has_rating = bool(normalize_redteam_rating(rating))
+    why = (rationale or "").strip()
+    if not secondary_verified and not has_rating and not why:
+        return None
+    if not secondary_verified:
+        return (
+            "二次验证与红队评级必须一起做：请 secondary_verified=true，"
+            "并同时给 redteam_rating 与 redteam_rating_rationale"
+            "（须写清二次怎么打：换通道/重放/对照，以及为何是这个级）。"
+        )
+    if not has_rating:
+        return "二次验证已标完成，但缺少 redteam_rating。"
+    if len(why) < 40:
+        return (
+            "redteam_rating_rationale 须同时阐述二次验证过程（换通道/重放 PoC/对照预期）"
+            "和进攻侧评级理由，不要只写「高危」。"
+        )
+    return None
+
+
+def secondary_review_narrative(row: Any) -> str:
+    """报告里「二次验证与红队评级」一节，两者一起阐述。"""
+    def _get(key: str):
+        try:
+            if isinstance(row, dict):
+                return row.get(key)
+            v = getattr(row, key, None)
+            if v is None:
+                v = row[key]
+            return v
+        except Exception:
+            return None
+
+    done = bool(_get("secondary_verified"))
+    rating = normalize_redteam_rating(_get("redteam_rating") if _get("redteam_rating") is not None else None)
+    why = str(_get("redteam_rating_rationale") or "").strip()
+    lines: list[str] = []
+    if not done and not rating and not why:
+        lines.append("【二次验证】未做。本条仍是首次观测入库，尚未换通道或重放 PoC 做二次验证。")
+        lines.append("【红队评级】未评级。展示严重度暂用入库 severity。二次验证与红队评级须同一轮完成，并在本节写清过程与理由。")
+        return "\n".join(lines)
+    if done:
+        lines.append("【二次验证】已做。须与红队评级同一轮：独立再打一遍（换观测通道 / 重放 PoC / 对照预期回显），不能只把首次观测再贴一遍。")
+    else:
+        lines.append("【二次验证】未做。已出现评级或理由但未完成二次验证，报告视为不完整。")
+    if rating:
+        lines.append(f"【红队评级】**{redteam_rating_label(rating)}**（`{rating}`）。展示严重度以该评级为准。")
+    else:
+        lines.append("【红队评级】未给出。二次验证完成后必须同时评级。")
+    if why:
+        lines.append("【阐述】\n" + why)
+    else:
+        lines.append("【阐述】未写。二次验证过程（怎么打、看到什么）和评级理由必须写在 redteam_rating_rationale。")
+    return "\n".join(lines)
 
 
 def compute_risk_score(

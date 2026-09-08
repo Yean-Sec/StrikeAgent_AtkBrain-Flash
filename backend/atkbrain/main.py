@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
         from .engine.scheduler import manager as _run_manager
         resumed = await start_saved_hunts(_run_manager, db_running)
         if resumed:
-            print(f"[startup] 续跑重启前在跑的 {len(resumed)} 个项目（不超过并发 {_run_manager.project_sem.limit}）")
+            print(f"[startup] 续跑重启前在跑的 {len(resumed)} 个项目（红队≤{_run_manager.redteam_sem.limit} / CTF≤{_run_manager.ctf_sem.limit}）")
         elif db_running:
             print("[startup] 重启前有 running 记录但均不可续跑，已改回空闲")
     except Exception as e:

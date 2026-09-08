@@ -113,9 +113,9 @@ export function FindingReportModal({
               </>
             )}
 
-            <h3>评级理由</h3>
+            <h3>二次验证与红队评级</h3>
             <p style={{ fontSize: 13, margin: 0, whiteSpace: "pre-wrap" }}>
-              {d.redteam_rating_rationale || "尚未从进攻侧写评级理由。展示严重度以红队二次验证评级为准。"}
+              {d.secondary_review || d.redteam_rating_rationale || "尚未做二次验证与红队评级。二者须同一轮完成，并在本节写清过程与理由。"}
             </p>
 
             <div className="finding-guidance-grid">
@@ -128,7 +128,6 @@ export function FindingReportModal({
             <div className="section" style={{ padding: 12, background: "var(--surface, #f6f4ef)", borderRadius: 8, fontSize: 13 }}>
               <div className="meta-grid">
                 <span>状态</span><span><b><VerifyBadge status={d.verification_status} /></b></span>
-                <span>二次验证</span><span><SecondaryVerifyBadge done={!!d.secondary_verified} /></span>
                 {d.proof_type && <><span>证明类型</span><span className="kbd">{d.proof_type}</span></>}
                 {d.proof_canary && <><span>Canary</span><span className="kbd">{d.proof_canary}</span></>}
                 {d.proof_url && (
@@ -174,7 +173,9 @@ export function FindingReportModal({
                   {" "}[{d.related_node.type}/{d.related_node.severity}] {d.related_node.title}
                   {d.related_node.risk_score != null ? ` (risk=${d.related_node.risk_score})` : ""}
                 </p>
-                {d.related_node.detail && <pre>{d.related_node.detail}</pre>}
+                {(d.node_detail_unique || (d.node_detail_unique === undefined && d.related_node.detail)) ? (
+                  <pre>{d.node_detail_unique || d.related_node.detail}</pre>
+                ) : null}
               </>
             )}
 

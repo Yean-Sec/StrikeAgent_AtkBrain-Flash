@@ -529,7 +529,7 @@ function SubprojectsTable({
                   <span className="row" style={{ gap: 7, alignItems: "center", flexWrap: "wrap" }}>
                     <span className="pulse-dot" style={{ background: statusColor[displayStatus(p)] || colors.muted }} />
                     {statusLabel[displayStatus(p)] || p.status}
-                    {p.queued ? <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="已启动，等待顶部「并发项目」空出槽位后才会真正开跑">等并发槽</span> : null}
+                    {p.queued ? <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="已启动，等待本赛道（红队或 CTF）并发槽空出后才会真正开跑">等并发槽</span> : null}
                     {!p.running && p.config?.completion_reason === "entry_dead" ? <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="入口连续不可达；站点恢复后可再启动">入口不可达</span> : null}
                     {!p.running && (p.config?.completion_reason === "env_closed" || p.config?.completion_reason === "env_unreachable" || p.config?.env_closed) ? <span className="badge" style={{ background: "rgba(198,69,69,.12)", color: "#c64545", borderColor: "rgba(198,69,69,.35)" }} title="评测任务已到期或平台不可达">环境已到期</span> : null}
                   </span>

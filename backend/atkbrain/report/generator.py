@@ -573,6 +573,8 @@ _HTML_TMPL = Template(r"""
     {% if curl %}<h4>curl</h4><pre>{{ curl }}</pre>{% endif %}
     {% if pyp %}<h4>python</h4><pre>{{ pyp }}</pre>{% endif %}
     {% if not curl and not pyp %}<p class="empty">未采集可执行 PoC。</p>{% endif %}
+    <h4>二次验证与红队评级</h4>
+    <div class="vuln-body">{{ f.secondary_review or '未采集' }}</div>
     {% if f.proof_canary or f.proof_url or f.proof_detail %}
     <h4>证明材料</h4>
     <ul>
@@ -589,7 +591,8 @@ _HTML_TMPL = Template(r"""
     {% if f.related_node %}
     <h4>关联攻击图</h4>
     <p class="meta"><code>{{ f.related_node.key }}</code> [{{ f.related_node.type }}/{{ f.related_node.severity }}] {{ f.related_node.title }}</p>
-    {% if f.related_node.detail %}<pre>{{ f.related_node.detail }}</pre>{% endif %}
+    {% set nd = f.node_detail_unique if f.node_detail_unique is defined else f.related_node.detail %}
+    {% if nd %}<pre>{{ nd }}</pre>{% endif %}
     {% endif %}
     {% if f.related_edges %}
     <ul>

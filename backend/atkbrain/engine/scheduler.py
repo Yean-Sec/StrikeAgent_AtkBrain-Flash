@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-from ..config import settings
+from ..config import benchmark_slot_limit, settings
 
 
 class DynamicSemaphore:
@@ -64,37 +64,54 @@ class RunHandle:
     run_id: str | None = None
     hard_restart: bool = False  # True=清图+新容器+烧 attempt；False=续跑
     user_stop: bool = False     # True=人工暂停，重启后不要自动拉起
-    slot_held: bool = False     # 已拿到项目并发槽
-    bench_held: bool = False    # 已拿到评测容器槽
+    slot_held: bool = False     # 已拿到本赛道项目并发槽
+    slot_kind: str = "redteam"  # redteam | ctf
+    bench_held: bool = False    # 兼容旧句柄；现与 ctf 槽合一，不再单独占
+
+
+def hunt_slot_kind(project: dict | None, objective: str | None = None) -> str:
+    """CTF / 评测子题走 ctf 槽，其余走红队槽。两道闸互不占。"""
+    from ..objective import objective_allows_flag
+    from .. import benchmark as bmk
+    if project and bmk.is_benchmark_sub(project):
+        return "ctf"
+    obj = objective
+    if not obj and project:
+        cfg = project.get("config") or {}
+        obj = (cfg.get("objective") or cfg.get("track") or "") if isinstance(cfg, dict) else ""
+    return "ctf" if objective_allows_flag(obj) else "redteam"
 
 
 class RunManager:
-    """两层并发：
-    - 项目层 `project_sem`：同时自动渗透的项目 run 数（默认 10）。loop 每 run 占 1 个。
-    - 会话层 `claude_per_project`：每项目 2 路全新 Claude Code（指挥官 + 自监督）。
-      指挥官每轮新开会话，监督每次查询也是新会话；不跨轮续接旧对话。
-      全局上限 `max_claude` = 项目并发 × 2（10 项目即 20 个 Claude Code）。
+    """两道互不占槽的项目闸 + 编排会话展示：
+    - 红队 `redteam_sem`：红队/单目标同时跑的数量（默认 5）。
+    - CTF `ctf_sem`：CTF / 评测子题（默认 3，上限 20）。
+    - 会话层 `claude_per_project`：每项目 2 路（从者 + 御主）。
+      顶栏 Claude Code 显示两道合计 × 2（默认 8 项目 → 16 路）。
     """
 
     def __init__(self) -> None:
-        proj_limit = min(settings.max_project_concurrency, settings.max_project_concurrency_cap)
-        self.project_sem = DynamicSemaphore(max(1, proj_limit))
-        # 向后兼容别名：历史代码/路由用 manager.sem 表示“项目 run 并发”。
-        self.sem = self.project_sem
+        rt_limit = min(settings.max_redteam_concurrency, settings.max_redteam_concurrency_cap)
+        ctf_limit = benchmark_slot_limit()
+        self.redteam_sem = DynamicSemaphore(max(1, rt_limit))
+        self.ctf_sem = DynamicSemaphore(max(1, ctf_limit))
+        # 旧名：只代表红队槽。CTF 不再走这道闸。
+        self.project_sem = self.redteam_sem
+        self.sem = self.redteam_sem
+        self.bench_sem = self.ctf_sem
         self.claude_per_project = max(1, int(getattr(settings, "claude_per_project", 2) or 2))
-        # 全局 Agent 会话上限（展示 + 软约束）；默认联动 = 项目并发 × 每项目会话。
-        self.max_claude = min(
-            max(settings.max_concurrency, proj_limit * self.claude_per_project),
-            settings.max_concurrency_cap,
-        )
-        self.bench_sem = asyncio.Semaphore(max(1, int(getattr(settings, "benchmark_max_concurrency", 10) or 10)))
+        self.max_claude = 0
+        self._relink_claude_cap()
         self.handles: dict[str, RunHandle] = {}
         self.shutting_down = False
 
+    def slot_sem(self, kind: str) -> DynamicSemaphore:
+        return self.ctf_sem if kind == "ctf" else self.redteam_sem
+
     @property
     def claude_active(self) -> int:
-        """当前在跑的 Agent 会话数 ≈ 运行中项目数 × 每项目会话。"""
-        return self.project_sem.active * self.claude_per_project
+        """当前在跑的 Agent 会话数 ≈ (红队占槽 + CTF 占槽) × 每项目会话。"""
+        return (self.redteam_sem.active + self.ctf_sem.active) * self.claude_per_project
 
     def is_running(self, project_id: str) -> bool:
         h = self.handles.get(project_id)
@@ -108,7 +125,7 @@ class RunManager:
     def is_queued(self, project_id: str) -> bool:
         """已 start 但还在等项目并发槽（sem.acquire 之前），未真正开跑。
 
-        UI 应显示「排队中」，不要算进「运行中」——否则会出现「并发 5/5、列表却写运行中 6」。
+        UI 应显示「排队中」，不要算进「运行中」——否则会出现「并发已满、列表却多一条运行中」。
         """
         h = self.handles.get(project_id)
         if not h or not h.task or h.task.done():
@@ -119,24 +136,42 @@ class RunManager:
         return self.handles.get(project_id)
 
     def _relink_claude_cap(self) -> None:
-        """项目并发/每项目会话变化后，默认联动重算全局 Agent 上限并展示。"""
+        """红队/CTF 项目并发变化后，顶栏 Claude Code 显示两道合计 × 每项目会话。"""
+        total_projects = self.redteam_sem.limit + self.ctf_sem.limit
         self.max_claude = min(
-            self.project_sem.limit * self.claude_per_project, settings.max_concurrency_cap
+            total_projects * self.claude_per_project,
+            settings.max_concurrency_cap,
         )
 
-    async def set_concurrency(self, value: int) -> int:
-        """设置项目并发（同时自动渗透的项目数）。默认联动重算全局 Agent 上限。"""
-        value = max(1, min(value, settings.max_project_concurrency_cap))
-        await self.project_sem.set_limit(value)
+    async def set_concurrency(self, value: int, *, track: str = "redteam") -> int:
+        """按赛道设置项目并发。track=ctf 只动 CTF 槽，红队反之。"""
+        kind = "ctf" if str(track or "").strip().lower() in ("ctf", "flag", "benchmark") else "redteam"
+        if kind == "ctf":
+            return await self.set_ctf_concurrency(value)
+        return await self.set_redteam_concurrency(value)
+
+    async def set_redteam_concurrency(self, value: int) -> int:
+        value = max(1, min(int(value), settings.max_redteam_concurrency_cap))
+        await self.redteam_sem.set_limit(value)
+        self._relink_claude_cap()
+        return value
+
+    async def set_ctf_concurrency(self, value: int) -> int:
+        cap = int(getattr(settings, "max_ctf_concurrency_cap", 20) or 20)
+        if cap <= 0:
+            cap = 20
+        value = max(1, min(int(value), cap))
+        await self.ctf_sem.set_limit(value)
+        settings.benchmark_max_concurrency = value
         self._relink_claude_cap()
         return value
 
     # 语义更清晰的别名
     async def set_project_concurrency(self, value: int) -> int:
-        return await self.set_concurrency(value)
+        return await self.set_redteam_concurrency(value)
 
     def set_claude_per_project(self, value: int) -> int:
-        """每项目固定 2 个 Claude：主会话 + 自监督。"""
+        """每项目固定 2 个 Claude：从者 + 御主。"""
         self.claude_per_project = 2
         self._relink_claude_cap()
         return self.claude_per_project
@@ -154,15 +189,11 @@ class RunManager:
             return
         if handle.slot_held:
             handle.slot_held = False
-            await self.sem.release()
+            await self.slot_sem(handle.slot_kind).release()
         if handle.bench_held:
             handle.bench_held = False
-            try:
-                self.bench_sem.release()
-            except ValueError:
-                pass
 
-    def _slot_holders(self) -> list[str]:
+    def _slot_holders(self, kind: str | None = None) -> list[str]:
         out: list[str] = []
         for pid, h in self.handles.items():
             if not h.slot_held:
@@ -170,6 +201,8 @@ class RunManager:
             if h.status != "running":
                 continue
             if not h.task or h.task.done():
+                continue
+            if kind and h.slot_kind != kind:
                 continue
             out.append(pid)
         return out
@@ -259,24 +292,36 @@ class RunManager:
             if h.task is None or h.task.done():
                 if h.status != "zombie":
                     self.handles.pop(pid, None)
-        live = self._slot_holders()
+        live_rt = self._slot_holders("redteam")
+        live_ctf = self._slot_holders("ctf")
+        live = live_rt + live_ctf
         queued = [pid for pid in self.handles if self.is_queued(pid)]
-        # 顶栏「并发项目」必须等于真正占槽的 run；信号量泄漏时当场掰回来
-        if self.project_sem.active != len(live):
-            self.project_sem.force_active(len(live))
-        running = live
+        if self.redteam_sem.active != len(live_rt):
+            self.redteam_sem.force_active(len(live_rt))
+        if self.ctf_sem.active != len(live_ctf):
+            self.ctf_sem.force_active(len(live_ctf))
+        rt_cap = settings.max_redteam_concurrency_cap
+        ctf_cap = max(1, int(getattr(settings, "max_ctf_concurrency_cap", 20) or 20))
         return {
-            # 向后兼容：这三个字段现在代表“项目并发”层。
-            "concurrency_limit": self.project_sem.limit,
+            "concurrency_limit": self.redteam_sem.limit + self.ctf_sem.limit,
             "active": len(live),
-            "cap": settings.max_project_concurrency_cap,
-            "running": running,
+            "cap": rt_cap + ctf_cap,
+            "running": live,
             "queued": queued,
-            # 两层语义显式展示
+            "redteam": {
+                "active": len(live_rt),
+                "limit": self.redteam_sem.limit,
+                "cap": rt_cap,
+            },
+            "ctf": {
+                "active": len(live_ctf),
+                "limit": self.ctf_sem.limit,
+                "cap": ctf_cap,
+            },
             "projects": {
                 "active": len(live),
-                "limit": self.project_sem.limit,
-                "cap": settings.max_project_concurrency_cap,
+                "limit": self.redteam_sem.limit + self.ctf_sem.limit,
+                "cap": rt_cap + ctf_cap,
             },
             "claude": {
                 "active": self.claude_active,

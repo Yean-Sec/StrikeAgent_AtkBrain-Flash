@@ -8,6 +8,10 @@ from .graph.model import display_finding_severity
 REDTEAM = "redteam"
 FLAG = "flag"
 
+# 用户可见角色名（代码标识 advisor/supervisor/commander 不改）
+ROLE_EXECUTOR = "从者"  # 攻击主会话
+ROLE_MASTER = "御主"  # 顾问会话
+
 RT_GETSHELL = "getshell"
 RT_DATA_ACCESS = "data_access"
 RT_ADMIN_ACCESS = "admin_access"

@@ -71,14 +71,15 @@ async def persist_milestone(ctx: AgentContext, milestone: str, **extra) -> dict 
             )
         else:
             msg = f"已沉淀里程碑路径（{milestone}）到记忆库"
-            try:
-                from ..memory.evolve import evolve_from_episode_id
-                if row and row.get("id"):
+            ms = str(milestone or "").strip().lower()
+            if ms in ("getflag", "high_critical_finding") and row and row.get("id"):
+                try:
+                    from ..memory.evolve import evolve_from_episode_id
                     evo = await evolve_from_episode_id(str(row["id"]))
                     if evo:
-                        msg += "，并写入跨局剧本"
-            except Exception:
-                pass
+                        msg += "，Claude 已蒸馏跨局路线/方法/思想"
+                except Exception:
+                    pass
         await emit(ctx.project_id, "log", {"level": "info", "message": msg}, run_id=ctx.run_id)
         return row
     except Exception:
@@ -98,7 +99,7 @@ MUST_DISPROVE_REFUSE = "绑定未完成，不能否证顾问 must Intent。"
 
 
 def refuse_disprove_bound_must(ctx, intent_id, verified) -> str | None:
-    """顾问 must Intent 仍在绑定时，指挥官不得写成否证。"""
+    """顾问 must Intent 仍在绑定时，御主不得写成否证。"""
     if verified:
         return None
     bound = getattr(ctx, "bound_must_intents", None) or ()
@@ -564,33 +565,81 @@ async def _touch_http_service(ctx: AgentContext, url: str, res: dict | None) -> 
                 continue
             seen.add(name)
             merged.append(name)
-        if row and set(merged) <= set(old_tags):
-            return
-        detail = f"auto from http_request {url} status={status}"
-        ntype = "service"
-        sev = "info"
-        if row:
-            title = str(row["title"] or title)
-            ntype = str(row["type"] or "service")
-            sev = str(row["severity"] or "info")
-            raw_detail = row["detail"]
-            if raw_detail:
-                loaded_d = _loads(raw_detail) if isinstance(raw_detail, str) else raw_detail
-                detail = loaded_d if loaded_d not in (None, "") else detail
-            if surf:
-                extra = "表面=" + ",".join(surf)
-                if isinstance(detail, str) and extra not in detail:
-                    detail = detail + " " + extra
-        await gstore.upsert_node(
-            ctx.project_id,
-            NodeIn(
-                key=key, type=ntype, title=title,
-                detail=detail, severity=sev, tags=merged,
-            ),
-            run_id=ctx.run_id,
+        tags_unchanged = bool(row and set(merged) <= set(old_tags))
+        if not tags_unchanged:
+            detail = f"auto from http_request {url} status={status}"
+            ntype = "service"
+            sev = "info"
+            if row:
+                title = str(row["title"] or title)
+                ntype = str(row["type"] or "service")
+                sev = str(row["severity"] or "info")
+                raw_detail = row["detail"]
+                if raw_detail:
+                    loaded_d = _loads(raw_detail) if isinstance(raw_detail, str) else raw_detail
+                    detail = loaded_d if loaded_d not in (None, "") else detail
+                if surf:
+                    extra = "表面=" + ",".join(surf)
+                    if isinstance(detail, str) and extra not in detail:
+                        detail = detail + " " + extra
+            await gstore.upsert_node(
+                ctx.project_id,
+                NodeIn(
+                    key=key, type=ntype, title=title,
+                    detail=detail, severity=sev, tags=merged,
+                ),
+                run_id=ctx.run_id,
+            )
+        await _upsert_http_path_node(
+            ctx, url=url, host=host, port=port, svc_key=key, status=status,
         )
     except Exception:
         pass
+
+
+_PROTECTED_AUTO_TYPES = {"vuln", "foothold", "credential", "goal", "honeypot", "target"}
+
+
+async def _upsert_http_path_node(
+    ctx: AgentContext, *, url: str, host: str, port: int, svc_key: str, status,
+) -> None:
+    """非根路径的活体 HTTP 落 info/danger，并挂到对应 service。"""
+    from .http_graph_land import classify_http_path_node, http_path_node_key
+
+    parsed = urlparse(url)
+    spec = classify_http_path_node(path=parsed.path or "/", status=status)
+    if not spec:
+        return
+    ntype, title, sev = spec
+    pkey = http_path_node_key(host=host, port=port, path=parsed.path or "/")
+    row = await db.fetchone(
+        "SELECT * FROM nodes WHERE project_id=? AND key=?", (ctx.project_id, pkey),
+    )
+    if row:
+        old_type = str(row["type"] or "")
+        if old_type in _PROTECTED_AUTO_TYPES:
+            return
+        if not (ntype == "danger" and old_type == "info"):
+            return
+        title = str(row["title"] or title)
+    await gstore.upsert_node(
+        ctx.project_id,
+        NodeIn(
+            key=pkey, type=ntype, title=title,
+            detail=f"auto from {url} status={status}",
+            severity=sev,
+            tags=["http", "path", "auto", f"host:{host}"],
+        ),
+        run_id=ctx.run_id,
+    )
+    await gstore.add_edge(
+        ctx.project_id,
+        EdgeIn(
+            src=svc_key, dst=pkey, relation="LEADS_TO",
+            rationale="http live path",
+        ),
+        run_id=ctx.run_id,
+    )
 
 
 def _schedule_touch_http(ctx: AgentContext, url: str, res: dict | None) -> None:
@@ -691,6 +740,11 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             pass
         if res.blocked:
             return _text(f"[已拦截 · {res.category}] {res.reason}", is_error=True)
+        try:
+            from ..engine.spiral import record_command
+            record_command(ctx.workspace_dir, command, stdout=res.stdout or "")
+        except Exception:
+            pass
         body = (
             f"exit_code={res.exit_code}  {res.duration}s\n"
             f"----- STDOUT -----\n{_clip(res.stdout, 22000)}\n"
@@ -699,6 +753,13 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         landed = await maybe_autoland_shell(ctx, body)
         if landed:
             body = body + f"\n[系统已根据远程 id 回显落定立足点 `{landed}`，关系图已更新。]"
+        try:
+            from .http_graph_land import parse_curl_http
+            probe = parse_curl_http(command=command, stdout=res.stdout or "")
+            if probe:
+                _schedule_touch_http(ctx, probe["url"], {"status": probe["status"]})
+        except Exception:
+            pass
         return _text(body)
 
     @tool(
@@ -782,11 +843,19 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             return halted
         ntype = args.get("type", "info")
         tags = args.get("tags", []) or []
-        from ..graph.model import agent_goal_reserved_error, coerce_goal_node_type
+        from ..graph.model import agent_goal_reserved_error, coerce_declared_node_type, infer_node_type_from_key
+        from ..graph.model import SEVERITY_ORDER
+        ntype = coerce_declared_node_type(args["key"], ntype, tags)
         reserved = agent_goal_reserved_error(args["key"], ntype, tags)
         if reserved:
             return _text(f"⛔ {reserved}", is_error=True)
-        ntype = coerce_goal_node_type(args["key"], ntype, tags)
+        sev = args.get("severity", "info") or "info"
+        if (
+            ntype == "vuln"
+            and infer_node_type_from_key(args["key"]) == "vuln"
+            and SEVERITY_ORDER.get(str(sev), 0) < SEVERITY_ORDER["high"]
+        ):
+            sev = "high"
         text_parts = (args["key"], args.get("title"), args.get("detail"),
                       " ".join(str(t) for t in tags))
         # 平台控制面/旁路地址禁止写进攻击图。
@@ -820,7 +889,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         )
         node = NodeIn(
             key=args["key"], type=ntype, title=args["title"],
-            detail=args.get("detail"), severity=args.get("severity", "info"),
+            detail=args.get("detail"), severity=sev,
             is_rce=bool(args.get("is_rce", False)) and confirmed_shell, tags=tags,
         )
         row = await gstore.upsert_node(ctx.project_id, node, run_id=ctx.run_id)
@@ -880,9 +949,10 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
     @tool(
         "report_finding",
         "上报一个漏洞。必须先验证真实性：evidence 或可复现 PoC 缺一不可，否则记为未验证。"
-        "二次验证：独立再打一遍（换通道/重放 PoC/对照预期回显）后把 secondary_verified 设为 true。"
-        "红队评级站在进攻侧：可打性、前置条件、稳定性、能否通向 GETSHELL/敏感数据；"
-        "禁止因类别名高估，也禁止因「只读」低估任意文件读。须写 redteam_rating_rationale。"
+        "二次验证与红队评级必须同一轮完成：独立再打一遍（换通道/重放 PoC/对照预期）后，"
+        "同时给 secondary_verified=true、redteam_rating、redteam_rating_rationale"
+        "（rationale 须写清二次怎么打、看到什么、为何是这个级）。只做其中一项会拒绝。"
+        "禁止因类别名高估，也禁止因「只读」低估任意文件读。"
         "红队完成条件是 getshell（report_shell）。finding 不单独收工。",
         {
             "type": "object",
@@ -898,16 +968,16 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                 "cvss": {"type": "number"},
                 "secondary_verified": {
                     "type": "boolean",
-                    "description": "是否已二次验证（独立再打一遍并对照预期）。仅一次观测则为 false",
+                    "description": "二次验证是否已与红队评级同一轮做完。仅首次观测则 false，且不要只填评级",
                 },
                 "redteam_rating": {
                     "type": "string",
                     "enum": ["critical", "high", "medium", "low", "info"],
-                    "description": "红队侧可利用评级，可与 severity/CVSS 不同",
+                    "description": "红队侧可利用评级，必须与 secondary_verified 一起给",
                 },
                 "redteam_rating_rationale": {
                     "type": "string",
-                    "description": "红队评级理由：为何是这个级别，避免高估或低估",
+                    "description": "须同时阐述二次验证过程（换通道/重放/对照）和评级理由，写入报告",
                 },
                 "proof_type": {
                     "type": "string",
@@ -936,6 +1006,14 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                        run_id=ctx.run_id)
             return _text(f"⛔ {plat}。平台故障不是目标漏洞，请回到授权业务资产。",
                          is_error=True)
+        from ..graph.model import secondary_review_error
+        pair_err = secondary_review_error(
+            _truthy(args.get("secondary_verified")),
+            args.get("redteam_rating"),
+            args.get("redteam_rating_rationale"),
+        )
+        if pair_err:
+            return _text(f"⛔ {pair_err}", is_error=True)
         f = FindingIn(
             node_key=args.get("node_key"), severity=args.get("severity", "medium"),
             category=args.get("category", "info"), title=args["title"],
@@ -949,6 +1027,19 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             redteam_rating_rationale=args.get("redteam_rating_rationale"),
         )
         row = await gstore.add_finding(ctx.project_id, f, run_id=ctx.run_id)
+        nk = str(args.get("node_key") or "").strip()
+        if nk:
+            from ..graph.model import infer_node_type_from_key
+            inferred = infer_node_type_from_key(nk)
+            if inferred in ("vuln", "danger", "foothold"):
+                await gstore.fill_source_node(
+                    ctx.project_id, nk,
+                    title=str(args.get("title") or ""),
+                    detail=str(args.get("evidence") or args.get("description") or ""),
+                    severity=str(args.get("severity") or ""),
+                    ntype="vuln" if inferred in ("vuln", "danger") else inferred,
+                    run_id=ctx.run_id,
+                )
         cat = (f.category or "").lower()
         if "cred" in cat or cat in ("password", "secret", "token", "key_leak"):
             _write_creds_asset(ctx, host=_primary_host(ctx) or "unknown",
@@ -973,6 +1064,19 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             extra.append(f"红队评级 {rt}")
         tail = "；".join(extra)
         rt_note = " 红队请继续推进直至 report_shell。" if normalize_objective(ctx.objective) == REDTEAM else ""
+        if isinstance(row, dict):
+            try:
+                from ..memory.evolve import finding_qualifies_for_evolve
+                if finding_qualifies_for_evolve(row):
+                    _schedule_milestone(
+                        ctx, "high_critical_finding",
+                        title=str(f.title or "")[:120],
+                        category=str(f.category or ""),
+                        node_key=str(args.get("node_key") or ""),
+                        evidence=(str(f.evidence or f.description or ""))[:400],
+                    )
+            except Exception:
+                pass
         return _text(
             f"✅ 已入库发现: [{row_sev or f.severity}] {f.title} ({f.category})。"
             f"{' ' + tail + '。' if tail else ''}{rt_note}".rstrip()
@@ -1203,6 +1307,11 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             run_id=ctx.run_id,
         )
         if source_key:
+            await gstore.fill_source_node(
+                ctx.project_id, source_key,
+                detail=(args.get("evidence") or flag)[:800],
+                run_id=ctx.run_id,
+            )
             await gstore.add_edge(
                 ctx.project_id,
                 EdgeIn(**{"from": source_key, "to": gkey}, relation="LEADS_TO",
@@ -1383,9 +1492,37 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         await emit(ctx.project_id, "thought", {"message": args["message"], "level": args.get("level", "info")}, run_id=ctx.run_id)
         return _text("ok")
 
+    @tool(
+        "note_scan_coverage",
+        "螺旋账本：登记已跑扫描档位与命中，避免下一轮重复劳动。CTF 与红队都用。",
+        {
+            "type": "object",
+            "properties": {
+                "face": {"type": "string", "description": "ports/dirs/dns/vhost/http"},
+                "tier": {"type": "string", "description": "top100/top1000/all/common/medium/large/dnsmap/whatweb/nuclei/nikto"},
+                "target": {"type": "string"},
+                "hits": {"type": "string", "description": "命中列表，逗号或换行分隔"},
+            },
+            "required": ["face", "tier"],
+        },
+    )
+    async def note_scan_coverage(args: dict) -> dict:
+        hits_raw = str(args.get("hits") or "")
+        hits = [x.strip() for x in re.split(r"[\n,]+", hits_raw) if x.strip()]
+        from ..engine.spiral import format_coverage_brief, note_coverage
+        ledger = note_coverage(
+            ctx.workspace_dir,
+            face=str(args.get("face") or ""),
+            tier=str(args.get("tier") or ""),
+            target=str(args.get("target") or ""),
+            hits=hits,
+        )
+        return _text(format_coverage_brief(ledger, objective=ctx.objective))
+
     tools = [
         run_cmd, http_request, add_node, add_edge, report_finding,
         report_shell, report_pivot_capability, propose_intents, resolve_intent, mark_honeypot, note,
+        note_scan_coverage,
     ]
     if objective_allows_flag(ctx.objective):
         tools.insert(6, report_flag)
@@ -1400,7 +1537,8 @@ def tool_names(objective: str | None = None) -> list[str]:
     names = ["run_cmd", "http_request", "add_node", "add_edge", "report_finding",
              "report_shell", "report_pivot_capability", "propose_intents",
              "resolve_intent", "mark_honeypot", "note"]
-    # 仅 flag 赛道声明 report_flag。
+    # 仅 flag 赛道声明 report_flag。覆盖账本 CTF 与红队都用。
     if objective is None or objective_allows_flag(objective):
         names.insert(6, "report_flag")
+    names.append("note_scan_coverage")
     return [f"mcp__{SERVER_NAME}__{n}" for n in names]

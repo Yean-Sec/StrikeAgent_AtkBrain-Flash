@@ -47,7 +47,7 @@ EXPLORE_REFRESH_TACTICS: tuple[str, ...] = _EXPLORE_FILL + (
 _EXPLORE_SUBAGENTS: tuple[str, ...] = ("web-exploit", "recon")
 _CLOSEOUT_STALLS: frozenset[str] = frozenset({"chain", "postex"})
 # 单轮墙钟让出门闩放过这些：正在做长验证/收成，不要用短墙钟打断本轮。
-# 与 closeout sidetrack 不同：channel_oracle 对顾问是再证明，但对指挥官可能是长 SLEEP。
+# 与 closeout sidetrack 不同：channel_oracle 对顾问是再证明，但对御主可能是长 SLEEP。
 _KEEP_TURN_TACTICS: frozenset[str] = frozenset({
     "weaponize", "impact_escalate", "finding_rce_close", "finding_sqli_chain",
     "ssrf_as_gateway", "upload_bypass", "file_read_chain", "hop_auth",
@@ -99,12 +99,15 @@ ORACLE_DIAG = (
     "禁止把该面写成已闭合/dos，禁止把其它面当主线。"
 )
 _ORACLE_FALSE_CLOSE_RE = re.compile(
-    r"已收口|已闭合|输入无关(?:崩溃|延迟|耗时)|无条件崩溃|"
+    r"已收口|已闭合|输入无关(?:崩溃|延迟|耗时)?|无条件崩溃|"
+    r"通道级否证|确定性\s*500|死面|"
+    r"离开.{0,16}(?:登录|/login)|"
     r"零翻面.{0,12}收口|视图未处理|该面(?:已死|关闭)|面已关|"
     r"(?:登录|口令|认证|输入|表单|参数|注入)面.{0,16}(?:关闭|已死|已闭合|穷尽)|"
     r"仅当.{0,24}无果|主线无果|失败后才(?:回来|再打)",
     re.I,
 )
+_PREMATURE_TIMING_BAN_RE = re.compile(r"耗时|校准", re.I)
 _REPROVE_RE = re.compile(
     r"channel_oracle|校准耗时|再校准|重新验证(?:注入|时间差|盲注)|"
     r"LOAD_FILE\s*\(|INTO\s+(?:OUTFILE|DUMPFILE)|secure_file_priv|"
@@ -165,7 +168,7 @@ def intent_tactic(intent: dict | None) -> str:
 
 @dataclass
 class AdvisorBinding:
-    """一轮（可跨 hold 窗口）对指挥官生效的硬约束。"""
+    """一轮（可跨 hold 窗口）对御主生效的硬约束。"""
     diagnosis: str = ""
     next_plan: str = ""
     must_intents: list[str] = field(default_factory=list)
@@ -396,6 +399,19 @@ def surface_false_close(text: str) -> bool:
     return bool(_ORACLE_FALSE_CLOSE_RE.search(text or ""))
 
 
+def strip_premature_timing_bans(bans: list | None) -> list[str]:
+    """未验证注入时，禁止把耗时/校准写进 ban_repeats（那是收口规则）。"""
+    out: list[str] = []
+    for b in bans or []:
+        s = str(b or "").strip()
+        if not s:
+            continue
+        if _PREMATURE_TIMING_BAN_RE.search(s):
+            continue
+        out.append(s)
+    return out
+
+
 def should_refresh_stale_binding(
     binding: AdvisorBinding | None, *, misses_limit: int = 3,
 ) -> bool:
@@ -565,10 +581,7 @@ def should_force_chain_close_review(
 
 
 _ORACLE_PROBE_TACTICS: frozenset[str] = frozenset({
-    "channel_oracle", "input_abuse", "web_inject",
-})
-_ORACLE_ENUM_ONLY: frozenset[str] = frozenset({
-    "fingerprint", "content_enum", "auth_surface", "secret_mount",
+    "channel_oracle",
 })
 
 
@@ -578,7 +591,7 @@ def should_force_oracle_review(
     has_plan: bool,
     assigned_tactics=None,
 ) -> bool:
-    """单通道假关闭：尚未开口，或认领仍停在指纹/目录。赛道无关，不写某题 payload。"""
+    """单通道假关闭：尚未开口，或认领里还没有 channel_oracle。默认口令/web_inject 不算已换通道。"""
     if not needs_oracle:
         return False
     if not has_plan:
@@ -586,9 +599,7 @@ def should_force_oracle_review(
     tacs = {str(t).strip() for t in (assigned_tactics or ()) if str(t).strip()}
     if tacs & _ORACLE_PROBE_TACTICS:
         return False
-    if not tacs:
-        return True
-    return tacs <= _ORACLE_ENUM_ONLY
+    return True
 
 
 def binding_reserve_tactics(
@@ -823,6 +834,7 @@ def compile_binding(
     subs = _uniq(list(getattr(plan, "subagents", None) or []), limit=4)
     stall = str(getattr(plan, "stall", None) or "none").strip().lower() or "none"
     if block_oracle_close:
+        bans = strip_premature_timing_bans(bans)
         deny = [t for t in deny if t != "channel_oracle"]
         try:
             plan.defer_families = [t for t in (getattr(plan, "defer_families", None) or []) if t != "channel_oracle"]
@@ -961,19 +973,14 @@ def compile_binding(
             if tac and tac not in tacs:
                 tacs.append(tac)
         tail = (("\n只推进：" + "、".join(f"`{t}`" for t in tacs)) if tacs else "")
-        if surface_false_close(f"{diag} {nxt}"):
-            nxt = ORACLE_KEEP + tail
-            try:
-                plan.next_plan = nxt
+        false_close = surface_false_close(f"{diag} {nxt}")
+        nxt = ORACLE_KEEP + tail
+        try:
+            plan.next_plan = nxt
+            if false_close:
                 plan.diagnosis = ORACLE_DIAG
-            except Exception:
-                pass
-        elif ORACLE_KEEP not in nxt:
-            nxt = ORACLE_KEEP + (("\n" + nxt) if nxt else "")
-            try:
-                plan.next_plan = nxt
-            except Exception:
-                pass
+        except Exception:
+            pass
     return AdvisorBinding(
         diagnosis=str(getattr(plan, "diagnosis", None) or "").strip(),
         next_plan=nxt,
@@ -1201,7 +1208,7 @@ def pick_bound_assigned(
 
 
 def format_binding_block(binding: AdvisorBinding | None) -> str:
-    """写入指挥官提示：硬约束段。无绑定则空。"""
+    """写入御主提示：硬约束段。无绑定则空。"""
     if binding is None:
         return ""
     lines = [

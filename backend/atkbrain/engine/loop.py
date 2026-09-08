@@ -23,11 +23,19 @@ from ..graph.hypothesize import (
 from ..graph.model import NodeIn
 from ..memory import store as memory
 from ..projects import build_scope, get_project, update_config, update_status
-from ..project_status import final_project_status, hunt_max_turns, hunt_runtime_hard_stop_sec, uses_ctf_hunt_clocks
+from ..project_status import (
+    ctf_pass_index,
+    final_project_status,
+    hunt_max_turns,
+    hunt_runtime_hard_stop_sec,
+    uses_ctf_hunt_clocks,
+)
 from .hunt_clock import (
     empty_hunt,
     graph_idle_pause_due,
+    graph_idle_plans_due,
     hunt_should_reset,
+    note_graph_idle_plans,
     parse_hunt,
     reconstruct_hunt,
     fill_hunt_from_last_run,
@@ -77,7 +85,7 @@ def is_transient_resource_error(exc: BaseException) -> bool:
 
 
 def _graph_summary(graph: dict, peer_entries: list[str] | None = None, current_entry: str = "",
-                   objective: str = "") -> str:
+                   objective: str = "", workspace_dir: str = "") -> str:
     from .supervisor_brief import expand_peer_node_keys, highlight_chain_line, plan_cites_peer_entry
 
     stats = graph.get("stats", {})
@@ -138,6 +146,14 @@ def _graph_summary(graph: dict, peer_entries: list[str] | None = None, current_e
             if why:
                 line += f" — 因 {why[:80]}"
             lines.append(line)
+    try:
+        if workspace_dir:
+            from .spiral import format_coverage_brief, load_ledger
+            cov = format_coverage_brief(load_ledger(workspace_dir), objective=objective)
+            if cov:
+                lines.append(cov)
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
@@ -379,7 +395,7 @@ async def _run_runtime_review(
     *, project_id: str, rid: str, objective: str, graph: dict, project: dict,
     brief: str, turn: int, elapsed_sec: float, target: str, supervisor,
 ) -> dict | None:
-    """CTF：满 60 分钟起、之后每 15 分钟审查一次。失败默认续跑。"""
+    """CTF：默认关闭。runtime_review_after_sec>0 时才由御主审查是否续跑。"""
     from .ai_supervisor import consult_runtime_review
     from .supervisor_brief import SupervisorFacts, assemble_supervisor_brief
 
@@ -399,22 +415,26 @@ async def _run_runtime_review(
             graph=graph, facts=facts, project=project, brief=brief, turn=turn,
         )
         text = (
-            f"运行时审查：本猎已约 {int(elapsed_sec // 60)} 分钟、第 {turn} 轮。"
-            f"判断是否续跑。\n"
+            f"御主运行时审查：本猎已约 {int(elapsed_sec // 60)} 分钟、第 {turn} 轮。"
+            f"由你判断是否续跑。\n"
         ) + (text or "")
         rr = await consult_runtime_review(text)
         diag = str((rr or {}).get("diagnosis") or "")
+        plan = str((rr or {}).get("next_plan") or "")
         cont = bool((rr or {}).get("continue", True))
         await emit(
             project_id, "supervisor",
-            {"kind": "runtime_review", "continue": cont, "diagnosis": diag, "turn": turn},
+            {
+                "kind": "runtime_review", "continue": cont, "diagnosis": diag,
+                "next_plan": plan, "turn": turn,
+            },
             run_id=rid,
         )
         await emit(
             project_id, "log",
             {"level": "info",
              "message": (
-                 f"运行时审查：{'续跑' if cont else '建议暂停'}"
+                 f"御主审查：{'续跑' if cont else '建议暂停'}"
                  + (f" — {diag[:160]}" if diag else "")
              )},
             run_id=rid,
@@ -423,7 +443,7 @@ async def _run_runtime_review(
     except Exception as e:
         await emit(
             project_id, "log",
-            {"level": "warn", "message": f"运行时审查失败（默认续跑）：{type(e).__name__}: {e}"},
+            {"level": "warn", "message": f"御主审查失败（默认续跑）：{type(e).__name__}: {e}"},
             run_id=rid,
         )
         return {"continue": True}
@@ -787,8 +807,9 @@ async def _evaluate_supervisor(
     *, supervisor, project_id: str, rid: str, turn: int, graph: dict,
     flags: int, project: dict, brief: str, summary: str, result: dict,
     target: str, scope, assigned: list | None = None, open_intents: list | None = None,
+    record_progress: bool = True,
 ) -> None:
-    """问监督。失败只记 skip，不拖垮指挥官循环。"""
+    """问御主。失败只记 error 并自检重启，不拖垮从者循环。"""
     stats = (graph or {}).get("stats") or {}
     try:
         nodes = int(stats.get("nodes") or 0)
@@ -811,6 +832,7 @@ async def _evaluate_supervisor(
             turn=turn,
             assigned=assigned,
             open_intents=open_intents,
+            record_progress=record_progress,
         )
     except Exception as se:
         await emit(
@@ -826,6 +848,25 @@ async def _evaluate_supervisor(
             )
         except Exception:
             pass
+
+
+async def _ended_real_attempts(project_id: str) -> int:
+    """已结束且够长的 run 数。进行中的本遍不计，用来决定 40/120/180 墙钟。"""
+    from ..benchmark import count_real_attempts_from_runs
+    try:
+        rows = await db.fetchall(
+            "SELECT started_at, ended_at FROM runs WHERE project_id=?",
+            (project_id,),
+        )
+    except Exception:
+        return 0
+    min_s = float(getattr(settings, "benchmark_min_attempt_sec", 120) or 0)
+    try:
+        return int(count_real_attempts_from_runs(
+            list(rows or []), min_sec=min_s, now_ts=now(), include_open=False,
+        ) or 0)
+    except Exception:
+        return 0
 
 
 async def _persist_hunt_clock(project_id: str, rid: str, hunt: dict) -> None:
@@ -907,40 +948,42 @@ async def _record_memory(project: dict, project_id: str, goal: bool, turn: int, 
     try:
         final_graph = await gstore.get_graph(project_id, heal=True)
         ep = await memory.summarize_run(project, final_graph, {"goal_reached": goal, "turns": turn, "summary": summary})
-        if ep.get("skipped"):
-            await emit(
-                project_id, "log",
-                {"level": "info",
-                 "message": (
-                     f"经验已在记忆库（同思路跳过重复写入"
-                     f"{' · ' + str(ep.get('reason') or '') if ep.get('reason') else ''}）"
-                 )},
-                run_id=rid,
-            )
-        else:
-            await emit(
-                project_id, "log",
-                {"level": "info",
-                 "message": f"经验已沉淀到记忆库 v{ep.get('version')}（{ep.get('outcome')}）"},
-                run_id=rid,
-            )
         try:
-            from ..memory.evolve import evolve_after_run
+            from ..memory.evolve import episode_qualifies_for_evolve, evolve_after_run
+            qualifies = bool(isinstance(ep, dict) and episode_qualifies_for_evolve(ep))
+            if ep.get("skipped"):
+                if qualifies:
+                    await emit(
+                        project_id, "log",
+                        {"level": "info",
+                         "message": (
+                             f"经验已在记忆库（同思路跳过重复写入"
+                             f"{' · ' + str(ep.get('reason') or '') if ep.get('reason') else ''}）"
+                         )},
+                        run_id=rid,
+                    )
+            elif qualifies:
+                await emit(
+                    project_id, "log",
+                    {"level": "info",
+                     "message": f"经验已沉淀到记忆库 v{ep.get('version')}（{ep.get('outcome')}）"},
+                    run_id=rid,
+                )
             evo = await evolve_after_run(
                 episode=ep if isinstance(ep, dict) else None,
                 applied_ids=list(applied_lesson_ids or []),
                 won=bool(goal),
                 project_id=project_id,
             )
-            if evo.get("distilled") or evo.get("ai_revised") or evo.get("reinforced"):
+            if qualifies and (evo.get("distilled") or evo.get("ai_revised") or evo.get("reinforced")):
                 await emit(
                     project_id, "log",
                     {"level": "info",
                      "message": (
                          "自进化："
-                         + ("已蒸馏剧本 " if evo.get("distilled") else "")
+                         + ("Claude 已蒸馏路线/方法/思想 " if evo.get("distilled") else "")
                          + (f"强化 {evo.get('reinforced')} 条 " if evo.get("reinforced") else "")
-                         + (f"AI 修订 {evo.get('ai_revised')} 条" if evo.get("ai_revised") else "")
+                         + (f"修订 {evo.get('ai_revised')} 条" if evo.get("ai_revised") else "")
                      ).strip()},
                     run_id=rid,
                 )
@@ -963,6 +1006,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
     from ..agents.session import ProjectAgent
     from ..projects import assert_safe_project_target
     from .. import benchmark as bmk
+    from .scheduler import hunt_slot_kind
 
     is_benchmark = bmk.is_benchmark_sub(project)
 
@@ -997,13 +1041,14 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
     turn = 0
     completed_turn = 0
     summary = ""
+    assigned: list = []
     rid = ""
     applied_lesson_ids: list[str] = []
     try:
+        handle.slot_kind = hunt_slot_kind(project, objective)
         if is_benchmark:
-            await manager.bench_sem.acquire()
-            handle.bench_held = True
-        await manager.sem.acquire()
+            handle.slot_kind = "ctf"
+        await manager.slot_sem(handle.slot_kind).acquire()
         handle.slot_held = True
         if is_benchmark:
             refuse = await bmk.gate_start_against_closed_env(project)
@@ -1222,7 +1267,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             except (TypeError, ValueError):
                 min_hunt_sec = 0.0
         result: dict = {}
-        # AI 监督：连续两轮无有效进展才开口（每一次都是这道门）。已给过的全部方案都会进下一轮简报。
+        # AI 御主：每轮从者开打前先下令。
         supervisor = LoopSupervisor(
             project_id=project_id, run_id=rid, objective=objective,
         )
@@ -1272,8 +1317,9 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 persisted_turn=turn, supervised_turns=supervised,
             )
             completed_turn = turn
-        # 攻击图无新节点墙钟：从本猎计时；节点数每增一次就重置
-        graph_idle_limit = int(getattr(settings, "graph_idle_pause_sec", 20 * 60) or 0)
+        # 攻击图空转：CTF 看连续御主方案数；墙钟上限默认关闭
+        graph_idle_limit = int(getattr(settings, "graph_idle_pause_sec", 0) or 0)
+        graph_idle_plans_limit = int(getattr(settings, "graph_idle_empty_plans", 6) or 0)
         try:
             _g0 = _g_boot if _g_boot is not None else await gstore.get_graph(project_id)
             last_node_count = int((_g0.get("stats") or {}).get("nodes") or 0)
@@ -1301,6 +1347,8 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
         last_node_growth_mono = _time.monotonic()
         last_progress_wall = _time.time()
         last_flag_event_ts = 0.0
+        idle_plans = 0 if hunt_reset else max(0, int(hunt_state.get("idle_plans") or 0))
+        last_counted_pivots = 0
         try:
             last_flag_event_ts = await _latest_flag_event_ts(project_id)
         except Exception:
@@ -1339,7 +1387,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     project_id, "log",
                     {"level": "info",
                      "message": (
-                         f"已补齐 {filled} 条缺失的自监督记录"
+                         f"已补齐 {filled} 条缺失的御主记录"
                          "（中断或空回合当时未写盘）。"
                      )},
                     run_id=rid,
@@ -1400,18 +1448,8 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                          "message": "新开猎不恢复已空转的探索方案，按全局重开多路线审查。"},
                         run_id=rid,
                     )
-        await emit(
-            project_id, "supervisor",
-            {"kind": "probe", "probe": True, "ready": True,
-             "diagnosis": "顾问就绪（冒烟）", "directives": []},
-            run_id=rid,
-        )
-        await emit(
-            project_id, "log",
-            {"level": "info",
-             "message": "顾问就绪：本猎只在轮次边界、验证结束后复盘。"},
-            run_id=rid,
-        )
+        await supervisor.emit_ready_probe()
+        last_counted_pivots = int(getattr(supervisor, "pivots", 0) or 0)
         entry_down_since: float | None = None
         entry_rebind_attempts = 0
         entry_rebind_sec = int(getattr(settings, "benchmark_entry_down_rebind_sec", 90) or 0)
@@ -1421,10 +1459,27 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             or getattr(settings, "entry_unreachable_yield_sec", 0)
             or 0
         )
-        runtime_hard = hunt_runtime_hard_stop_sec(objective)
-        runtime_after = int(getattr(settings, "runtime_review_after_sec", 60 * 60) or 0)
-        runtime_interval = int(getattr(settings, "runtime_review_interval_sec", 15 * 60) or 0)
+        runtime_after = int(getattr(settings, "runtime_review_after_sec", 0) or 0)
+        runtime_interval = int(getattr(settings, "runtime_review_interval_sec", 0) or 0)
         ctf_clocks = uses_ctf_hunt_clocks(objective)
+        ended_att = 0
+        if ctf_clocks:
+            try:
+                ended_att = await _ended_real_attempts(project_id)
+            except Exception:
+                ended_att = 0
+        pass_n = ctf_pass_index(ended_real_attempts=ended_att)
+        runtime_hard = hunt_runtime_hard_stop_sec(objective, pass_n=pass_n)
+        if ctf_clocks:
+            await emit(
+                project_id, "log",
+                {"level": "info",
+                 "message": (
+                     f"本猎第 {pass_n} 遍，墙钟硬停 {max(0, runtime_hard) // 60} 分钟"
+                     f"（图空转看连续 {graph_idle_plans_limit} 个御主方案）。"
+                 )},
+                run_id=rid,
+            )
         _fc = int(((project.get("config") or {}).get("flag_count")) or 1)
         _base = int(settings.benchmark_run_budget_sec or 0)
         _cap = int(settings.benchmark_run_budget_cap or 0)
@@ -1445,6 +1500,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     else max(0.0, last_runtime_review_mono - t_start)
                 ),
                 idle_sec=max(0.0, _time.monotonic() - last_node_growth_mono),
+                idle_plans=idle_plans,
             ))
 
         elapsed0 = _time.monotonic() - t_start
@@ -1488,7 +1544,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     run_id=rid,
                 )
                 break
-            if ctf_clocks and graph_idle_limit > 0:
+            if ctf_clocks:
                 try:
                     _g_idle = await gstore.get_graph(project_id)
                     _nc = int((_g_idle.get("stats") or {}).get("nodes") or 0)
@@ -1518,6 +1574,12 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                         last_flag_event_ts = flag_ts
                     last_node_growth_mono = _time.monotonic()
                     last_progress_wall = _time.time()
+                    idle_plans, last_counted_pivots = note_graph_idle_plans(
+                        idle_plans=idle_plans,
+                        pivots=int(getattr(supervisor, "pivots", 0) or 0),
+                        last_counted_pivots=last_counted_pivots,
+                        progressed=True,
+                    )
                 idle_for = _time.monotonic() - last_node_growth_mono
                 if graph_idle_pause_due(idle_for, graph_idle_limit):
                     mins = int(idle_for // 60)
@@ -1525,6 +1587,18 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     summary = (
                         f"攻击图已连续约 {mins} 分钟无新节点、无交旗、也无本地长计算（≥{lim_m} 分钟），"
                         f"当前节点数 {last_node_count}，判定失败。"
+                    )
+                    pause_reason = "graph_idle"
+                    await emit(
+                        project_id, "log",
+                        {"level": "info", "message": summary + "（可人工复盘后再次启动）"},
+                        run_id=rid,
+                    )
+                    break
+                if graph_idle_plans_due(idle_plans, graph_idle_plans_limit):
+                    summary = (
+                        f"攻击图已连续 {idle_plans} 个御主方案无新节点、无交旗、也无本地长计算"
+                        f"（≥{graph_idle_plans_limit} 个），当前节点数 {last_node_count}，判定失败。"
                     )
                     pause_reason = "graph_idle"
                     await emit(
@@ -1660,8 +1734,29 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 await _save_hunt(turn)
             except Exception:
                 pass
-            # 顾问=人工：有绑定时每轮钉住同一份指令。对话框真人输入仍排在前面并覆盖。
-            # 同一份方案再钉进下一轮只给指挥官看，不往协同窗口重复刷一条 🧭。
+            graph = await gstore.get_graph(project_id)
+            try:
+                await _refresh_entry_identity(
+                    project=project, graph=graph, brief=brief, supervisor=supervisor,
+                    target=target, turn=turn, just_rebound=just_rebound,
+                    project_id=project_id,
+                )
+            except Exception:
+                pass
+            try:
+                consult_open = await gstore.list_open_intents(project_id)
+            except Exception:
+                consult_open = []
+            await _evaluate_supervisor(
+                supervisor=supervisor, project_id=project_id, rid=rid, turn=turn,
+                graph=graph, flags=last_flags, project=project, brief=brief,
+                summary=summary if isinstance(summary, str) else "",
+                result=result or {}, target=target, scope=scope,
+                assigned=assigned, open_intents=consult_open,
+                record_progress=False,
+            )
+            # 御主=人工：有绑定时每轮钉住同一份指令。对话框真人输入仍排在前面并覆盖。
+            # 同一份方案再钉进下一轮只给从者看，不往协同窗口重复刷一条 🧭。
             sup_steer = supervisor.drain_steer()
             pinned_advisor = None
             if sup_steer:
@@ -1675,19 +1770,10 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             elif getattr(supervisor, "binding", None) and supervisor.active_steer:
                 pinned_advisor = supervisor.active_steer
                 steering_msgs = steering_msgs + [pinned_advisor]
-            graph = await gstore.get_graph(project_id)
-            try:
-                await _refresh_entry_identity(
-                    project=project, graph=graph, brief=brief, supervisor=supervisor,
-                    target=target, turn=turn, just_rebound=just_rebound,
-                    project_id=project_id,
-                )
-            except Exception:
-                pass
-            # 每轮指挥官都是全新 Claude Code；换方向只改本轮简报，不续接旧对话。
+            # 每轮从者都是全新 Claude Code；换方向只改本轮简报，不续接旧对话。
             if supervisor.drain_reset():
                 await emit(project_id, "log",
-                           {"level": "info", "message": "AI监督：换攻击思路（新开会话，局面只走攻击图）。"},
+                           {"level": "info", "message": "御主：换攻击思路（新开会话，局面只走攻击图）。"},
                            run_id=rid)
             for m in steering_msgs:
                 if pinned_advisor is not None and m is pinned_advisor:
@@ -1920,7 +2006,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 await emit(
                     project_id, "log",
                     {"level": "info",
-                     "message": ("顾问强制认领: " if lock else "本轮前沿任务: ") + ", ".join(
+                     "message": ("御主强制认领: " if lock else "本轮前沿任务: ") + ", ".join(
                          f"{i.get('id')}({(i.get('strategy_key') or '')[:40]})" for i in assigned
                      )},
                     run_id=rid,
@@ -1933,6 +2019,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 entry_addrs=sorted(getattr(agent.ctx, "own_addrs", None) or []),
                 entry_surface=list(getattr(agent.ctx, "entry_surface", None) or []),
                 lock_intents=lock, has_human=bool(human_steers),
+                workspace_dir=getattr(agent, "workspace_dir", "") or "",
             )
             if hang_note:
                 instruction = f"{hang_note}\n\n{instruction}"
@@ -1944,7 +2031,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             hang_sec = 0.0
             try:
                 # 单回合墙钟：0 表示不限；评测预算开启时仍用剩余预算卡住。
-                # 顾问在回合返回后的边界开口，不在这里用短墙钟打断本轮。
+                # 不中途打断从者；御主令在本轮开打前已问过。
                 turn_timeout = float(getattr(settings, "turn_max_seconds", 0) or 0)
                 from .advisor_bind import intent_tactic
                 from .advisor_schedule import should_yield_turn_to_advisor
@@ -2032,7 +2119,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                         supervisor.note_exec_fault("empty turn / dead session")
                         await emit(project_id, "log",
                                    {"level": "info",
-                                    "message": "已开全新指挥官会话（不续接旧对话）。"},
+                                    "message": "已开全新从者会话（不续接旧对话）。"},
                                    run_id=rid)
                     except Exception as e:
                         await emit(project_id, "log",
@@ -2093,7 +2180,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                         {"level": "info",
                          "message": (
                              f"本回合已满 {turn_timeout:.0f}s（入口侦察或已验证能力未消耗），"
-                             "打断以让顾问开口。"
+                             "打断以让御主开口。"
                          )},
                         run_id=rid,
                     )
@@ -2113,8 +2200,8 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     }
                     summary = (
                         (summary or "")
-                        + (f"\n本回合满 {turn_timeout:.0f}s，让出给顾问。" if summary else
-                           f"本回合满 {turn_timeout:.0f}s，让出给顾问。")
+                        + (f"\n本回合满 {turn_timeout:.0f}s，让出给御主。" if summary else
+                           f"本回合满 {turn_timeout:.0f}s，让出给御主。")
                     ).strip()
                     hang = 0
                 else:
@@ -2295,11 +2382,13 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             # checkpoint：旧 stall 停跑 + AI 监督
             g2 = await gstore.get_graph(project_id)
             sig = (g2["stats"]["nodes"], g2["stats"]["edges"], g2["stats"]["findings"])
+            graph_grew = False
             # 节点数增长或交旗 → 重置「无新点」墙钟（仅 nodes，不含边/finding）
             if sig[0] > last_node_count:
                 last_node_count = sig[0]
                 last_node_growth_mono = _time.monotonic()
                 last_progress_wall = _time.time()
+                graph_grew = True
             else:
                 try:
                     flag_ts = await _latest_flag_event_ts(project_id)
@@ -2321,6 +2410,26 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     last_flag_event_ts = flag_ts
                     last_node_growth_mono = _time.monotonic()
                     last_progress_wall = _time.time()
+                    graph_grew = True
+            if ctf_clocks:
+                idle_plans, last_counted_pivots = note_graph_idle_plans(
+                    idle_plans=idle_plans,
+                    pivots=int(getattr(supervisor, "pivots", 0) or 0),
+                    last_counted_pivots=last_counted_pivots,
+                    progressed=graph_grew,
+                )
+                if graph_idle_plans_due(idle_plans, graph_idle_plans_limit):
+                    summary = (
+                        f"攻击图已连续 {idle_plans} 个御主方案无新节点、无交旗、也无本地长计算"
+                        f"（≥{graph_idle_plans_limit} 个），当前节点数 {last_node_count}，判定失败。"
+                    )
+                    pause_reason = "graph_idle"
+                    await emit(
+                        project_id, "log",
+                        {"level": "info", "message": summary + "（可人工复盘后再次启动）"},
+                        run_id=rid,
+                    )
+                    break
             open_now = await gstore.list_open_intents(project_id)
             progressed = False
             if agent.ctx.flags_correct > last_flags:
@@ -2334,16 +2443,47 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 if sig != last_sig:
                     progressed = True
             last_sig = sig
-            eval_assigned = [] if turn_yielded else assigned
-            await _evaluate_supervisor(
-                supervisor=supervisor, project_id=project_id, rid=rid, turn=turn,
-                graph=g2, flags=last_flags, project=project, brief=brief,
-                summary=summary if isinstance(summary, str) else "",
-                result=result or {}, target=target, scope=scope,
-                assigned=eval_assigned, open_intents=open_now,
-            )
+            try:
+                await supervisor.record_graph_progress(graph=g2, flags=last_flags)
+            except Exception:
+                pass
             completed_turn = turn
             await _save_hunt(completed_turn)
+            from .advisor_schedule import stall_pause_due
+            from ..objective import objective_allows_flag
+            stall_limit = int(getattr(settings, "loop_stall_limit", 10) or 0)
+            if uses_ctf_hunt_clocks(objective):
+                try:
+                    stall_limit = int(getattr(settings, "loop_stall_limit_flag", 0) or 0)
+                except (TypeError, ValueError):
+                    stall_limit = 0
+            elif objective == "flag":
+                stall_limit = int(
+                    getattr(settings, "loop_stall_limit_flag", stall_limit) or stall_limit
+                )
+            nprog = int(getattr(supervisor, "no_progress", 0) or 0)
+            due = stall_pause_due(nprog, stall_limit)
+            if due and not objective_allows_flag(objective):
+                from pathlib import Path as _Path
+                from .spiral import ledger_allowed_ring, load_ledger, redteam_stall_pause_due
+                ws = getattr(getattr(agent, "ctx", None), "workspace_dir", None)
+                if not ws:
+                    ws = _Path(settings.workspaces_dir) / project_id
+                due = redteam_stall_pause_due(
+                    nprog, stall_limit, ledger_allowed_ring(load_ledger(ws)),
+                )
+            if due:
+                n = int(getattr(supervisor, "no_progress", 0) or 0)
+                summary = (
+                    f"连续 {n} 轮无高质量进展，暂停本次 run。"
+                )
+                pause_reason = "stall"
+                await emit(
+                    project_id, "log",
+                    {"level": "info", "message": summary},
+                    run_id=rid,
+                )
+                break
             if ctf_clocks and runtime_after > 0 and supervisor.stall_class != "infra":
                 elapsed_now = _time.monotonic() - t_start
                 runtime_due = False
@@ -2361,7 +2501,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                         last_steer_turn=getattr(supervisor, "last_steer_turn", None),
                         hold_turns=max(0, int(getattr(settings, "advisor_hold_turns", 3) or 0)),
                         in_flight=in_flight,
-                        hard_turns=int(getattr(settings, "loop_supervise_hard_turns", 6) or 6),
+                        hard_turns=int(getattr(settings, "loop_supervise_hard_turns", 10) or 10),
                     )
                     rr = await _run_runtime_review(
                         project_id=project_id, rid=rid, objective=objective,
@@ -2373,7 +2513,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                         mins = int(elapsed_now // 60)
                         diag = str(rr.get("diagnosis") or "").strip()
                         summary = (
-                            f"运行时审查建议暂停（已运行约 {mins} 分钟）"
+                            f"御主审查建议暂停（已运行约 {mins} 分钟）"
                             + (f"：{diag[:200]}" if diag else "。")
                         )
                         pause_reason = "runtime_review_stop"
@@ -2388,24 +2528,16 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                             await emit(
                                 project_id, "log",
                                 {"level": "info",
-                                 "message": "验证未结束，审查只裁 continue，不改方向。"},
+                                 "message": "验证未结束，御主审查只裁 continue，不改方向。"},
                                 run_id=rid,
                             )
                         else:
-                            extra = "【运行时审查】\n" + str(rr["next_plan"]).strip()
+                            extra = "【御主审查】\n" + str(rr["next_plan"]).strip()
                             if supervisor.pending_steer:
                                 supervisor.pending_steer = supervisor.pending_steer + "\n" + extra
                             else:
                                 supervisor.pending_steer = extra
                             supervisor.last_steer_turn = turn
-            if objective == "flag":
-                stall_limit = settings.loop_stall_limit_flag
-            else:
-                stall_limit = settings.loop_stall_limit
-            if stall_limit > 0 and stall >= stall_limit:
-                await emit(project_id, "log", {"level": "info", "message": f"连续 {stall} 轮无进展且无开放意图，停止本次 run。"}, run_id=rid)
-                break
-
         if (
             (not goal) and (not exhausted) and (not pause_reason)
             and max_turns > 0 and turn >= max_turns
@@ -2416,7 +2548,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             )
             await emit(project_id, "log", {"level": "info", "message": summary}, run_id=rid)
 
-        # goal → completed；图空转/轮次或时长硬停 → error（失败）；其它暂停 → idle
+        # goal → completed；图空转/时长硬停（及 SRC 轮次硬停）→ error；入口不可达等 → idle
         proj_status = final_project_status(
             goal=goal, exhausted=exhausted, pause_reason=pause_reason,
         )
@@ -2553,12 +2685,13 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             asyncio.create_task(bmk.autopilot_tick(parent_id))
 
 
-def _build_instruction(turn, target, graph, open_intents, steering, objective="getshell", assigned=None, brief="", postex_phase="", evolution="", peer_entries=None, entry_kind="", entry_addrs=None, entry_surface=None, lock_intents=False, has_human=False) -> str:
+def _build_instruction(turn, target, graph, open_intents, steering, objective="getshell", assigned=None, brief="", postex_phase="", evolution="", peer_entries=None, entry_kind="", entry_addrs=None, entry_surface=None, lock_intents=False, has_human=False, workspace_dir="") -> str:
     from ..agents.prompts import build_turn_instruction
     return build_turn_instruction(
         turn=turn, target=target,
         graph_summary=_graph_summary(
             graph, peer_entries=peer_entries, current_entry=target, objective=objective,
+            workspace_dir=workspace_dir,
         ),
         intents=_intents_text(
             open_intents, assigned=assigned or [], peer_entries=peer_entries, lock=lock_intents,

@@ -64,8 +64,8 @@ async function req<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> 
 export const api = {
   health: () => req<any>("/api/health"),
   settings: () => req<any>("/api/settings"),
-  setConcurrency: (value: number) =>
-    req<any>("/api/settings/concurrency", { method: "POST", headers: J, body: JSON.stringify({ value }) }),
+  setConcurrency: (value: number, track: "redteam" | "ctf" = "redteam") =>
+    req<any>("/api/settings/concurrency", { method: "POST", headers: J, body: JSON.stringify({ value, track }) }),
 
   listProjects: () => req<Project[]>("/api/projects"),
   getProject: (id: string) => req<Project>(`/api/projects/${id}`),

@@ -174,6 +174,8 @@ async def _claude_enrich(facts: dict) -> dict:
         max_turns=1,
         permission_mode="dontAsk",
         setting_sources=[],
+        skills=[],
+        plugins=[],
         cwd=str(settings.data_dir),
         max_buffer_size=8 * 1024 * 1024,
     )

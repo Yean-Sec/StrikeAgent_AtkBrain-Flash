@@ -14,7 +14,7 @@ import re
 
 import httpx
 
-from .config import settings
+from .config import benchmark_slot_limit, settings
 from .db import db, new_id, now, _dumps, _loads
 from .scope import Scope
 
@@ -99,9 +99,12 @@ def count_real_attempts_from_runs(
     *,
     min_sec: float,
     now_ts: float,
+    include_open: bool = True,
 ) -> int:
     n = 0
     for r in rows or []:
+        if not include_open and not r.get("ended_at"):
+            continue
         if is_real_run_duration(
             r.get("started_at"), r.get("ended_at"), now_ts=now_ts, min_sec=min_sec,
         ):
@@ -128,7 +131,7 @@ def coverage_dwell_sec(
 
 
 def rotate_dwell_sec(difficulty: str | None, *, default_sec: int | None = None) -> int:
-    """第二遍 0 flag dwell。默认 0：不提前让槽，由单题 60 分钟墙钟收口。"""
+    """第二遍 0 flag dwell。默认 0：不提前让槽，由该遍墙钟硬上限收口。"""
     base = int(
         default_sec
         if default_sec is not None
@@ -145,8 +148,9 @@ async def real_attempt_counts(
     *,
     min_sec: float | None = None,
     now_ts: float | None = None,
+    include_open: bool = True,
 ) -> dict[str, int]:
-    """按 runs 墙钟统计真正 attempt；短会话不计。"""
+    """按 runs 墙钟统计真正 attempt；短会话不计。include_open=False 只算已结束的遍。"""
     ids = [str(x) for x in project_ids if x]
     if not ids:
         return {}
@@ -164,7 +168,9 @@ async def real_attempt_counts(
         if pid in by:
             by[pid].append(r)
     for pid, rs in by.items():
-        out[pid] = count_real_attempts_from_runs(rs, min_sec=min_s, now_ts=ts)
+        out[pid] = count_real_attempts_from_runs(
+            rs, min_sec=min_s, now_ts=ts, include_open=include_open,
+        )
     return out
 
 
@@ -1133,8 +1139,8 @@ def hunt_idle_sec(cfg: dict | None) -> float:
 
 
 def leftover_round_dwell_sec(*, leftover_waiting: int, default_sec: int) -> int:
-    """覆盖完后：排队续啃题 > 0 时每道本轮最多 default 再让槽；
-    续啃题能塞进并发槽时 dwell=0，打到 flag 数齐或单题硬上限。"""
+    """覆盖完后：排队续啃题 > 0 时每道本轮最多 default（第 2 遍起按 120/180/…）再让槽；
+    续啃题能塞进并发槽时 dwell=0，打到 flag 数齐或该遍硬上限。"""
     if int(leftover_waiting or 0) <= 0:
         return 0
     return max(0, int(default_sec or 0))
@@ -1280,11 +1286,12 @@ async def _running_elapsed_sec(project_ids: list[str]) -> dict[str, float]:
 async def autopilot_tick(parent_id: str) -> dict:
     """把评测并发槽填满：按题号顺序做，每题至少开一轮，不按易/难跳过。
 
-    同时最多 benchmark_max_concurrency 道真正在跑，不把几十道塞进排队。
-    空槽优先下一道从未开过的题。覆盖期每题最多约 60 分钟（不因排队压缩），
+    同时最多 benchmark_slot_limit() 道真正在跑（默认 3，上限 20），不把几十道塞进排队。
+    空槽优先下一道从未开过的题。覆盖期每题最多约 40 分钟（不因排队压缩），
     到点让槽——含已有部分正确 flag，不按平台满分占槽。全部开过一轮后回头续啃
     （hard_restart=False，猎程/攻击图接着上次），不重开推理。续啃队列仍多于空槽
-    时继续按 60 分钟一轮转；能塞进并发槽后打到正确 flag 数齐或单题硬上限。
+    时按该遍墙钟轮转（第 2 遍 120 分钟、第 3 遍 180 分钟、之后每次 +60）；
+    能塞进并发槽后打到正确 flag 数齐或该遍硬上限。
     """
     from .engine.scheduler import manager
     from .engine.hunt_clock import (
@@ -1402,7 +1409,7 @@ async def autopilot_tick(parent_id: str) -> dict:
                 pass
 
     exclude_live = set(released)
-    limit = max(1, int(settings.benchmark_max_concurrency or 10))
+    limit = benchmark_slot_limit()
 
     def _live() -> tuple[list[dict], int]:
         live = [
@@ -1544,14 +1551,14 @@ async def autopilot_tick(parent_id: str) -> dict:
                     "（攻击图与已验证发现保留）。",
                 )
         else:
-            first_dwell = int(getattr(settings, "benchmark_first_pass_dwell_sec", 60 * 60) or 0)
+            first_dwell = int(getattr(settings, "benchmark_first_pass_dwell_sec", 40 * 60) or 0)
             if any_fresh:
                 waiting = sum(1 for s in candidates if _real(s) == 0)
                 dwell = coverage_dwell_sec(
                     waiting_fresh=waiting,
                     concurrency=limit,
                     default_sec=first_dwell,
-                    floor_sec=int(getattr(settings, "benchmark_coverage_dwell_floor_sec", 60 * 60) or 0),
+                    floor_sec=int(getattr(settings, "benchmark_coverage_dwell_floor_sec", 40 * 60) or 0),
                 )
                 dwell_for = None
                 grow_grace = int(getattr(settings, "benchmark_coverage_grow_grace_sec", 8 * 60) or 0)
@@ -1559,14 +1566,24 @@ async def autopilot_tick(parent_id: str) -> dict:
                 hard_cap = first_dwell
                 why = "覆盖预算到点，按题号让槽给尚未开过的题；猎程保留，回头接着打"
             else:
-                waiting = len(candidates)
-                dwell = leftover_round_dwell_sec(
-                    leftover_waiting=waiting, default_sec=first_dwell,
+                from .project_status import ctf_pass_hard_stop_sec, ctf_pass_index
+                ended_map = await real_attempt_counts(
+                    [s["id"] for s in running], include_open=False,
                 )
-                dwell_for = None
+                dwell_for = {
+                    s["id"]: ctf_pass_hard_stop_sec(ctf_pass_index(
+                        ended_real_attempts=int(ended_map.get(s["id"], 0) or 0),
+                    ))
+                    for s in running
+                }
+                waiting = len(candidates)
+                leftover_default = ctf_pass_hard_stop_sec(2)
+                dwell = leftover_round_dwell_sec(
+                    leftover_waiting=waiting, default_sec=leftover_default,
+                )
                 grow_grace = 0
                 yield_partial = waiting > 0
-                hard_cap = first_dwell if waiting > 0 else 0
+                hard_cap = 0
                 why = (
                     f"续啃队列还有 {waiting} 题，本轮到点让槽给下一道；猎程/攻击图接着上次，不重开"
                     if waiting > 0 else "续啃"
@@ -1781,6 +1798,6 @@ async def scoreboard(project_id: str) -> dict:
         })
     return {"cumulative_score": cumulative, "total_flags": total_flags,
             "correct_flags": correct_flags, "challenges": items,
-            "slot_limit": int(settings.benchmark_max_concurrency),
+            "slot_limit": benchmark_slot_limit(),
             "slot_running": sum(1 for c in items if c.get("status") == "running"),
             "slot_queued": sum(1 for c in items if c.get("queued") or c.get("status") == "queued")}

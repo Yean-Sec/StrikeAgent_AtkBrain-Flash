@@ -1,8 +1,8 @@
-"""顾问复盘调度：当前验证未结束时不改方向。
+"""御主下令调度：每轮从者开打前先问御主。
 
 这是自循环层的基本门闩，**不看赛道**：红队 / SRC / CTF（含评测）走同一套。
-顾问只在回合自然结束的轮次边界注入新方向，不中途打断本轮。
-本模块决定「这一轮边界要不要复盘 / 要不要注入新方向」。
+每轮编排器先让御主下达本轮任务，从者等待；超时后从者按自己的思路打。
+本模块决定「这一轮要不要问御主 / 空转是否该暂停」。
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ def should_yield_turn_to_advisor(
     verified_categories=None,
     has_advisor_plan: bool = False,
 ) -> bool:
-    """这一轮该不该套顾问让出墙钟。赛道无关。
+    """这一轮该不该套短墙钟中途打断从者。赛道无关。
 
-    不中途打断：指挥官把本轮做完，顾问只在回合返回后的边界开口。
+    不中途打断：360s 只卡「等御主令」，不卡从者本轮工具墙钟。
     """
     _ = (assigned_tactics, has_foothold, has_verified_asset, verified_categories, has_advisor_plan)
     return False
@@ -47,16 +47,17 @@ def unfinished_verification(
     in_flight: bool,
     hard_turns: int,
 ) -> str | None:
-    """当前验证是否还没结束（应推迟任何新方向，含运行时审查的 directives）。
+    """当前验证是否还没结束（运行时审查的 directives 用：未结束则只裁 continue）。
 
     返回 hold_course / in_flight；None 表示可以换方向。
     硬空转（method/chain 且 no_progress≥hard_turns）视为验证已结束。
     不接受 objective：红队/SRC/CTF 不得各写一套。
+    开口本身每轮都问御主；本函数不挡咨询。
     """
     sc = (stall_class or "none").strip().lower()
     need_pivot = sc in ("method", "chain")
     hold_turns = max(0, int(hold_turns or 0))
-    hard_turns = max(1, int(hard_turns or 6))
+    hard_turns = max(1, int(hard_turns or 10))
     turn = max(0, int(turn or 0))
     no_progress = max(0, int(no_progress or 0))
     hard_stuck = need_pivot and no_progress >= hard_turns
@@ -89,32 +90,43 @@ def should_review_advisor(
     pivots: int = 0,
     first_turns: int = 2,
 ) -> tuple[bool, str]:
-    """轮次边界是否让顾问开口。赛道无关（无 objective 参数）。
+    """每轮从者开打前都让御主开口。赛道无关（无 objective 参数）。
 
-    每一次开口都是同一道门：连续 first_turns 轮无有效进展。
-    不是「第一次才看空转、之后按周期问」。有进展（no_progress 被清零）就不开口。
-    interval / hold / 是否开过口不作为开口条件；参数仍留给运行时审查和调用方。
+    in_flight / 空转计数不挡咨询；御主可用 JSON hold 表示继续当前路线包。
+    first_turns / interval 保留签名以免旧调用方报错，不再作为开口条件。
     """
-    _ = (turn, interval, stall_class, last_steer_turn, hold_turns, in_flight, hard_turns, pivots)
-    empty = max(1, int(first_turns or 2))
-    no_progress = max(0, int(no_progress or 0))
-    if no_progress < empty:
-        return False, "skip"
-    return True, "stall_pivot"
+    _ = (
+        turn, interval, stall_class, no_progress, last_steer_turn,
+        hold_turns, in_flight, hard_turns, pivots, first_turns,
+    )
+    return True, "turn"
+
+
+def stall_pause_due(no_progress: int, limit: int) -> bool:
+    """连续无高质量进展达到上限 → 暂停本猎。有开放 Intent 也算。"""
+    try:
+        n = int(no_progress or 0)
+    except (TypeError, ValueError):
+        n = 0
+    try:
+        cap = int(limit or 0)
+    except (TypeError, ValueError):
+        cap = 0
+    return cap > 0 and n >= cap
 
 
 def hold_note_text(*, in_flight: bool, hold_course: bool) -> str:
-    """喂给顾问战况板：未完成验证时必须 noop，不要换新面。赛道无关。"""
+    """喂给御主战况板：未完成验证时倾向 hold，不要换新面。赛道无关。"""
     if hold_course:
         return (
-            "刚下过顾问指令，主测还在执行。必须 noop。"
+            "刚下过御主指令，从者还在执行。必须 noop。"
             "禁止另起同义散文或改打目录枚举。路线包内的并行子智能体可以继续。"
             "红队/SRC/CTF 同样生效。"
         )
     if in_flight:
         return (
             "本轮认领的 Intent 仍开放（当前假设尚未证实或否证）。必须 noop。"
-            "禁止改打目录枚举；让主测把路线包里的并行验证做完并 resolve_intent。"
+            "禁止改打目录枚举；让从者把路线包里的并行验证做完并 resolve_intent。"
             "红队/SRC/CTF 同样生效。"
         )
     return "（无）"
@@ -124,7 +136,7 @@ def _assert_track_agnostic() -> None:
     """结构守卫：调度函数不得出现 objective/src/flag 参数。"""
     for fn in (
         assigned_still_open, unfinished_verification, should_review_advisor,
-        hold_note_text, should_yield_turn_to_advisor,
+        hold_note_text, should_yield_turn_to_advisor, stall_pause_due,
     ):
         names = set(inspect.signature(fn).parameters)
         assert not names & {"objective", "src", "flag", "redteam", "is_benchmark"}

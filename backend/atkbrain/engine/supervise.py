@@ -1,8 +1,8 @@
-"""Loop 监督：把攻击图交给 Claude Code，方案只来自监督模型。
+"""Loop 监督：把攻击图交给 Claude Code，方案只来自御主模型。
 
-顾问只在轮次边界、当前验证结束后复盘（与红队/SRC 同一套门闩）。
-入口传输层失败整段跳过，不当方法失败去换路。需要开口时一直问 Claude Code，
-直到给出方案；不注入机械换路模板。
+每轮从者开打前先问御主（与红队/SRC 同一套门闩）。
+入口传输层失败整段跳过，不当方法失败去换路。需要开口时在总墙钟内问 Claude Code，
+直到给出方案或超时；不注入机械换路模板。
 """
 from __future__ import annotations
 
@@ -53,6 +53,7 @@ from .ai_supervisor import (
     consult_supervisor,
     format_ai_steer,
     graph_has_login_or_surface,
+    supervisor_system_prompt,
     plan_is_entry_enum,
     plan_is_fake_key_loop,
     plan_is_usable,
@@ -68,22 +69,22 @@ from .supervisor_brief import (
 )
 
 _SKIP_TEXT = {
-    "empty_turn": "本回合无工具/有效输出，疑似会话已死，未问监督（避免空转连发）。",
-    "hang": "本回合超时已打断，未问监督。",
-    "exec_fault": "本轮会话故障，未问监督。",
-    "interrupted": "本轮指挥官未跑完或监督未落盘（后端重启/取消），未注入新方案。",
-    "cooldown": "距上一份方案过近，本轮沿用，未再问监督。",
-    "fail_cooldown": "监督刚失败，本轮暂不问。",
-    "error": "监督器异常，本轮未注入方案。",
+    "empty_turn": "本回合无工具/有效输出，疑似会话已死，未问御主（避免空转连发）。",
+    "hang": "本回合超时已打断，未问御主。",
+    "exec_fault": "本轮会话故障，未问御主。",
+    "interrupted": "本轮从者未跑完或御主未落盘（后端重启/取消），未注入新方案。",
+    "cooldown": "距上一份方案过近，本轮沿用，未再问御主。",
+    "fail_cooldown": "御主刚失败，本轮暂不问。",
+    "error": "御主异常，本轮未注入方案。",
     "plan_hold": "当前方案尚未验证完，本轮继续执行，不更换方案。",
-    "progress": "指挥官仍在推进当前方案，本轮未问监督。",
-    "skip": "未到周期性复盘点，本轮不改方向。",
-    "in_flight": "本轮认领的 Intent 仍开放，验证尚未结束，顾问强制 noop。",
-    "hold_course": "刚注入过指令，再给几轮把当前验证做完，顾问强制 noop。",
-    "infra": "入口传输层失败，顾问整段跳过，不当方法失败去换路。",
-    "let_commander": "主测尚未连着空转满两轮，顾问本轮不开口，先让指挥官打。",
-    "binding_ignored": "上一步未执行顾问绑定，收紧约束后重注，不开新方案。",
-    "binding_empty": "本轮无工具，顾问绑定沿用，不开新方案。",
+    "progress": "从者仍在推进当前方案，本轮未问御主。",
+    "skip": "本轮御主未改方向。",
+    "in_flight": "本轮认领的 Intent 仍开放，验证尚未结束，御主强制 noop。",
+    "hold_course": "刚注入过指令，再给几轮把当前验证做完，御主强制 noop。",
+    "infra": "入口传输层失败，御主整段跳过，不当方法失败去换路。",
+    "let_commander": "从者尚未连着空转满暂停阈值，先让从者打。",
+    "binding_ignored": "上一步未执行御主绑定，收紧约束后重注，不开新方案。",
+    "binding_empty": "本轮无工具，御主绑定沿用，不开新方案。",
 }
 
 _KEEP_PLAN_QUALITY = frozenset({"flag", "finding", "capability_edge", "valuable_node"})
@@ -191,7 +192,7 @@ async def has_injected_supervisor_plan(project_id: str) -> bool:
 
 
 def should_consult_after_exec_fault(*, reason: str, has_active_plan: bool) -> bool:
-    """指挥官本轮没正常收口时，是否仍要问监督。
+    """御主本轮没正常收口时，是否仍要问监督。
 
     超时打断：图上往往已有本轮写入，必须问。
     空回合：还没有任何方案时要问，避免挂死后续跑永远 skip；已有方案则跳过。
@@ -714,18 +715,22 @@ class LoopSupervisor:
 
 
     def note_progress(self, *, nodes: int, edges: int, findings: int, flags: int, quality: str = "none") -> bool:
-        """有高质量进展则清零空转；弱图扩张只减缓计数。"""
+        """有高质量进展则清零空转；弱图扩张只减缓计数。首轮无高质量进展也计入空转。"""
         sig = (nodes, edges, findings, flags)
         self.last_quality = quality
-        if self.last_sig == (-1, -1, -1, -1):
-            self.last_sig = sig
-            return False
+        first = self.last_sig == (-1, -1, -1, -1)
         if quality in ("flag", "finding", "capability_edge"):
             self.last_sig = sig
             self.no_progress = 0
             self.exec_faults = 0
             self.soft_fired = False
             return True
+        if first:
+            self.last_sig = sig
+            if quality == "valuable_node":
+                return False
+            self.no_progress += 1
+            return False
         if quality == "valuable_node":
             self.last_sig = sig
             self.no_progress = max(0, self.no_progress - 1)
@@ -906,7 +911,7 @@ class LoopSupervisor:
         self.banned_strategies = self.banned_strategies[-20:]
         self.last_diagnosis = binding.diagnosis or plan.diagnosis
         self.last_plan_text = binding.next_plan or plan.next_plan
-        # 指挥官看到的 prefer/deny 必须是编译后的绑定，不能漏出 LLM 原文里的 oracle。
+        # 御主看到的 prefer/deny 必须是编译后的绑定，不能漏出 LLM 原文里的 oracle。
         plan.diagnosis = binding.diagnosis or plan.diagnosis
         plan.next_plan = binding.next_plan or plan.next_plan
         plan.must_intents = list(binding.must_intents)
@@ -1079,8 +1084,91 @@ class LoopSupervisor:
             payload.update(extra)
         await emit(self.project_id, "supervisor", payload, run_id=self.run_id)
 
+    async def emit_ready_probe(self) -> None:
+        """御主探活：猎开始或超时自检重启后各发一次。"""
+        wait = int(getattr(settings, "supervisor_timeout_sec", 360) or 360)
+        await emit(
+            self.project_id, "supervisor",
+            {"kind": "probe", "probe": True, "ready": True,
+             "diagnosis": "御主就绪（冒烟）", "directives": []},
+            run_id=self.run_id,
+        )
+        await emit(
+            self.project_id, "log",
+            {"level": "info",
+             "message": (
+                 f"御主就绪：每轮先下令，从者等待；"
+                 f"超时 {wait}s 后从者自走。"
+             )},
+            run_id=self.run_id,
+        )
+
+    async def restart_after_consult_fail(self, turn: int, *, error: str) -> None:
+        """360s 未拿到令：清冷却、释放后探活，便于下一轮再拉起。不拆旧绑定。"""
+        _ = turn
+        _ = error
+        self.last_fail_ts = 0.0
+        await self.emit_ready_probe()
+
+    async def record_graph_progress(
+        self, *, graph: dict | None, flags: int,
+    ) -> str:
+        """从者本轮打完后记空转。不咨询御主。"""
+        stats = (graph or {}).get("stats") or {}
+        try:
+            nodes = int(stats.get("nodes") or 0)
+            edges = int(stats.get("edges") or 0)
+            findings = int(stats.get("findings") or 0)
+        except (TypeError, ValueError):
+            nodes = len((graph or {}).get("nodes") or [])
+            edges = len((graph or {}).get("edges") or [])
+            findings = len((graph or {}).get("findings") or [])
+        try:
+            nflags = int(flags or 0)
+        except (TypeError, ValueError):
+            nflags = 0
+        quality = "none"
+        if graph is not None and self.last_sig[0] >= 0:
+            quality = await gstore.quality_progress_delta(
+                self.last_sig, (nodes, edges, findings, nflags), graph,
+            )
+        self.note_progress(
+            nodes=nodes, edges=edges, findings=findings, flags=nflags, quality=quality,
+        )
+        await self._note_redteam_empty_plan(quality)
+        return quality
+
+    async def _note_redteam_empty_plan(self, quality: str) -> None:
+        """红队：从者打完一轮后记御主方案空转；满 6 升圈。CTF 不走。"""
+        from ..objective import objective_allows_flag
+        if objective_allows_flag(self.objective):
+            return
+        from pathlib import Path
+        from .spiral import RING_LABELS, note_empty_plan
+        ws = Path(settings.workspaces_dir) / self.project_id
+        grew = quality in ("flag", "finding", "capability_edge")
+        infra = self.stall_class == "infra"
+        try:
+            led = note_empty_plan(ws, grew=grew, infra=infra)
+        except Exception:
+            return
+        if not led.get("promoted"):
+            return
+        try:
+            ring = int(led.get("allowed_ring") or 1)
+        except (TypeError, ValueError):
+            ring = 1
+        label = RING_LABELS.get(ring, str(ring))
+        await emit(
+            self.project_id, "log",
+            {"level": "info", "message": (
+                f"螺旋进入第 {ring} 圈（{label}）：按该圈完整清单做，不要因小圈做过而省略。"
+            )},
+            run_id=self.run_id,
+        )
+
     async def emit_skip(self, turn: int, *, reason: str, detail: str = "") -> None:
-        """本轮不调用 Claude，但仍留下一条可见的自监督记录，避免轮次空洞。"""
+        """本轮不调用 Claude，但仍留下一条可见的御主记录，避免轮次空洞。"""
         text = (detail or "").strip() or _SKIP_TEXT.get(reason) or reason
         await self._emit_supervisor(
             "skip",
@@ -1269,6 +1357,7 @@ class LoopSupervisor:
         last_turn_text: str = "", last_tool_uses: int = 0, turn: int = 0,
         assigned: list | None = None,
         open_intents: list | None = None,
+        record_progress: bool = True,
     ) -> None:
         protected = verified_chain_paths(graph)
         chain_live = has_verified_asset(graph) and not self.entry_identity_mismatch
@@ -1290,7 +1379,8 @@ class LoopSupervisor:
             quality = await gstore.quality_progress_delta(
                 self.last_sig, (nodes, edges, findings, flags), graph,
             )
-        self.note_progress(nodes=nodes, edges=edges, findings=findings, flags=flags, quality=quality)
+        if record_progress:
+            self.note_progress(nodes=nodes, edges=edges, findings=findings, flags=flags, quality=quality)
 
         had_plan = bool(self.active_steer)
         if had_plan and int(last_tool_uses or 0) > 0:
@@ -1331,7 +1421,7 @@ class LoopSupervisor:
                         self.project_id, "log",
                         {"level": "info",
                          "message": (
-                             f"顾问路线包空转 {self.binding.misses} 次，作废旧绑定，"
+                             f"御主路线包空转 {self.binding.misses} 次，作废旧绑定，"
                              "按全局重开多路线审查。"
                          )},
                         run_id=self.run_id,
@@ -1358,7 +1448,7 @@ class LoopSupervisor:
                         self.project_id, "log",
                         {"level": "info",
                          "message": (
-                             f"顾问绑定未执行，收紧约束后重注（miss={self.binding.misses}），"
+                             f"御主绑定未执行，收紧约束后重注（miss={self.binding.misses}），"
                              "不开新方案。"
                          )},
                         run_id=self.run_id,
@@ -1390,7 +1480,7 @@ class LoopSupervisor:
             await emit(
                 self.project_id, "log",
                 {"level": "info",
-                 "message": "入口传输层失败，顾问本轮跳过，不当方法失败去换弱口令/扫网段。"},
+                 "message": "入口传输层失败，御主本轮跳过，不当方法失败去换弱口令/扫网段。"},
                 run_id=self.run_id,
             )
             await self.emit_skip(turn, reason="infra")
@@ -1398,13 +1488,8 @@ class LoopSupervisor:
 
         self._refresh_stall_class(chain_live=chain_live, graph=graph, quality=quality)
 
-        cooldown = float(getattr(settings, "supervisor_cooldown_sec", _PIVOT_COOLDOWN_SEC) or 0)
         now = time.monotonic()
         skip_cd = bool(self.force_bundle_review)
-        if (not skip_cd) and cooldown > 0 and self.last_pivot_ts and (now - self.last_pivot_ts) < cooldown:
-            _requeue_active()
-            await self.emit_skip(turn, reason="cooldown")
-            return
         fail_cd = float(getattr(settings, "supervisor_fail_cooldown_sec", _FAIL_COOLDOWN_SEC) or 0)
         if (not skip_cd) and fail_cd > 0 and self.last_fail_ts and (now - self.last_fail_ts) < fail_cd:
             _requeue_active()
@@ -1482,26 +1567,24 @@ class LoopSupervisor:
             first_turns=first_turns,
         )
         asked_bundle = bool(self.force_bundle_review)
-        if self.force_bundle_review and in_flight:
-            review, review_why = False, "in_flight"
-        elif self.force_bundle_review:
-            review, review_why = True, "stall_pivot"
+        if self.force_bundle_review:
+            review, review_why = True, "turn"
             self.force_bundle_review = False
         void_plan = bool(peer_contaminated or (claim_unverified and claim_in_plan))
         if void_plan and not review:
             self.last_steer_turn = None
-            review, review_why = True, "stall_pivot"
+            review, review_why = True, "turn"
         if not review and should_force_chain_close_review(
             chain_live=chain_live,
             has_plan=had_plan,
             assigned_tactics={intent_tactic(i) for i in (claimed or [])},
             verified_categories=verified_finding_categories(graph) if chain_live else None,
         ):
-            review, review_why = True, "stall_pivot"
+            review, review_why = True, "turn"
             await emit(
                 self.project_id, "log",
                 {"level": "info",
-                 "message": "顾问开口：图上已有已验证能力却未消耗，禁止再证明或跳过。"},
+                 "message": "御主开口：图上已有已验证能力却未消耗，禁止再证明或跳过。"},
                 run_id=self.run_id,
             )
         if not review and should_force_oracle_review(
@@ -1509,11 +1592,11 @@ class LoopSupervisor:
             has_plan=had_plan,
             assigned_tactics={intent_tactic(i) for i in (claimed or [])},
         ):
-            review, review_why = True, "stall_pivot"
+            review, review_why = True, "turn"
             await emit(
                 self.project_id, "log",
                 {"level": "info",
-                 "message": "顾问开口：图上仍是单通道观测，输入面未关，禁止只打指纹或目录。"},
+                 "message": "御主开口：图上仍是单通道观测，输入面未关，禁止只打指纹或目录。"},
                 run_id=self.run_id,
             )
 
@@ -1530,11 +1613,11 @@ class LoopSupervisor:
                 why_cn = {
                     "hold_course": "刚下过指令，等当前验证做完",
                     "in_flight": "本轮任务仍在验证，尚未证实或否证",
-                    "let_commander": "主测尚未连着空转满两轮，先让指挥官打",
+                    "let_commander": "先让从者打",
                 }.get(review_why, review_why)
                 await emit(
                     self.project_id, "log",
-                    {"level": "info", "message": f"顾问本轮不改方向：{why_cn}。"},
+                    {"level": "info", "message": f"御主本轮不改方向：{why_cn}。"},
                     run_id=self.run_id,
                 )
             return
@@ -1549,7 +1632,7 @@ class LoopSupervisor:
         if void_msgs:
             await emit(
                 self.project_id, "log",
-                {"level": "info", "message": "AI监督：" + " ".join(void_msgs)},
+                {"level": "info", "message": "御主：" + " ".join(void_msgs)},
                 run_id=self.run_id,
             )
             self.last_plan_text = ""
@@ -1603,17 +1686,17 @@ class LoopSupervisor:
             turn=turn, scope_hosts=scope_hosts,
         )
         brief_text = await assemble_supervisor_brief(**brief_kw)
-        wait = float(getattr(settings, "supervisor_timeout_sec", 300) or 300)
+        wait = float(getattr(settings, "supervisor_timeout_sec", 360) or 360)
 
         async def _on_wait(attempt: int, err: str, delay: float) -> None:
             # 超时是 Claude Code CLI 墙钟，不是上下文不够。控制台不要当成报错。
             if delay > 0:
                 msg = (
-                    f"顾问 Claude Code 首问超时（{err}），"
+                    f"御主 Claude Code 首问超时（{err}），"
                     f"{delay:.0f}s 后用原简报再问（第 {attempt} 次）。"
                 )
             else:
-                msg = f"顾问 Claude Code 首问超时（{err}），原简报立刻再问（第 {attempt} 次）。"
+                msg = f"御主 Claude Code 首问超时（{err}），原简报立刻再问（第 {attempt} 次）。"
             await emit(
                 self.project_id, "log",
                 {"level": "info", "message": msg},
@@ -1622,11 +1705,18 @@ class LoopSupervisor:
 
         plan = None
         consult_error = ""
+        obj = self.objective
+
+        async def _consult(brief: str, timeout: float | None = None, **_kw):
+            return await consult_supervisor(
+                brief, timeout=timeout, system_prompt=supervisor_system_prompt(obj),
+            )
+
         try:
             plan = await await_supervisor_plan(
                 brief_text, timeout=wait,
                 on_wait=_on_wait,
-                consult=consult_supervisor,
+                consult=_consult,
             )
         except asyncio.CancelledError:
             raise
@@ -1638,10 +1728,14 @@ class LoopSupervisor:
                 self.force_bundle_review = True
             if not consult_error:
                 consult_error = "监督返回空方案"
+            wait_s = int(getattr(settings, "supervisor_timeout_sec", 360) or 360)
             await emit(
                 self.project_id, "log",
                 {"level": "warn",
-                 "message": f"AI监督调用失败（本轮不注入方案）：{consult_error}"},
+                 "message": (
+                     f"御主 {wait_s}s 未下达任务，从者按本轮自己的思路继续"
+                     f"（{consult_error}）"
+                 )},
                 run_id=self.run_id,
             )
             await self._emit_supervisor(
@@ -1651,7 +1745,22 @@ class LoopSupervisor:
                 extra={"error": consult_error},
             )
             _requeue_active()
+            try:
+                await self.restart_after_consult_fail(turn, error=consult_error)
+            except Exception:
+                pass
             return
+
+        try:
+            from pathlib import Path
+            from ..objective import objective_allows_flag
+            if plan is not None and objective_allows_flag(self.objective):
+                from .spiral import load_ledger, scan_ban_repeats
+                ws = Path(settings.workspaces_dir) / self.project_id
+                extra = scan_ban_repeats(load_ledger(ws), objective=self.objective)
+                plan.ban_repeats = list(dict.fromkeys(list(plan.ban_repeats or []) + extra))[:12]
+        except Exception:
+            pass
 
         refine_supervisor_plan(
             plan,
@@ -1706,7 +1815,7 @@ class LoopSupervisor:
             await emit(
                 self.project_id, "log",
                 {"level": "info",
-                 "message": f"AI监督：继续当前方案 stall={plan.stall or self.stall_class} · {diag[:80]}"},
+                 "message": f"御主：继续当前方案 stall={plan.stall or self.stall_class} · {diag[:80]}"},
                 run_id=self.run_id,
             )
             await self._emit_supervisor(
@@ -1769,7 +1878,7 @@ class LoopSupervisor:
             self.project_id, "log",
             {"level": "info",
              "message": (
-                 f"AI监督：方案#{self.pivots} stall={self.stall_class}"
+                 f"御主：方案#{self.pivots} stall={self.stall_class}"
                  f" quality={self.last_quality}"
                  + (f" · {plan.diagnosis[:80]}" if plan.diagnosis else "")
              )},

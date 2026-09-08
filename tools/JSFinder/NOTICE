@@ -1,0 +1,4 @@
+Vendored from https://github.com/Threezh1/JSFinder
+Author: Threezh1  https://threezh1.github.io/
+Upstream did not ship a LICENSE file at the time of vendoring.
+JSFinder.py is kept as published; invoke with `python3`.

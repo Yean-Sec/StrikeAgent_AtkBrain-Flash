@@ -264,6 +264,27 @@ class Database:
             "ON findings(project_id, verification_status)"
         )
 
+        # 自进化剧本改为 Claude 蒸馏；一次性清掉旧机械路线。
+        await self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)"
+        )
+        cur = await self._conn.execute(
+            "SELECT v FROM schema_kv WHERE k='playbook_reset'"
+        )
+        kv = await cur.fetchone()
+        await cur.close()
+        mark = ""
+        if kv is not None:
+            try:
+                mark = kv[0] if not isinstance(kv, dict) else str(kv.get("v") or "")
+            except Exception:
+                mark = str(kv[0] if kv else "")
+        if mark != "claude_v1":
+            await self._conn.execute("DELETE FROM memory WHERE kind='lesson'")
+            await self._conn.execute(
+                "INSERT OR REPLACE INTO schema_kv(k, v) VALUES('playbook_reset', 'claude_v1')"
+            )
+
     async def close(self) -> None:
         if self._conn:
             await self._conn.close()

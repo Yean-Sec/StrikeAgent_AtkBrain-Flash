@@ -151,21 +151,38 @@ def scrub_chain(chain: str) -> str:
     return " → ".join(parts)
 
 
-def format_methodology(*, when: list[str], do: list[str], avoid: list[str], chain: str) -> str:
+def keep_thought(s: str) -> str:
+    """路线/方法/思想：可迁移中文原则，丢掉 IP/路径/题面。"""
+    t = re.sub(r"\s+", " ", str(s or "").strip())
+    if len(t) < 8 or len(t) > 240:
+        return ""
+    if _HOSTISH_RE.search(t):
+        return ""
+    return t
+
+
+def format_methodology(
+    *, when: list[str], do: list[str], avoid: list[str], chain: str,
+    route: str = "", method: str = "", idea: str = "",
+) -> str:
     bits: list[str] = []
+    if idea:
+        bits.append("思想：" + idea)
+    if method:
+        bits.append("方法：" + method)
+    if route or chain:
+        bits.append("路线：" + (route or chain))
     if do:
         bits.append("手法 " + "、".join(do[:4]))
     if when:
         bits.append("线索：" + "、".join(when[:4]))
     if avoid:
         bits.append("避免：" + "、".join(avoid[:4]))
-    if chain:
-        bits.append(chain)
     return "；".join(bits)
 
 
 def scrub_lesson(content: dict | None) -> dict | None:
-    """把一条剧本收成手法/线索/失败族/类型链。题面残留则丢掉。"""
+    """把一条剧本收成思想/方法/路线 + 手法/线索。题面残留则丢掉。"""
     c = dict(content or {})
     when = []
     for x in list(c.get("when") or []) + list(c.get("tech") or []) + list(c.get("cues") or []):
@@ -188,10 +205,16 @@ def scrub_lesson(content: dict | None) -> dict | None:
             avoid.append(k)
         if len(avoid) >= 6:
             break
-    chain = scrub_chain(str(c.get("chain") or c.get("winning_chain") or ""))
-    if not do and not avoid and not chain:
+    chain = scrub_chain(str(c.get("chain") or c.get("winning_chain") or c.get("route") or ""))
+    idea = keep_thought(str(c.get("idea") or ""))
+    method = keep_thought(str(c.get("method") or ""))
+    route = keep_thought(str(c.get("route") or "")) or chain
+    if not do and not avoid and not chain and not (method and idea):
         return None
-    rule = format_methodology(when=when, do=do, avoid=avoid, chain=chain)
+    rule = format_methodology(
+        when=when, do=do, avoid=avoid, chain=chain,
+        route=route, method=method, idea=idea,
+    )
     if not rule or _HOSTISH_RE.search(rule):
         return None
     out = dict(c)
@@ -200,7 +223,10 @@ def scrub_lesson(content: dict | None) -> dict | None:
         "do": do,
         "avoid": avoid,
         "chain": chain,
-        "rule": rule[:240],
+        "route": route,
+        "method": method,
+        "idea": idea,
+        "rule": rule[:360],
         "target_fp": "|".join(x for x in when if x in STACK_TOKENS) or "*",
     })
     return out

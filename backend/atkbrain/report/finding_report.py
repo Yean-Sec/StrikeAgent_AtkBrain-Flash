@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
-from ..graph.model import display_finding_severity
+from ..graph.model import display_finding_severity, secondary_review_narrative
 from .poc import poc_for_finding
 from .writeup import apply_deterministic_writeup, real_poc_text
 
@@ -92,13 +92,6 @@ def _verify_label(st: str | None) -> str:
     }.get(s, s)
 
 
-def _rt_rating_label(raw: str | None) -> str:
-    s = (raw or "").strip().lower()
-    return {
-        "critical": "严重", "high": "高危", "medium": "中危", "low": "低危", "info": "信息",
-    }.get(s, "未评级")
-
-
 def prepare_finding_report(finding: dict, *, poc: dict | None = None) -> dict:
     """补齐成因/危害/手动复现，供弹层与导出共用。"""
     out = dict(finding)
@@ -148,9 +141,6 @@ def render_finding_markdown(
         f"- 严重度：`{sev.lower()}`（以红队二次验证评级为准）"
         + (f" · CVSS {finding.get('cvss')}" if finding.get("cvss") is not None else ""),
         f"- 验证状态：**{_verify_label(vs)}**（`{vs}`）",
-        f"- 二次验证：**{'已做' if finding.get('secondary_verified') else '未做'}**",
-        f"- 红队评级：**{_rt_rating_label(finding.get('redteam_rating'))}**"
-        + (f"（`{finding.get('redteam_rating')}`）" if finding.get("redteam_rating") else ""),
         f"- 漏洞 ID：`{finding.get('id', '')}`",
         f"- 关联节点：`{finding.get('node_key') or '-'}`"
         + (f"（{node.get('title')}）" if node.get("title") else ""),
@@ -186,12 +176,10 @@ def render_finding_markdown(
     lines += [f"{h2} 手动复现", "", "按下列步骤在授权环境中复现。不要使用报告未给出的 payload。工具以 Burp Repeater + curl 为准。", ""]
     for s in finding.get("manual_steps") or []:
         lines.append(s)
-    lines += ["", f"{h2} 证明材料", ""]
+    lines += ["", f"{h2} 二次验证与红队评级", ""]
+    lines += _md_block(finding.get("secondary_review") or secondary_review_narrative(finding))
+    lines += [f"{h2} 证明材料", ""]
     lines.append(f"- 状态：**{_verify_label(vs)}**")
-    lines.append(f"- 二次验证：**{'已做' if finding.get('secondary_verified') else '未做'}**")
-    lines.append(f"- 红队评级：**{_rt_rating_label(finding.get('redteam_rating'))}**")
-    if (finding.get("redteam_rating_rationale") or "").strip():
-        lines += ["", str(finding["redteam_rating_rationale"]).strip(), ""]
     if finding.get("verified_at"):
         lines.append(f"- 验证时间：{_fmt_ts(finding.get('verified_at'))}")
     if finding.get("proof_type"):
@@ -233,7 +221,9 @@ def render_finding_markdown(
             f"- `{node.get('key')}` [{node.get('type')}/{node.get('severity')}] "
             f"{node.get('title')} (risk={node.get('risk_score')})"
         )
-        detail = node.get("detail")
+        detail = finding.get("node_detail_unique")
+        if detail is None:
+            detail = node.get("detail")
         if isinstance(detail, str) and detail.strip():
             lines += ["", "```", detail, "```"]
     else:

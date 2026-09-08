@@ -9,7 +9,16 @@ import httpx
 from ..config import settings
 from ..exec.guard import Guard
 from ..exec.runner import CmdResult, run_shell
-from ..scope import Scope, is_platform_endpoint, local_self_hosts, unauthorized_peer_endpoint, unauthorized_private_host
+from ..scope import (
+    Scope,
+    attacker_lan_forbidden,
+    attacker_loopback_forbidden,
+    canonical_host,
+    is_platform_endpoint,
+    local_self_hosts,
+    unauthorized_peer_endpoint,
+    unauthorized_private_host,
+)
 
 
 @dataclass
@@ -59,13 +68,21 @@ class AgentContext:
     def _http_blocked(self, url: str) -> str | None:
         parsed = urlparse(url)
         host = (parsed.hostname or "").lower()
+        if not host:
+            host = (parsed.netloc or "").split("@")[-1].split(":")[0].lower()
+        host = canonical_host(host)
         port = parsed.port
         if not port:
             port = 443 if parsed.scheme == "https" else 80
+        self_hosts = getattr(self.guard, "self_hosts", None) or local_self_hosts()
+        self_nets = getattr(self.guard, "self_networks", None)
+        self_ports = getattr(self.guard, "self_ports", None) or {
+            int(settings.port), int(settings.frontend_port),
+        }
         if is_platform_endpoint(
             host, port,
-            self_hosts=local_self_hosts(),
-            self_ports={int(settings.port), int(settings.frontend_port)},
+            self_hosts=self_hosts,
+            self_ports=self_ports,
         ):
             return f"不要把本机控制台/物理网卡（{host}:{port}）当作作业目标。"
         primary = ""
@@ -75,6 +92,24 @@ class AgentContext:
             primary = ""
         if not primary:
             primary = str((self.scope.targets or [""])[0] or "").split(":")[0]
+        authorized = {primary} if primary else set()
+        authorized |= {
+            str(a).split(":")[0] for a in (getattr(self, "own_addrs", None) or set()) if a
+        }
+        for ip in self.scope.ips or []:
+            if ip:
+                authorized.add(str(ip).split(":")[0])
+        why = attacker_loopback_forbidden(host, authorized=authorized)
+        if why:
+            return f"越界：{why}。不要 http_request 直连回环。"
+        why = attacker_lan_forbidden(
+            host,
+            self_hosts=self_hosts,
+            self_networks=self_nets,
+            authorized=authorized,
+        )
+        if why:
+            return f"越界：{why}。只打当前入口，不要扫物理机内网。"
         why = unauthorized_peer_endpoint(
             host, port,
             primary=primary,

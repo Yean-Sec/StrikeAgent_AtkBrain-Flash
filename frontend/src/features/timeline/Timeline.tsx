@@ -31,7 +31,7 @@ function line(ev: RTEvent): string {
 }
 
 function labelOf(ev: RTEvent): string {
-  if (ev.type === "steer" && ev.payload?.source === "supervisor") return "AI监督";
+  if (ev.type === "steer" && ev.payload?.source === "supervisor") return "御主";
   if (ev.type === "steer") return "人工指令";
   return LABEL[ev.type] || ev.type;
 }

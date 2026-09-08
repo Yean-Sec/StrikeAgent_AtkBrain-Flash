@@ -171,9 +171,13 @@ async def start_saved_hunts(manager, db_running: list[str]) -> list[str]:
     from ..projects import get_project, update_status
 
     saved = take_resume_ids()
-    cap = max(1, int(getattr(getattr(manager, "project_sem", None), "limit", 5) or 5))
+    from .scheduler import hunt_slot_kind
+    rt_cap = max(1, int(getattr(getattr(manager, "redteam_sem", None), "limit", 5) or 5))
+    ctf_cap = max(1, int(getattr(getattr(manager, "ctf_sem", None), "limit", 3) or 3))
     picked: list[str] = []
     idle_ids: list[str] = []
+    rt_n = 0
+    ctf_n = 0
     for pid in pick_resume_ids(db_running=db_running, saved=saved, cap=0):
         try:
             proj = await get_project(pid)
@@ -196,9 +200,17 @@ async def start_saved_hunts(manager, db_running: list[str]) -> list[str]:
             ):
                 idle_ids.append(pid)
                 continue
-        if len(picked) >= cap:
-            idle_ids.append(pid)
-            continue
+        kind = hunt_slot_kind(proj)
+        if kind == "ctf":
+            if ctf_n >= ctf_cap:
+                idle_ids.append(pid)
+                continue
+            ctf_n += 1
+        else:
+            if rt_n >= rt_cap:
+                idle_ids.append(pid)
+                continue
+            rt_n += 1
         picked.append(pid)
     for pid in db_running:
         if pid not in picked and pid not in idle_ids:

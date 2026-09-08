@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..db import db
 
@@ -913,10 +914,10 @@ async def load_prior_supervisor_plans(project_id: str, *, limit: int = 8) -> lis
 
 
 _OUTCOME_CN = {
-    "oracle": "指挥官有高质量进展（flag/发现/能力边）",
-    "executed": "指挥官碰过绑定，但图上还没有新的收口",
-    "ignored": "指挥官未执行该绑定（仍在打被禁战术/入口回流）",
-    "empty": "指挥官本轮几乎没有工具调用",
+    "oracle": "御主有高质量进展（flag/发现/能力边）",
+    "executed": "御主碰过绑定，但图上还没有新的收口",
+    "ignored": "御主未执行该绑定（仍在打被禁战术/入口回流）",
+    "empty": "御主本轮几乎没有工具调用",
 }
 
 
@@ -927,7 +928,7 @@ def _own_plans_block(plans: list[dict], *, compact: bool = False) -> str:
     n = len(plans)
     diag_n, plan_n = (80, 140) if compact else (240, 400)
     lines = [
-        f"这是你自己写过的全部方案（共 {n} 份），不是指挥官笔记。写下一份必须对照这里每一份，不只看最近一份。",
+        f"这是你自己写过的全部方案（共 {n} 份），不是御主笔记。写下一份必须对照这里每一份，不只看最近一份。",
         "已执行无收口 → 说明相对前面哪一步改了；未执行 → 收紧同一绑定，禁止同义改写成另一套；已否证的不要复开。",
     ]
     for i, p in enumerate(plans, 1):
@@ -976,7 +977,7 @@ async def assemble_supervisor_brief(
     """只拼图：节点/边/发现/Intent/否证/flag + 局面摘要。忽略流水参数。"""
     from ..graph import store as gstore
 
-    # 不上指挥官长摘要：那是简报膨胀主因。当前方案是否跑完用工具次数和已执行轮次表达。
+    # 不上御主长摘要：那是简报膨胀主因。当前方案是否跑完用工具次数和已执行轮次表达。
     del last_turn_text
     try:
         facts.last_tool_uses = int(last_tool_uses or facts.last_tool_uses or 0)
@@ -1112,12 +1113,16 @@ async def assemble_supervisor_brief(
     if facts.prior_plans and facts.last_plan_outcome:
         facts.prior_plans[-1]["outcome"] = facts.last_plan_outcome
 
+    evo_block = ""
     if not facts.evo_do and not facts.evo_avoid:
         try:
-            from ..memory.evolve import avoid_from_lessons, retrieve_lessons, tactics_from_lessons
+            from ..memory.evolve import (
+                avoid_from_lessons, format_lessons_block, retrieve_lessons, tactics_from_lessons,
+            )
             lessons = await retrieve_lessons(proj, graph, limit=6, bump_uses=False)
             facts.evo_do = sorted(tactics_from_lessons(lessons))[:8]
             facts.evo_avoid = sorted(avoid_from_lessons(lessons))[:8]
+            evo_block = format_lessons_block(lessons) or ""
         except Exception:
             pass
     hist_title = (
@@ -1125,7 +1130,8 @@ async def assemble_supervisor_brief(
         if facts.claim_unverified else
         "## 已给过的方案（写下一份必须对照全部，不只看最近一份）"
     )
-    evo_block = _evo_tactics_block(facts.evo_do, facts.evo_avoid)
+    if not evo_block:
+        evo_block = _evo_tactics_block(facts.evo_do, facts.evo_avoid)
     parts = [
         f"# 监督简报 · 第 {turn} 轮之后",
         f"目标：{_goal_line(objective)}",
@@ -1139,6 +1145,20 @@ async def assemble_supervisor_brief(
         _facts_block(facts),
         "",
     ]
+    try:
+        from ..config import settings as _st
+        from .spiral import format_coverage_brief, load_ledger, scan_ban_repeats
+        ws = Path(_st.workspaces_dir) / project_id
+        ledger = load_ledger(ws)
+        cov = format_coverage_brief(ledger, objective=objective)
+        parts.extend(["## 已覆盖（螺旋账本）", cov, ""])
+        from ..objective import objective_allows_flag
+        if objective_allows_flag(objective):
+            for b in scan_ban_repeats(ledger, objective=objective):
+                if b and b not in facts.repeats:
+                    facts.repeats.append(b)
+    except Exception:
+        pass
     if evo_block:
         parts.extend([evo_block, ""])
     parts.extend([

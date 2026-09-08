@@ -1,7 +1,7 @@
 """ProjectAgent：每个项目独立的 Claude Code 猎面。
 
 - 装配 ClaudeAgentOptions：禁用内置 Bash/WebFetch，改用 StrikeAgent_AtkBrain-Flash 图工具；挂子智能体；bypassPermissions。
-- 指挥官与自监督都是全新 Claude Code：每轮不续接旧对话，局面只靠攻击图/简报，避免上下文污染。
+- 从者与御主都是全新 Claude Code：每轮不续接旧对话，局面只靠攻击图/简报，避免上下文污染。
 - run_turn：先开新会话再发本轮编排指令，消费流式消息并翻译成事件。
 - 支持人工 steering 在轮次间注入（写入本轮指令，不挂在旧对话上）。
 """
@@ -85,24 +85,6 @@ def spawn_jitter_seconds(*, max_sec: float | None = None) -> float:
     return random.uniform(0.0, mx)
 
 
-# #region agent log
-def _dbg(loc: str, message: str, hyp: str | None = None, **data) -> None:
-    try:
-        line = json.dumps({
-            "sessionId": "c5cf65",
-            "timestamp": int(_time.time() * 1000),
-            "location": loc,
-            "message": message,
-            "hypothesisId": hyp,
-            "data": data or None,
-        }, ensure_ascii=False)
-        with open("/home/kali/atkbrain/.cursor/debug-c5cf65.log", "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
-# #endregion
-
-
 class ProjectAgent:
     def __init__(self, project: dict, scope: Scope) -> None:
         self.project = project
@@ -133,6 +115,7 @@ class ProjectAgent:
         # 题目简报（description + 元信息）：注入系统提示并落盘 BRIEF.md，消除“题面没进视野”致盲。
         self.brief = build_brief(project)
         self._write_brief()
+        self._project_skill_names = self._write_skills()
         self.model = cfg.get("model", settings.claude_model)
         # 只作日志；不再用这个 ID 续接旧对话（会把上一轮脏上下文带进下一轮）。
         self.last_session_id: str | None = None
@@ -161,7 +144,9 @@ class ProjectAgent:
                 self.scope, self.workspace_dir, self.objective, self.brief,
             ),
             cwd=self.workspace_dir,
-            setting_sources=["project"],
+            setting_sources=["project"],  # 不读 ~/.claude（user）；只读本猎工作区
+            plugins=[],
+            skills=list(getattr(self, "_project_skill_names", None) or []),
             agents=build_subagents(self.objective),
             model=self.model,
             fallback_model=settings.claude_fallback_model,
@@ -210,25 +195,11 @@ class ProjectAgent:
             return str(inp.get("tool_name") or inp.get("toolName") or "")
         return str(getattr(inp, "tool_name", None) or getattr(inp, "toolName", None) or "")
 
-    def _deny_extra_task(self) -> dict:
-        return {
-            "continue_": True,
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": (
-                    "已有子智能体在跑；等它结束后再派下一个，避免占满全局 Claude 配额。"
-                ),
-            },
-        }
-
     async def _on_pre_tool_use(self, _input, _tool_use_id, _hook_context) -> dict:
         if self.ctx.goal_reached:
             return self._full_score_hook_block()
         if self._hook_tool_name(_input) == "Task":
-            cap = max(1, int(getattr(settings, "claude_per_project", 2) or 2) - 1)
-            if int(self._task_slots or 0) >= cap:
-                return self._deny_extra_task()
+            # 子智能体不设上限；_task_slots 只记账，不拦截。
             self._task_slots = int(self._task_slots or 0) + 1
         return {}
 
@@ -276,6 +247,14 @@ class ProjectAgent:
         except OSError:
             pass
 
+    def _write_skills(self) -> list[str]:
+        """把本仓库 skills 拷进猎工作区（不写 ~/.claude）。失败则空名单。"""
+        try:
+            from .project_skills import install_into_workspace
+            return install_into_workspace(self.workspace_dir, objective=self.objective)
+        except OSError:
+            return []
+
     def _kill_workspace_cli(self) -> int:
         killed = 0
         try:
@@ -316,34 +295,16 @@ class ProjectAgent:
             for attempt in range(1, retries + 1):
                 if settle_ms:
                     await asyncio.sleep(settle_ms / 1000.0)
-                # #region agent log
-                _dbg("session.py:connect_pre", "main CLI connect under spawn lock",
-                     hyp="H-MAIN1", project_id=self.project_id,
-                     has_session=bool(self.last_session_id), attempt=attempt,
-                     add_repo=bool(getattr(settings, "claude_add_repo_dir", False)))
-                # #endregion
                 t0 = _time.time()
                 try:
                     await self.client.connect()
                     self._connected = True
-                    # #region agent log
-                    _dbg("session.py:connect_ok", "main CLI connected",
-                         hyp="H-MAIN1", project_id=self.project_id,
-                         elapsed=round(_time.time() - t0, 2), attempt=attempt)
-                    # #endregion
                     return
                 except Exception as e:
                     self._connected = False
                     last_exc = e
                     dead = is_dead_cli_error(e)
                     retryable = is_retryable_connect_error(e)
-                    # #region agent log
-                    _dbg("session.py:connect_fail", "main CLI connect failed",
-                         hyp="H-MAIN1", project_id=self.project_id,
-                         elapsed=round(_time.time() - t0, 2),
-                         attempt=attempt, dead=dead,
-                         exc_type=type(e).__name__, exc_msg=repr(e)[:240])
-                    # #endregion
                     if not retryable or attempt >= retries:
                         break
                     killed = self._kill_workspace_cli()
@@ -351,12 +312,6 @@ class ProjectAgent:
                     self.options = self._build_options()
                     self.client = ClaudeSDKClient(self.options)
                     self.last_session_id = None
-                    # #region agent log
-                    _dbg("session.py:connect_retry", "backoff before reconnect",
-                         hyp="H-CF", project_id=self.project_id,
-                         attempt=attempt, killed=killed,
-                         sleep_s=round(1.5 * attempt, 1))
-                    # #endregion
                     await asyncio.sleep(1.5 * attempt)
         assert last_exc is not None
         raise last_exc
@@ -404,10 +359,6 @@ class ProjectAgent:
         self.last_session_id = None
         self.options = self._build_options()
         self.client = ClaudeSDKClient(self.options)
-        # #region agent log
-        _dbg("session.py:fresh", "new Claude Code session, no resume",
-             hyp="H-FRESH", project_id=self.project_id)
-        # #endregion
         if connect:
             await self.connect(jitter=False)
 
@@ -422,11 +373,6 @@ class ProjectAgent:
         禁止对已死 transport 做 interrupt/query，否则会再次抛
         ``Cannot write to terminated process (exit code: -11)``，重建本身失败。
         """
-        # #region agent log
-        _dbg("session.py:recover_dead", "force fresh CLI after SIGSEGV/dead",
-             hyp="H-MAIN3", project_id=self.project_id,
-             old_session=bool(self.last_session_id))
-        # #endregion
         self.last_session_id = None
         self._connected = False
         killed = self._kill_workspace_cli()
@@ -435,10 +381,6 @@ class ProjectAgent:
             await self.ctx.aclose()
         except Exception:
             pass
-        # #region agent log
-        _dbg("session.py:recover_kill", "killed workspace claude leftovers",
-             hyp="H-CF", project_id=self.project_id, killed=killed)
-        # #endregion
         self.options = self._build_options()
         self.client = ClaudeSDKClient(self.options)
         await asyncio.sleep(1.5)

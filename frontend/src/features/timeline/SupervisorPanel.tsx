@@ -13,10 +13,10 @@ const KIND_LABEL: Record<string, string> = {
   error: "调用失败",
   empty: "空方案",
   hold: "继续",
-  runtime_review: "审查",
+  runtime_review: "御主审查",
 };
 
-/** 自监督栏只展示失败记录与 Claude Code 生成的内容，不展示 skip/probe 等机械条目。 */
+/** 御主栏只展示失败记录与 Claude Code 生成的内容，不展示 skip/probe 等机械条目。 */
 const VISIBLE_KINDS = new Set(["error", "empty", "plan", "hold", "runtime_review"]);
 
 type SupervisorRow = {
@@ -58,7 +58,10 @@ function fromSupervisorEvent(ev: RTEvent): SupervisorRow | null {
             : (turn ? `第 ${turn} 轮继续当前方案` : "继续当前方案")
         )
       : kind === "runtime_review"
-      ? (turn ? `第 ${turn} 轮审查` : "运行时审查")
+      ? (
+          (turn ? `第 ${turn} 轮御主审查` : "御主审查")
+          + (p.continue === false ? " · 暂停" : " · 续跑")
+        )
       : turn
       ? `第 ${turn} 轮方案`
       : pivot
@@ -96,7 +99,7 @@ function fromLegacy(ev: RTEvent): SupervisorRow | null {
     const src = String(p.source || p.from || "");
     const content = String(p.content || "");
     if (/换路兜底|机械模板/.test(content)) return null;
-    if (src !== "supervisor" && !content.includes("【AI监督")) return null;
+    if (src !== "supervisor" && !content.includes("【AI监督") && !content.includes("【指挥官") && !content.includes("【御主")) return null;
     const m = content.match(/方案\s*#(\d+)/);
     const pivot = m ? Number(m[1]) : 0;
     const diag = (content.match(/判断：([^\n]+)/) || [])[1] || "";
@@ -104,7 +107,7 @@ function fromLegacy(ev: RTEvent): SupervisorRow | null {
       key: String(ev.id ?? `steer-${ev.ts}`),
       ts: ev.ts,
       kind: "plan",
-      title: pivot ? `方案 #${pivot}` : "监督方案",
+      title: pivot ? `方案 #${pivot}` : "御主方案",
       diagnosis: diag,
       body: content,
       pivot,
@@ -112,18 +115,27 @@ function fromLegacy(ev: RTEvent): SupervisorRow | null {
   }
   if (ev.type !== "log") return null;
   const msg = String(p.message || "");
-  if (/换路兜底|机械模板|顾问就绪|未到周期性|本轮不改方向/.test(msg)) return null;
+  if (/换路兜底|机械模板|指挥官就绪|御主就绪|顾问就绪|未到周期性|本轮不改方向/.test(msg)) return null;
   if (/调用失败/.test(msg) && /AI监督/.test(msg)) {
     return {
       key: String(ev.id ?? `log-${ev.ts}`),
       ts: ev.ts,
       kind: "error",
-      title: "监督调用失败，本轮未注入方案",
+      title: "御主调用失败，本轮未注入方案",
       body: msg.replace(/^AI监督调用失败（本轮不注入方案）：/, ""),
     };
   }
-  if (/空方案/.test(msg) && /AI监督/.test(msg)) {
-    return { key: String(ev.id ?? `log-${ev.ts}`), ts: ev.ts, kind: "empty", title: "监督返回空方案，本轮未注入", body: msg };
+  if (/未下达任务/.test(msg) && /指挥官|御主/.test(msg)) {
+    return {
+      key: String(ev.id ?? `log-${ev.ts}`),
+      ts: ev.ts,
+      kind: "error",
+      title: "御主超时未下令，从者自走",
+      body: msg,
+    };
+  }
+  if (/空方案/.test(msg) && (/AI监督/.test(msg) || /指挥官/.test(msg) || /御主/.test(msg))) {
+    return { key: String(ev.id ?? `log-${ev.ts}`), ts: ev.ts, kind: "empty", title: "御主返回空方案，本轮未注入", body: msg };
   }
   return null;
 }
@@ -169,7 +181,7 @@ export function SupervisorPanel({ events }: { events: RTEvent[] }) {
   if (!rows.length) {
     return (
       <p className="muted" style={{ padding: 16 }}>
-        暂无自监督记录。顾问开口后，这里只显示 Claude Code 给出的方案，以及调用失败。
+        暂无御主记录。御主开口后，这里只显示 Claude Code 给出的方案，以及调用失败。
       </p>
     );
   }

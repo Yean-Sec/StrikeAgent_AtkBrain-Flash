@@ -27,6 +27,7 @@ def empty_hunt() -> dict[str, Any]:
         "elapsed_sec": 0.0,
         "reviewed_elapsed_sec": None,
         "idle_sec": 0.0,
+        "idle_plans": 0,
     }
 
 
@@ -67,6 +68,10 @@ def parse_hunt(cfg: dict | None) -> dict[str, Any]:
         base["idle_sec"] = max(0.0, float(raw.get("idle_sec") or 0))
     except (TypeError, ValueError):
         pass
+    try:
+        base["idle_plans"] = max(0, int(raw.get("idle_plans") or 0))
+    except (TypeError, ValueError):
+        base["idle_plans"] = 0
     return base
 
 
@@ -159,6 +164,7 @@ def snapshot_hunt(
     elapsed_sec: float,
     reviewed_elapsed_sec: float | None,
     idle_sec: float,
+    idle_plans: int = 0,
 ) -> dict[str, Any]:
     return {
         "turn": max(0, int(turn)),
@@ -167,6 +173,7 @@ def snapshot_hunt(
             None if reviewed_elapsed_sec is None else max(0.0, float(reviewed_elapsed_sec))
         ),
         "idle_sec": max(0.0, float(idle_sec)),
+        "idle_plans": max(0, int(idle_plans or 0)),
     }
 
 
@@ -193,7 +200,7 @@ def hunt_elapsed_meets_min(elapsed_sec: float, min_sec: float) -> bool:
 
 
 def looks_like_api_key_missing(text: str, *, tool_uses: int = 0) -> bool:
-    """是否像 DeepSeek/API 密钥缺失。禁止用泛「authentication fail」匹配指挥官规划。"""
+    """是否像 DeepSeek/API 密钥缺失。禁止用泛「authentication fail」匹配御主规划。"""
     try:
         uses = int(tool_uses or 0)
     except (TypeError, ValueError):
@@ -417,6 +424,48 @@ def graph_idle_pause_due(idle_for: float, limit: float) -> bool:
     except (TypeError, ValueError):
         idle = 0.0
     return idle >= lim
+
+
+def graph_idle_plans_due(empty_plans: int, limit: int) -> bool:
+    """连续这么多御主方案仍无新节点/交旗/本地长计算 → 图空转。limit<=0 关闭。"""
+    try:
+        cap = int(limit or 0)
+    except (TypeError, ValueError):
+        cap = 0
+    if cap <= 0:
+        return False
+    try:
+        n = int(empty_plans or 0)
+    except (TypeError, ValueError):
+        n = 0
+    return n >= cap
+
+
+def note_graph_idle_plans(
+    *,
+    idle_plans: int,
+    pivots: int,
+    last_counted_pivots: int,
+    progressed: bool,
+) -> tuple[int, int]:
+    """方案空转计数：有进展清零；新方案（pivots 增加）才 +1。hold 不加。"""
+    try:
+        n = max(0, int(idle_plans or 0))
+    except (TypeError, ValueError):
+        n = 0
+    try:
+        p = max(0, int(pivots or 0))
+    except (TypeError, ValueError):
+        p = 0
+    try:
+        last = max(0, int(last_counted_pivots or 0))
+    except (TypeError, ValueError):
+        last = 0
+    if progressed:
+        return 0, p
+    if p > last:
+        n += p - last
+    return n, p
 
 
 _WS_SKIP_DIR = frozenset({

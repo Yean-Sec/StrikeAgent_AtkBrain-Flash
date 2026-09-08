@@ -15,14 +15,19 @@ from ..events import emit
 from ..objective import DATA_ACCESS_CATEGORIES, KEY_LEAK_CATEGORIES, USER_VISIBLE_SEVERITIES, listed_finding_rows
 from .model import (
     CRITICAL_CATEGORIES,
+    SEVERITY_ORDER,
     EdgeIn,
     FindingIn,
     IntentIn,
     NodeIn,
-    coerce_goal_node_type,
+    coerce_declared_node_type,
     compute_risk_score,
     display_finding_severity,
+    humanize_node_key,
+    infer_node_type_from_key,
     is_critical,
+    is_placeholder_node,
+    placeholder_node_spec,
     normalize_redteam_rating,
     normalize_severity,
     scrub_candidate_rce_label,
@@ -34,7 +39,7 @@ from .model import (
 async def upsert_node(project_id: str, node: NodeIn, run_id: str | None = None) -> dict:
     orig_key = node.key
     node = await _coerce_intranet_target_node(project_id, node)
-    coerced = coerce_goal_node_type(node.key, node.type, node.tags)
+    coerced = coerce_declared_node_type(node.key, node.type, node.tags)
     if coerced != node.type:
         node = node.model_copy(update={"type": coerced})
     score = compute_risk_score(node.severity, node.type, node.is_rce)
@@ -92,10 +97,13 @@ async def _autofinding_from_node(project_id: str, row: dict, run_id: str | None)
     foothold/goal（getshell）不在此自动抬升——由 report_shell 落点。
     高危 vuln 节点自动沉淀为 finding，与 report_finding 去重。
     """
-    from ..graph.model import SEVERITY_ORDER
+    from .model import SEVERITY_ORDER
     if row["type"] in ("foothold", "goal"):
         return
     if row["type"] != "vuln":
+        return
+    tags = _loads(row["tags"]) or []
+    if is_placeholder_node(row["key"], row["title"], row["detail"], tags if isinstance(tags, list) else []):
         return
     if not (bool(row["is_rce"]) or SEVERITY_ORDER.get(row["severity"], 0) >= SEVERITY_ORDER["high"]):
         return
@@ -134,14 +142,125 @@ def _derive_category(node_type: str, tags: list[str], is_rce: bool) -> str:
 
 
 async def ensure_node(project_id: str, key: str, run_id: str | None = None) -> None:
-    """边引用了尚不存在的节点时，惰性建占位节点。"""
+    """边引用了尚不存在的节点时，按 key 前缀建占位（vuln: 就是 vuln，不是 info 空壳）。"""
     exists = await db.fetchone(
-        "SELECT 1 FROM nodes WHERE project_id=? AND key=?", (project_id, key)
+        "SELECT * FROM nodes WHERE project_id=? AND key=?", (project_id, key)
     )
-    if not exists:
+    if exists:
+        await _promote_prefix_stub(project_id, exists, run_id=run_id)
+        return
+    ntype, title, sev, tags = placeholder_node_spec(key)
+    await upsert_node(
+        project_id,
+        NodeIn(key=key, type=ntype, title=title, severity=sev, tags=tags),
+        run_id=run_id,
+    )
+
+
+async def _promote_prefix_stub(project_id: str, row, run_id: str | None = None) -> None:
+    """已落库的 info 空壳若 key 是 vuln:/foothold: 等，升到前缀类型。"""
+    key = str(row["key"] or "")
+    old_type = str(row["type"] or "info")
+    new_type = coerce_declared_node_type(key, old_type, _loads(row["tags"]) or [])
+    if new_type == old_type:
+        return
+    tags = _loads(row["tags"]) or []
+    if not isinstance(tags, list):
+        tags = []
+    title = str(row["title"] or "")
+    if title == key:
+        title = humanize_node_key(key)
+    _ntype, _t, sev, extra = placeholder_node_spec(key)
+    stub = is_placeholder_node(key, row["title"], row["detail"], tags)
+    if stub and "placeholder" not in {str(t).lower() for t in tags}:
+        tags = list(tags) + extra
+    if not stub:
+        tags = [t for t in tags if str(t).lower() != "placeholder"]
+    sev_out = str(row["severity"] or sev)
+    if new_type == "vuln" and SEVERITY_ORDER.get(sev_out, 0) < SEVERITY_ORDER["high"]:
+        sev_out = "high"
+    await upsert_node(
+        project_id,
+        NodeIn(
+            key=key, type=new_type, title=title or _t,
+            detail=row["detail"], severity=sev_out,
+            tags=tags, is_rce=bool(row["is_rce"]),
+        ),
+        run_id=run_id,
+    )
+
+
+async def fill_source_node(
+    project_id: str,
+    key: str,
+    *,
+    title: str | None = None,
+    detail: str | None = None,
+    severity: str | None = None,
+    ntype: str | None = None,
+    run_id: str | None = None,
+) -> None:
+    """report_flag / report_finding 引用的来源节点：补类型、标题、证据，去掉 placeholder。"""
+    if not (project_id and key):
+        return
+    row = await db.fetchone(
+        "SELECT * FROM nodes WHERE project_id=? AND key=?", (project_id, key)
+    )
+    inferred = infer_node_type_from_key(key) or (ntype or "info")
+    current_type = str(row["type"]) if row else inferred
+    want = coerce_declared_node_type(key, ntype or current_type)
+    tags = (_loads(row["tags"]) if row else None) or []
+    if not isinstance(tags, list):
+        tags = []
+    stub = (not row) or is_placeholder_node(key, row["title"], row["detail"], tags)
+    tags = [t for t in tags if str(t).lower() != "placeholder"]
+    old_title = str(row["title"] or "") if row else ""
+    new_title = (title or "").strip() or (old_title if old_title and old_title != key else humanize_node_key(key))
+    old_detail = row["detail"] if row else None
+    incoming = detail if (detail and str(detail).strip()) else None
+    if stub or not old_detail:
+        new_detail = incoming or old_detail
+    else:
+        new_detail = old_detail
+    old_sev = str(row["severity"] or "info") if row else "info"
+    new_sev = severity or old_sev
+    if want == "vuln" and SEVERITY_ORDER.get(new_sev, 0) < SEVERITY_ORDER["high"]:
+        new_sev = "high"
+    spec_type, spec_title, spec_sev, _ = placeholder_node_spec(key)
+    if not row:
         await upsert_node(
-            project_id, NodeIn(key=key, type="info", title=key), run_id=run_id
+            project_id,
+            NodeIn(
+                key=key, type=want or spec_type, title=new_title or spec_title,
+                detail=new_detail, severity=new_sev or spec_sev, tags=tags,
+            ),
+            run_id=run_id,
         )
+        return
+    await upsert_node(
+        project_id,
+        NodeIn(
+            key=key, type=want, title=new_title,
+            detail=new_detail, severity=new_sev,
+            tags=tags, is_rce=bool(row["is_rce"]),
+        ),
+        run_id=run_id,
+    )
+
+
+async def repair_prefix_type_stubs(project_id: str, run_id: str | None = None) -> int:
+    """打开图时把 vuln: 写成 info 的空壳升回正确类型。"""
+    rows = await db.fetchall("SELECT * FROM nodes WHERE project_id=?", (project_id,))
+    n = 0
+    for row in rows or []:
+        old = str(row["type"] or "info")
+        tags = _loads(row["tags"]) or []
+        new = coerce_declared_node_type(row["key"], old, tags if isinstance(tags, list) else [])
+        if new == old:
+            continue
+        await _promote_prefix_stub(project_id, row, run_id=run_id)
+        n += 1
+    return n
 
 
 # 游离组件挂回 target 时的根节点优先级（越靠前越适合作入口）
@@ -2738,6 +2857,10 @@ async def get_graph(project_id: str, *, heal: bool = False) -> dict:
     heal=False（默认，UI/WS/列表）：只读已落库标记，避免每次打开页面都 networkx 重算把 SQLite 打满。
     写入节点/边时已调用 ensure_target_attachments + recompute_rce_path，日常展示不必再算。
     """
+    try:
+        await repair_prefix_type_stubs(project_id)
+    except Exception:
+        pass
     if heal:
         await ensure_target_attachments(project_id, run_id=None)
         path = await recompute_rce_path(project_id, emit_event=False)

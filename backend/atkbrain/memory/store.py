@@ -204,7 +204,7 @@ async def record_episode(
            VALUES(?,?,?,?,?,?,?,?,?)""",
         (mid, project_id, target_fp, version, "episode", _dumps(tags), _dumps(content), outcome, now()),
     )
-    return {"id": mid, "version": version, "target_fp": target_fp, "outcome": outcome}
+    return {"id": mid, "version": version, "target_fp": target_fp, "outcome": outcome, "content": content}
 
 
 def _build_milestone_payload(
@@ -413,10 +413,14 @@ async def summarize_run(project: dict, graph: dict, run: dict) -> dict:
         "techniques": [t for t in techniques if t],
         "tech": tech,
         "findings": [
-            {"category": f.get("category"), "severity": f.get("severity")}
-            for f in findings
-        ] if _allows_flag else [
-            {"category": f.get("category"), "severity": f.get("severity"), "title": f.get("title")}
+            {
+                "category": f.get("category"),
+                "severity": f.get("severity"),
+                "verification_status": f.get("verification_status"),
+                "redteam_rating": f.get("redteam_rating"),
+                "secondary_verified": f.get("secondary_verified"),
+                **({} if _allows_flag else {"title": f.get("title")}),
+            }
             for f in findings
         ],
         "achievements": achievements,

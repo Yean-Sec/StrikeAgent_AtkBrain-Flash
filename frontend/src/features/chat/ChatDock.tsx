@@ -89,7 +89,7 @@ export function ChatDock({
 
       <div className="row" style={{ marginTop: 10, gap: 8 }}>
         <input
-          className="input" placeholder="给主智能体发送指令…（回车发送）"
+          className="input" placeholder="给从者发送指令…（回车发送）"
           value={text} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
         />

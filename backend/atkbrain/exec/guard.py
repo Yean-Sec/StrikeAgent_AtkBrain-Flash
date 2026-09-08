@@ -1,6 +1,7 @@
 """执行纪律：破坏性命令拦截、勿打本机控制台与物理网卡。"""
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import shlex
@@ -8,7 +9,20 @@ from dataclasses import dataclass
 
 from ..config import settings
 from ..objective import objective_allows_flag
-from ..scope import Scope, is_loopback, is_platform_endpoint, local_self_hosts, unauthorized_peer_endpoint, unauthorized_private_host
+from ..scope import (
+    Scope,
+    attacker_lan_forbidden,
+    attacker_lan_scan_forbidden,
+    attacker_loopback_forbidden,
+    canonical_host,
+    coerce_ip,
+    is_loopback,
+    is_platform_endpoint,
+    local_self_hosts,
+    local_self_networks,
+    unauthorized_peer_endpoint,
+    unauthorized_private_host,
+)
 
 # 一个 token 若以 scheme:// 开头 → 只取其“权威主机”(authority)，忽略 path/query/fragment。
 # 这样 body/参数里的域名不会被误判，且 SSRF/开放重定向 payload(在 query 里的 URL)天然放行——
@@ -127,22 +141,49 @@ _TARGET_DESTRUCTIVE = [
     ), "请求会触发删除动作"),
 ]
 
-# CTF 必有解：拦截超级大字典撞库/撞哈希。红队不走这条。
-_CTF_MEGA_DICT_RE = re.compile(
+# 超过 10 万行的词表：CTF 与红队一律拦截（目录/口令/子域/host/哈希）。
+_MEGA_WORDLIST_RE = re.compile(
     r"rockyou|"
+    r"directory-list-2\.3-medium|"
+    r"directory-list-2\.3-large|"
     r"crackstation|"
     r"10[-_]?million[-_]?password|"
     r"hashed[-_]?password|"
     r"darkc0de|"
-    r"\bhashcat\b|"
-    r"\bjohn(?:the(?:ripper)?)?\b.{0,120}--wordlist|"
+    r"raft[-_]?large|"
     r"seclists/.*/Passwords/.{0,80}(?:large|huge|million|rockyou)",
     re.I,
 )
 
+# CTF 额外：禁止 hashcat / john --wordlist 去撞哈希（即使用未超 10 万的表）。
+_CTF_MEGA_DICT_RE = re.compile(
+    r"\bhashcat\b|"
+    r"\bjohn(?:the(?:ripper)?)?\b.{0,120}--wordlist",
+    re.I,
+)
+
+
+def mega_wordlist_reason(text: str | None) -> str | None:
+    """CTF 与红队禁止超过 10 万行的词表。命中则返回原因。"""
+    blob = text or ""
+    if not blob.strip():
+        return None
+    if _MEGA_WORDLIST_RE.search(blob):
+        return (
+            "禁止超级大字典：词表不得超过 10 万行（目录/子域/host 碰撞/口令/哈希一律）。"
+            "不要用 rockyou 或 dirbuster medium（220560）；目录最大中档 87664。"
+        )
+    return None
+
 
 def ctf_mega_dict_reason(text: str | None) -> str | None:
-    """CTF 禁止千万级词表撞口令/哈希。命中则返回原因。"""
+    """CTF 禁止千万级词表与 hashcat/john 撞哈希。命中则返回原因。"""
+    why = mega_wordlist_reason(text)
+    if why:
+        return (
+            "CTF 必有解，禁止超级大字典撞库/撞哈希。"
+            "题面账号或个位数默认口令即可；失败则回到已验证通道抽数据。"
+        )
     blob = text or ""
     if not blob.strip():
         return None
@@ -265,54 +306,161 @@ def _safe_split(command: str) -> list[str]:
 
 _CONNECT_PROGS = {
     "curl", "wget", "http", "https", "nc", "ncat", "netcat", "ssh", "scp", "sftp",
-    "nmap", "ncat", "masscan", "ffuf", "feroxbuster", "gobuster", "sqlmap", "nikto",
+    "nmap", "masscan", "ffuf", "feroxbuster", "gobuster", "sqlmap", "nikto",
     "redis-cli", "mysql", "psql", "mongo", "ftp", "lftp", "smbclient", "rpcclient",
+    "hydra", "nuclei", "whatweb", "wafw00f", "nxc", "crackmapexec", "smbmap",
 }
+_CONNECT_URL_FLAGS = {"-u", "--url", "--host"}
+_CMD_BREAK = {";", "&&", "||", "|"}
+_CIDR_TOKEN_RE = re.compile(r"^((?:\d{1,3}\.){3}\d{1,3})/(\d{1,2})$")
+_ALT_HOSTPORT_RE = re.compile(
+    r"^(0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+)){0,3}(?::(\d{1,5}))?$",
+    re.I,
+)
 
 
-def _direct_connect_hosts(tokens: list[str]) -> set[str]:
-    """curl/wget/nmap/ssh 等真正发起连接的主机；python 编码参数里的 URL 不算。"""
+def _connect_token_hostport(tok: str) -> tuple[str | None, int | None]:
+    """直连参数上的主机（含十进制/短写 IPv4），不含 -d 载荷。"""
+    h, p = _token_hostport(tok)
+    if h:
+        return h, p
+    raw = tok.strip().strip("'\"")
+    m = _CIDR_TOKEN_RE.match(raw)
+    if m:
+        return None, None
+    m = _ALT_HOSTPORT_RE.match(raw)
+    if m and coerce_ip(raw.split(":")[0]):
+        return raw.split(":")[0].lower(), int(m.group(2)) if m.group(2) else _port_of(raw)
+    return None, None
+
+
+def _add_direct_token(
+    tok: str,
+    hosts: set[str],
+    pairs: list[tuple[str, int | None]],
+    cidrs: list[ipaddress.IPv4Network],
+) -> None:
+    raw = (tok or "").strip().strip("'\"")
+    if not raw:
+        return
+    m = _CIDR_TOKEN_RE.match(raw)
+    if m:
+        try:
+            cidrs.append(ipaddress.ip_network(raw, strict=False))
+        except Exception:
+            pass
+        return
+    h, p = _connect_token_hostport(raw)
+    if h:
+        hosts.add(h)
+        pairs.append((h, p))
+
+
+def _direct_connect_targets(
+    tokens: list[str],
+    depth: int = 0,
+) -> tuple[set[str], list[tuple[str, int | None]], list[ipaddress.IPv4Network]]:
+    """curl/nmap 等真正发起的连接目标；for 列表 / -d 载荷里的 URL 不算。"""
     hosts: set[str] = set()
+    pairs: list[tuple[str, int | None]] = []
+    cidrs: list[ipaddress.IPv4Network] = []
+    if depth > 3:
+        return hosts, pairs, cidrs
     i = 0
     n = len(tokens)
     while i < n:
-        b = tokens[i].rsplit("/", 1)[-1].lower()
+        tok = tokens[i]
+        if "://" in tok:
+            i += 1
+            continue
+        b = tok.rsplit("/", 1)[-1].lower()
+        if not tok.startswith("-") and "=" in tok:
+            i += 1
+            continue
+        if b in _WRAPPERS:
+            i += 1
+            continue
+        if b == "timeout":
+            i += 2
+            continue
+        if b in _SHELL_PROGS:
+            j = i + 1
+            while j < n and tokens[j] not in _CMD_BREAK:
+                t = tokens[j]
+                if t.startswith("-") and "=" in t:
+                    flag, val = t.split("=", 1)
+                    if flag in _SUBCMD_FLAGS:
+                        h2, p2, c2 = _direct_connect_targets(_safe_split(val), depth + 1)
+                        hosts |= h2
+                        pairs.extend(p2)
+                        cidrs.extend(c2)
+                    j += 1
+                    continue
+                if t in _SUBCMD_FLAGS and j + 1 < n:
+                    h2, p2, c2 = _direct_connect_targets(_safe_split(tokens[j + 1]), depth + 1)
+                    hosts |= h2
+                    pairs.extend(p2)
+                    cidrs.extend(c2)
+                    j += 2
+                    continue
+                j += 1
+            i = j
+            continue
         if b in _CONNECT_PROGS:
             j = i + 1
-            while j < n and tokens[j] not in (";", "&&", "||", "|"):
+            skip_next = False
+            while j < n and tokens[j] not in _CMD_BREAK:
                 t = tokens[j]
-                if t in ("-u", "--url", "--host") and j + 1 < n:
-                    cand = tokens[j + 1]
-                    h = _authority_host(cand)
-                    if h:
-                        hosts.add(h)
-                    m = _IP_TOKEN_RE.match(cand)
-                    if m:
-                        hosts.add(m.group(1).lower())
-                    j += 2
+                if skip_next:
+                    skip_next = False
+                    j += 1
                     continue
                 if t.startswith("-") and "=" in t:
                     flag, val = t.split("=", 1)
-                    if flag in ("-u", "--url", "--host"):
-                        h = _authority_host(val)
-                        if h:
-                            hosts.add(h)
+                    if flag in _SKIP_VALUE_FLAGS:
+                        j += 1
+                        continue
+                    if flag in _CONNECT_URL_FLAGS:
+                        _add_direct_token(val, hosts, pairs, cidrs)
                     j += 1
+                    continue
+                if t in _SKIP_VALUE_FLAGS:
+                    skip_next = True
+                    j += 1
+                    continue
+                if t in _CONNECT_URL_FLAGS and j + 1 < n:
+                    _add_direct_token(tokens[j + 1], hosts, pairs, cidrs)
+                    j += 2
                     continue
                 if t.startswith("-"):
                     j += 1
                     continue
-                h = _authority_host(t)
-                if h:
-                    hosts.add(h)
-                m = _IP_TOKEN_RE.match(t)
-                if m:
-                    hosts.add(m.group(1).lower())
+                _add_direct_token(t, hosts, pairs, cidrs)
                 j += 1
             i = j
             continue
         i += 1
+    return hosts, pairs, cidrs
+
+
+def _direct_connect_hosts(tokens: list[str]) -> set[str]:
+    hosts, _pairs, _cidrs = _direct_connect_targets(tokens)
     return hosts
+
+
+def _interp_loopback_pairs(tokens: list[str]) -> list[tuple[str, int | None]]:
+    prog = _leading_prog(tokens)
+    if prog not in _INTERP_PROGS:
+        return []
+    pairs: list[tuple[str, int | None]] = []
+    for i, tok in enumerate(tokens):
+        if tok in _INTERP_CODE_FLAGS and i + 1 < len(tokens):
+            pairs.extend(_loopback_ports_from_code(tokens[i + 1]))
+        elif tok.startswith("-") and "=" in tok:
+            flag, val = tok.split("=", 1)
+            if flag in _INTERP_CODE_FLAGS:
+                pairs.extend(_loopback_ports_from_code(val))
+    return list(dict.fromkeys(pairs))
 
 
 def extract_hosts(command: str) -> list[str]:
@@ -424,10 +572,27 @@ class Guard:
         self.objective = objective
         self.self_ports = {int(settings.port), int(settings.frontend_port)}
         self.self_hosts: set[str] = local_self_hosts()
+        self.self_networks = local_self_networks()
         self.peer_hosts: set[str] = set()
         self.peer_addrs: set[str] = set()
         self.own_addrs: set[str] = set()
         self.primary_port: int | None = None
+
+    def _authorized_hosts(self) -> set[str]:
+        out: set[str] = set()
+        for t in self.scope.targets or []:
+            h = str(t or "").split(":")[0].strip()
+            if h:
+                out.add(h)
+        for ip in self.scope.ips or []:
+            h = str(ip or "").split(":")[0].strip()
+            if h:
+                out.add(h)
+        for a in getattr(self, "own_addrs", None) or ():
+            h = str(a or "").split(":")[0].strip()
+            if h:
+                out.add(h)
+        return out
 
     def check_command(self, command: str) -> GuardDecision:
         cmd = command.strip()
@@ -444,19 +609,14 @@ class Guard:
                 "destructive",
             )
 
+        why = mega_wordlist_reason(cmd)
+        if why:
+            return GuardDecision(False, f"拦截：{why}", "policy")
+
         if objective_allows_flag(self.objective):
             why = ctf_mega_dict_reason(cmd)
             if why:
                 return GuardDecision(False, f"拦截：{why}", "policy")
-
-        for host, port in extract_host_ports(cmd):
-            if is_platform_endpoint(host, port, self_hosts=self.self_hosts, self_ports=self.self_ports):
-                label = f"{host}:{port}" if port is not None else host
-                return GuardDecision(
-                    False,
-                    f"拦截：不要把本机控制台/物理网卡（{label}）当作作业目标。",
-                    "self_protection", hosts=[host],
-                )
 
         if self.quarantine_dir and self.quarantine_dir in cmd:
             if _EXEC_PREFIX_RE.search(cmd) or "chmod" in cmd:
@@ -466,30 +626,70 @@ class Guard:
                     "honeypot",
                 )
 
-        hosts = extract_hosts(cmd)
-        primary = ""
-        try:
-            primary = str((self.scope.targets or [""])[0] or "").split(":")[0]
-        except Exception:
-            primary = ""
-        pairs = list(extract_host_ports(cmd))
         tokens = _safe_split(cmd)
-        direct = _direct_connect_hosts(tokens)
+        direct_hosts, direct_pairs, direct_cidrs = _direct_connect_targets(tokens)
         extra_ports: list[int] = []
         for i, tok in enumerate(tokens):
             if tok in ("-p", "--port") and i + 1 < len(tokens):
                 raw = tokens[i + 1].split(",")[0].split("-")[0]
                 if raw.isdigit():
                     extra_ports.append(int(raw))
+        pairs: list[tuple[str, int | None]] = list(direct_pairs)
+        have = {h for h, _ in pairs}
+        for h in direct_hosts:
+            if h not in have:
+                pairs.append((h, extra_ports[0] if extra_ports else None))
+                have.add(h)
         if extra_ports:
-            have = {h for h, _ in pairs}
-            for h in hosts:
-                if h not in have:
-                    pairs.append((h, extra_ports[0]))
-            pairs = [(h, p if p is not None else (extra_ports[0] if extra_ports else None)) for h, p in pairs]
+            pairs = [
+                (h, p if p is not None else extra_ports[0])
+                for h, p in pairs
+            ]
+
+        primary = ""
+        try:
+            primary = str((self.scope.targets or [""])[0] or "").split(":")[0]
+        except Exception:
+            primary = ""
+        authorized = self._authorized_hosts()
+        own_hosts = {
+            str(a).split(":")[0] for a in (getattr(self, "own_addrs", None) or set()) if a
+        }
+        self_hosts = self.self_hosts
+        self_nets = getattr(self, "self_networks", None) or local_self_networks()
+
         for host, port in pairs:
+            ch = canonical_host(host)
+            if is_platform_endpoint(
+                ch, port, self_hosts=self_hosts, self_ports=self.self_ports,
+            ):
+                label = f"{ch}:{port}" if port is not None else ch
+                return GuardDecision(
+                    False,
+                    f"拦截：不要把本机控制台/物理网卡（{label}）当作作业目标。",
+                    "self_protection", hosts=[ch],
+                )
+            why = attacker_loopback_forbidden(ch, authorized=authorized)
+            if why:
+                return GuardDecision(
+                    False,
+                    f"拦截：{why}。SSRF 载荷请放进 -d/--data，不要让 Kali 直连 127.0.0.0/8。",
+                    "self_protection", hosts=[ch],
+                )
+            why = attacker_lan_forbidden(
+                ch,
+                self_hosts=self_hosts,
+                self_networks=self_nets,
+                authorized=authorized,
+            )
+            if why:
+                return GuardDecision(
+                    False,
+                    f"拦截越界私网：{why}。只打当前入口，不要扫物理机内网。",
+                    "self_protection", hosts=[ch],
+                )
             why = unauthorized_peer_endpoint(
-                host, port,
+                ch, port,
                 primary=primary,
                 primary_port=getattr(self, "primary_port", None),
                 peer_addrs=getattr(self, "peer_addrs", None),
@@ -500,25 +700,47 @@ class Guard:
                 return GuardDecision(
                     False,
                     f"拦截越界私网：{why}。只打当前入口；邻题 IP/端口不是横向。",
-                    "out_of_scope", hosts=[host],
+                    "out_of_scope", hosts=[ch],
                 )
-        for host in hosts:
             why = unauthorized_private_host(
-                host, self.scope, primary=primary,
+                ch, self.scope, primary=primary,
                 peers=getattr(self, "peer_hosts", None),
-                own_hosts={
-                    str(a).split(":")[0] for a in (getattr(self, "own_addrs", None) or set()) if a
-                },
+                own_hosts=own_hosts,
             )
             if why:
-                if host not in direct:
-                    continue
                 return GuardDecision(
                     False,
                     f"拦截越界私网：{why}。只打当前入口；邻题 IP 不是横向。",
-                    "out_of_scope", hosts=[host],
+                    "out_of_scope", hosts=[ch],
                 )
-        return GuardDecision(True, "ok", "ok", hosts=hosts)
+
+        for net in direct_cidrs:
+            why = attacker_lan_scan_forbidden(
+                net,
+                self_hosts=self_hosts,
+                self_networks=self_nets,
+                authorized=authorized,
+            )
+            if why:
+                return GuardDecision(
+                    False,
+                    f"拦截越界私网：{why}。只打当前入口，不要扫物理机内网。",
+                    "self_protection", hosts=[str(net)],
+                )
+
+        for host, port in _interp_loopback_pairs(tokens):
+            ch = canonical_host(host)
+            if is_platform_endpoint(
+                ch, port, self_hosts=self_hosts, self_ports=self.self_ports,
+            ):
+                label = f"{ch}:{port}" if port is not None else ch
+                return GuardDecision(
+                    False,
+                    f"拦截：不要把本机控制台/物理网卡（{label}）当作作业目标。",
+                    "self_protection", hosts=[ch],
+                )
+
+        return GuardDecision(True, "ok", "ok", hosts=sorted(direct_hosts))
 
     @staticmethod
     def looks_like_honeypot(banner: str) -> tuple[bool, str]:
