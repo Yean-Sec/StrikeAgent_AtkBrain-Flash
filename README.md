@@ -64,6 +64,46 @@ Cybench 官方认证榜单第 3 名（`deepseek-v4-flash`，84.13 / 100）。
 
 ## 环境与安装说明
 
+### Agent 部署提示词
+
+把下面整段连同源代码交给任意能跑本机命令的 AI。它应按原文部署，不要改 skill 绑定方式、不要把路径写死成别人的机器。
+
+```
+你要在本机把 StrikeAgent_AtkBrain-Flash 从当前源代码部署到可打开控制台。目标系统是 Kali Linux（Debian 系、systemd、能 sudo）。不要用 Docker 当主路径。不要把仓库里的猎面 skill 装进 ~/.claude。不要把任何路径写死成 /home/kali/桌面/... 或其它克隆者机器上的目录。
+
+一、目录与进程纪律
+- 仓库根记为 REPO（含 backend/、frontend/、scripts/、.claude/、tools/）。
+- 后端 :5003，前端 :5001。不要在临时 shell 里再起 python3 -m atkbrain.main 或 npm run dev，会和 systemd 抢端口。
+- 后端解释器必须是 /usr/bin/python3（3.12+），包装到系统 Python，不要只装进 venv 却让 unit 跑系统 python。
+- 数据、库、工作区、密钥只写 backend/data/（已 gitignore）。不要提交 .env、*.db、workspaces、loot、atkbrain-claude.env。
+- 启动/重启只用：sudo scripts/atkbrain-up.sh（首次）、sudo scripts/atkbrain-backend.sh restart、sudo scripts/atkbrain-frontend.sh restart。unit 名是 atkbrain-flash-backend.service / atkbrain-flash-frontend.service。
+
+二、依赖
+- sudo apt 安装 python3 python3-pip python3-dev build-essential nodejs npm curl；导出 PDF 再装 libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev shared-mime-info。
+- pip：sudo /usr/bin/python3 -m pip install -r backend/requirements.txt --break-system-packages
+- 前端：cd frontend && npm install（atkbrain-up.sh 前必须有 frontend/node_modules）
+- 全局安装 Claude Code：sudo npm install -g @anthropic-ai/claude-code；本机 claude 能跑（已登录，或 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY，可选 ANTHROPIC_BASE_URL）。
+- 把当前 shell 里的 ANTHROPIC_* / CLAUDE_* / ATKBRAIN_* 准备好后再 sudo scripts/atkbrain-up.sh。脚本会把密钥快照到 backend/data/atkbrain-claude.env（权限 600）。systemd 的 PATH 里要有 claude。
+
+三、Skill / 工具路径（最容易部署错）
+猎面 Claude 的 cwd 是 backend/data/workspaces/<项目id>/，不是仓库根。Skill 和本仓库绑定，不是用户全局环境。
+- 源文件：REPO/.claude/skills/kali-kit、recon-fanout、recon-spiral。只进 git，不要复制到 ~/.claude，不要改 Claude Code 用户级 settings。
+- 运行时：会话启动会把本赛道 skill 拷到该猎工作区 backend/data/workspaces/<pid>/.claude/skills/。ClaudeAgentOptions 必须是 setting_sources=["project"]、plugins=[]、skills=白名单里这几个名字。
+- kali-kit 不能用手写死本机路径。仓库里的 .claude/skills/kali-kit/SKILL.md 用占位符 <REPO>。真正给从者看的那份由 backend/atkbrain/agents/kali_kit.py 的 skill_markdown() 按 REPO_ROOT 生成（REPO_ROOT = backend 的上一级）。project_skills.install_into_workspace 会在拷贝后覆盖工作区里的 kali-kit/SKILL.md。部署时不要把 SKILL.md 改成某台机器的绝对路径。
+- Kali 没有、仓库自带的脚本必须用仓库绝对路径调用（工作区 cwd 找不到相对路径）：
+  python3 $REPO/tools/JSFinder/JSFinder.py -u <url> -ou js_urls.txt -os js_subs.txt
+  bash $REPO/tools/bypass-403/bypass-403.sh http://<host> <path>
+  禁止 which jsfinder / which bypass-403，也不要把这两份脚本复制进 /usr/bin。
+- nmap / ffuf / nuclei 等用系统绝对路径（/usr/bin/...），清单在 kali-kit，禁止 which / ls /usr/share/wordlists。
+- 不要把 kali-kit 全文塞进系统提示；从者需要路径时调用 skill kali-kit。CTF 开局读 recon-fanout，红队开局读 recon-spiral。
+
+四、验收
+curl -sS http://127.0.0.1:5003/api/health   期望 ok: true，并有 claude_sdk
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/   期望 200
+浏览器打开 http://127.0.0.1:5001/
+失败先看 backend/data/logs/backend.err.log 与 frontend.err.log：缺包、端口占用、claude 不在 unit 的 PATH、或没快照密钥。
+```
+
 ### 环境
 
 建议在 **Kali Linux** 上跑（执行层会调用本机已有的渗透工具）。其它 Debian / Ubuntu 也能起控制台，但工具不一定齐。
@@ -158,7 +198,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/
 
 日志：`backend/data/logs/backend.log`、`backend.err.log`、`frontend.log`、`frontend.err.log`。数据在 `backend/data/`，已进 `.gitignore`。
 
-默认最多 10 个项目同时打，每项目 2 路 Claude（指挥官 + 自监督），一共 20 路。设置页能看到当前占用。
+红队默认 5 个项目、CTF 默认 3 个，两道互不占槽，都可调到 20。每项目 2 路编排（从者 + 御主）。设置页和顶栏能看到当前占用。
 
 ### 常见问题
 
