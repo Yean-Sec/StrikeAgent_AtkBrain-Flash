@@ -12,16 +12,18 @@ from ..objective import objective_allows_flag
 from ..scope import (
     Scope,
     attacker_lan_forbidden,
-    attacker_lan_scan_forbidden,
     attacker_loopback_forbidden,
     canonical_host,
     coerce_ip,
+    is_attacker_identity,
     is_loopback,
     is_platform_endpoint,
     local_self_hosts,
-    local_self_networks,
+    parse_scan_network,
+    scan_network_forbidden_reason,
     unauthorized_peer_endpoint,
     unauthorized_private_host,
+    private_out_of_scope_hint,
 )
 
 # 一个 token 若以 scheme:// 开头 → 只取其“权威主机”(authority)，忽略 path/query/fragment。
@@ -343,12 +345,9 @@ def _add_direct_token(
     raw = (tok or "").strip().strip("'\"")
     if not raw:
         return
-    m = _CIDR_TOKEN_RE.match(raw)
-    if m:
-        try:
-            cidrs.append(ipaddress.ip_network(raw, strict=False))
-        except Exception:
-            pass
+    net = parse_scan_network(raw)
+    if net is not None:
+        cidrs.append(net)
         return
     h, p = _connect_token_hostport(raw)
     if h:
@@ -572,7 +571,6 @@ class Guard:
         self.objective = objective
         self.self_ports = {int(settings.port), int(settings.frontend_port)}
         self.self_hosts: set[str] = local_self_hosts()
-        self.self_networks = local_self_networks()
         self.peer_hosts: set[str] = set()
         self.peer_addrs: set[str] = set()
         self.own_addrs: set[str] = set()
@@ -656,7 +654,6 @@ class Guard:
             str(a).split(":")[0] for a in (getattr(self, "own_addrs", None) or set()) if a
         }
         self_hosts = self.self_hosts
-        self_nets = getattr(self, "self_networks", None) or local_self_networks()
 
         for host, port in pairs:
             ch = canonical_host(host)
@@ -676,16 +673,17 @@ class Guard:
                     f"拦截：{why}。SSRF 载荷请放进 -d/--data，不要让 Kali 直连 127.0.0.0/8。",
                     "self_protection", hosts=[ch],
                 )
-            why = attacker_lan_forbidden(
-                ch,
-                self_hosts=self_hosts,
-                self_networks=self_nets,
-                authorized=authorized,
-            )
+            if is_attacker_identity(ch, extra=self_hosts):
+                return GuardDecision(
+                    False,
+                    f"拦截：{ch} 是本机网卡或物机网关，禁止直连物理机。",
+                    "self_protection", hosts=[ch],
+                )
+            why = attacker_lan_forbidden(ch, self_hosts=self_hosts)
             if why:
                 return GuardDecision(
                     False,
-                    f"拦截越界私网：{why}。只打当前入口，不要扫物理机内网。",
+                    f"拦截：{why}。本机网卡和物机网关是守卫，不是目标。",
                     "self_protection", hosts=[ch],
                 )
             why = unauthorized_peer_endpoint(
@@ -710,22 +708,27 @@ class Guard:
             if why:
                 return GuardDecision(
                     False,
-                    f"拦截越界私网：{why}。只打当前入口；邻题 IP 不是横向。",
+                    f"拦截越界私网：{private_out_of_scope_hint(why)}",
                     "out_of_scope", hosts=[ch],
                 )
 
+        seen_nets: set[str] = set()
         for net in direct_cidrs:
-            why = attacker_lan_scan_forbidden(
-                net,
-                self_hosts=self_hosts,
-                self_networks=self_nets,
-                authorized=authorized,
-            )
+            key = str(net)
+            if key in seen_nets:
+                continue
+            seen_nets.add(key)
+            why = scan_network_forbidden_reason(str(net), self.scope, extra_self=self_hosts)
             if why:
+                cat = (
+                    "self_protection"
+                    if ("命中攻击机本机网卡或物机网关" in why or "物机网关" in why)
+                    else "scope"
+                )
                 return GuardDecision(
                     False,
-                    f"拦截越界私网：{why}。只打当前入口，不要扫物理机内网。",
-                    "self_protection", hosts=[str(net)],
+                    f"{why}",
+                    cat, hosts=[str(net)],
                 )
 
         for host, port in _interp_loopback_pairs(tokens):

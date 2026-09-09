@@ -9,12 +9,13 @@ import shutil
 from pathlib import Path
 
 from ..config import REPO_ROOT
-from ..objective import objective_allows_flag
+from ..objective import objective_allows_flag, objective_is_src
 
 SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
 SHARED_SKILLS = ("kali-kit",)
 CTF_SKILLS = ("recon-fanout",)
 REDTEAM_SKILLS = ("recon-spiral",)
+SRC_SKILLS = ("src-hunt-playbook",)
 
 
 def skill_names(*, objective: str | None = None) -> list[str]:
@@ -26,7 +27,12 @@ def skill_names(*, objective: str | None = None) -> list[str]:
             if p.is_dir() and (p / "SKILL.md").is_file():
                 names.append(p.name)
         return names
-    extra = CTF_SKILLS if objective_allows_flag(objective) else REDTEAM_SKILLS
+    if objective_allows_flag(objective):
+        extra = CTF_SKILLS
+    elif objective_is_src(objective):
+        extra = SRC_SKILLS
+    else:
+        extra = REDTEAM_SKILLS
     wanted = (*SHARED_SKILLS, *extra)
     return [n for n in wanted if (SKILLS_ROOT / n / "SKILL.md").is_file()]
 

@@ -12,7 +12,7 @@ import networkx as nx
 
 from ..db import db, new_id, now, _dumps, _loads
 from ..events import emit
-from ..objective import DATA_ACCESS_CATEGORIES, KEY_LEAK_CATEGORIES, USER_VISIBLE_SEVERITIES, listed_finding_rows
+from ..objective import DATA_ACCESS_CATEGORIES, KEY_LEAK_CATEGORIES, finding_row_visible, listed_finding_rows, normalize_objective, objective_is_src, sort_findings_by_severity, src_impact_proven
 from .model import (
     CRITICAL_CATEGORIES,
     SEVERITY_ORDER,
@@ -158,27 +158,42 @@ async def ensure_node(project_id: str, key: str, run_id: str | None = None) -> N
 
 
 async def _promote_prefix_stub(project_id: str, row, run_id: str | None = None) -> None:
-    """已落库的 info 空壳若 key 是 vuln:/foothold: 等，升到前缀类型。"""
+    """已落库的 info 空壳若 key 是 vuln:/foothold: 等，升到前缀类型。
+
+    未填证据的 vuln: 空壳降为危险点，不升成高危漏洞。
+    """
     key = str(row["key"] or "")
     old_type = str(row["type"] or "info")
-    new_type = coerce_declared_node_type(key, old_type, _loads(row["tags"]) or [])
-    if new_type == old_type:
-        return
     tags = _loads(row["tags"]) or []
     if not isinstance(tags, list):
         tags = []
+    stub = is_placeholder_node(key, row["title"], row["detail"], tags)
+    inferred = infer_node_type_from_key(key)
+    new_type = coerce_declared_node_type(key, old_type, tags)
+    if stub and inferred == "vuln":
+        new_type = "danger"
     title = str(row["title"] or "")
     if title == key:
         title = humanize_node_key(key)
-    _ntype, _t, sev, extra = placeholder_node_spec(key)
-    stub = is_placeholder_node(key, row["title"], row["detail"], tags)
+    _ntype, _t, spec_sev, extra = placeholder_node_spec(key)
     if stub and "placeholder" not in {str(t).lower() for t in tags}:
         tags = list(tags) + extra
     if not stub:
         tags = [t for t in tags if str(t).lower() != "placeholder"]
-    sev_out = str(row["severity"] or sev)
-    if new_type == "vuln" and SEVERITY_ORDER.get(sev_out, 0) < SEVERITY_ORDER["high"]:
+    sev_out = str(row["severity"] or spec_sev)
+    if stub:
+        if SEVERITY_ORDER.get(sev_out, 0) > SEVERITY_ORDER.get(spec_sev, 0):
+            sev_out = spec_sev
+    elif new_type == "vuln" and SEVERITY_ORDER.get(sev_out, 0) < SEVERITY_ORDER["high"]:
         sev_out = "high"
+    old_tags = _loads(row["tags"]) or []
+    if (
+        new_type == old_type
+        and (title or _t) == str(row["title"] or "")
+        and sev_out == str(row["severity"] or "")
+        and [str(t) for t in tags] == [str(t) for t in (old_tags if isinstance(old_tags, list) else [])]
+    ):
+        return
     await upsert_node(
         project_id,
         NodeIn(
@@ -249,14 +264,24 @@ async def fill_source_node(
 
 
 async def repair_prefix_type_stubs(project_id: str, run_id: str | None = None) -> int:
-    """打开图时把 vuln: 写成 info 的空壳升回正确类型。"""
+    """打开图时修正前缀空壳：info 升到前缀类型；未填证据的 vuln: 降为危险点。"""
     rows = await db.fetchall("SELECT * FROM nodes WHERE project_id=?", (project_id,))
     n = 0
     for row in rows or []:
         old = str(row["type"] or "info")
         tags = _loads(row["tags"]) or []
-        new = coerce_declared_node_type(row["key"], old, tags if isinstance(tags, list) else [])
-        if new == old:
+        if not isinstance(tags, list):
+            tags = []
+        stub = is_placeholder_node(row["key"], row["title"], row["detail"], tags)
+        inferred = infer_node_type_from_key(row["key"])
+        new = coerce_declared_node_type(row["key"], old, tags)
+        if stub and inferred == "vuln":
+            new = "danger"
+        sev = str(row["severity"] or "")
+        needs = new != old
+        if stub and inferred == "vuln" and SEVERITY_ORDER.get(sev, 0) > SEVERITY_ORDER["medium"]:
+            needs = True
+        if not needs:
             continue
         await _promote_prefix_stub(project_id, row, run_id=run_id)
         n += 1
@@ -1778,10 +1803,26 @@ async def add_edge(project_id: str, edge: EdgeIn, run_id: str | None = None) -> 
 
 
 async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = None) -> dict:
-    from .verify import verify_finding
+    from .verify import VerifyResult, verify_finding
 
     sev = normalize_severity(finding.category, finding.severity)
     vr = await verify_finding(finding, project_id=project_id)
+    try:
+        from ..projects import get_project as _gp_find
+        _pf = await _gp_find(project_id)
+        _cfg = (_pf or {}).get("config") or {}
+        _obj = normalize_objective(_cfg.get("objective") or _cfg.get("track"))
+        if objective_is_src(_obj) and not src_impact_proven(finding):
+            vr = VerifyResult(
+                status="pending",
+                reason="src_impact_not_proven",
+                proof_type=vr.proof_type,
+                proof_canary=vr.proof_canary,
+                proof_url=vr.proof_url,
+                proof_detail=vr.proof_detail,
+            )
+    except Exception:
+        pass
     ts = now()
     verified_at = ts if vr.status == "verified" else None
     stored_detail = vr.proof_detail
@@ -2094,11 +2135,13 @@ async def list_disproved_intents(project_id: str, limit: int = 12) -> list[dict]
 
 
 _CHAIN_CLOSE_ORDER = (
-    "access_control", "file_read_chain", "svc_auth_bruteforce", "ssrf_as_gateway",
-    "hop_auth", "finding_rce_close", "flag_hunt", "flag_or_privesc", "weaponize",
-    "finding_read_loot", "finding_sqli_chain",
+    "ssrf_as_gateway", "secret_mount", "reverse_binary", "protocol_model",
+    "weaponize", "finding_rce_close", "finding_sqli_chain",
+    "access_control", "file_read_chain", "svc_auth_bruteforce",
+    "hop_auth", "flag_hunt", "flag_or_privesc",
+    "finding_read_loot",
     "read_to_creds", "channel_oracle", "input_abuse",
-    "protocol_model", "reverse_binary", "restricted_deserialize", "filter_bypass",
+    "restricted_deserialize", "filter_bypass",
 )
 
 
@@ -2755,23 +2798,26 @@ async def get_stats_batch(project_ids: list[str]) -> dict[str, dict]:
         out[e["project_id"]]["pivot_edges"] = int(e["c"] or 0)
 
     frows = await db.fetchall(
-        f"SELECT project_id, severity, category, title, verification_status, node_key, redteam_rating FROM findings "
-        f"WHERE project_id IN ({placeholders})",
+        f"""SELECT project_id, severity, category, title, description, evidence,
+                   verification_status, node_key, redteam_rating,
+                   proof_type, proof_canary, proof_url, proof_detail
+            FROM findings WHERE project_id IN ({placeholders})""",
         tuple(ids),
     )
+    prow_cfgs = await db.fetchall(
+        f"SELECT id, config FROM projects WHERE id IN ({placeholders})",
+        tuple(ids),
+    )
+    obj_by: dict[str, str] = {}
+    for p in prow_cfgs:
+        cfg = _loads(p["config"]) or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        obj_by[str(p["id"])] = normalize_objective(cfg.get("objective") or cfg.get("track"))
     f_by_pid: dict[str, list] = defaultdict(list)
     for f in frows:
-        # rejected 不计入发现数
-        try:
-            st = f["verification_status"]
-        except (KeyError, IndexError):
-            st = "verified"
-        if st is None:
-            st = "verified"
-        if st == "rejected":
-            continue
-        severity = display_finding_severity(f)
-        if severity not in USER_VISIBLE_SEVERITIES:
+        # rejected 不计入发现数；低/中/高危都算
+        if not finding_row_visible(obj_by.get(str(f["project_id"])), f):
             continue
         f_by_pid[f["project_id"]].append(f)
         s = out[f["project_id"]]
@@ -2782,6 +2828,7 @@ async def get_stats_batch(project_ids: list[str]) -> dict[str, dict]:
             nkey = str(f["node_key"] or "")
         except (KeyError, IndexError):
             nkey = ""
+        st = str(f["verification_status"] or "verified")
         if st in ("verified", "flaky") and (
             cat in ("rce", "command_injection", "deserialization")
             or nkey.startswith(("goal:shell", "foothold:shell"))
@@ -2888,7 +2935,18 @@ async def get_graph(project_id: str, *, heal: bool = False) -> dict:
         "SELECT * FROM findings WHERE project_id=? ORDER BY created_at DESC", (project_id,)
     )
     from .verify import is_visible_finding
-    findings = [f for f in findings_all if is_visible_finding(f)]
+    obj = None
+    try:
+        from ..projects import get_project as _gp_obj
+        _pcfg = ((await _gp_obj(project_id)) or {}).get("config") or {}
+        obj = normalize_objective(_pcfg.get("objective") or _pcfg.get("track"))
+    except Exception:
+        obj = None
+    findings = [
+        f for f in findings_all
+        if finding_row_visible(obj, f) and is_visible_finding(f)
+    ]
+    findings = sort_findings_by_severity(findings)
     def _sev(row) -> str:
         try:
             return str(row["severity"] or "").lower()

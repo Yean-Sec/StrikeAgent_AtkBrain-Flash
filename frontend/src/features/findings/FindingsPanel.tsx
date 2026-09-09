@@ -2,15 +2,28 @@ import { useMemo, useState } from "react";
 import type { Finding, GraphNode } from "../../types";
 import { SeverityBadge, VerifyBadge, SecondaryVerifyBadge } from "../../components/Badge";
 import { FindingReportModal } from "./FindingReportModal";
-import { displayFindingSeverity, scrubCandidateRceLabel } from "../../theme";
+import { displayFindingSeverity, isPlaceholderGraphNode, scrubCandidateRceLabel } from "../../theme";
 
 export const NODE_VULN_ID_PREFIX = "node-vuln:";
 
-/** 漏洞列表：图上所有非 rejected 的 finding，以及尚无 finding 的 vuln 节点。 */
-export function filterVisibleFindings(findings: Finding[]): Finding[] {
+const SEV_RANK: Record<string, number> = {
+  critical: 4, high: 3, medium: 2, low: 1, info: 0,
+};
+
+/** 漏洞列表：非 rejected 的低/中/高危/严重都展示，按危害从高到低。 */
+export function filterVisibleFindings(findings: Finding[], _opts?: { src?: boolean }): Finding[] {
   return findings.filter((f) => {
     const vs = (f.verification_status || "verified").toLowerCase();
     return vs !== "rejected";
+  });
+}
+
+export function sortFindingsBySeverity(findings: Finding[]): Finding[] {
+  return [...findings].sort((a, b) => {
+    const ra = SEV_RANK[displayFindingSeverity(a)] ?? 0;
+    const rb = SEV_RANK[displayFindingSeverity(b)] ?? 0;
+    if (rb !== ra) return rb - ra;
+    return (b.created_at || 0) - (a.created_at || 0);
   });
 }
 
@@ -34,25 +47,26 @@ export function findingFromVulnNode(n: GraphNode): Finding {
   };
 }
 
-export function collectVulns(findings: Finding[], nodes: GraphNode[] = []): Finding[] {
-  const fromFindings = filterVisibleFindings(findings);
+export function collectVulns(findings: Finding[], nodes: GraphNode[] = [], opts?: { src?: boolean }): Finding[] {
+  const fromFindings = filterVisibleFindings(findings, opts);
   const linked = new Set(fromFindings.map((f) => f.node_key).filter(Boolean) as string[]);
   const extras = nodes
-    .filter((n) => n.type === "vuln" && n.key && !linked.has(n.key))
+    .filter((n) => n.type === "vuln" && n.key && !linked.has(n.key) && !isPlaceholderGraphNode(n))
     .map(findingFromVulnNode);
-  return [...fromFindings, ...extras];
+  return sortFindingsBySeverity([...fromFindings, ...extras]);
 }
 
 export function FindingsPanel({
-  projectId, findings, nodes = [], onSelectNode,
+  projectId, findings, nodes = [], onSelectNode, src = false,
 }: {
   projectId: string;
   findings: Finding[];
   nodes?: GraphNode[];
   onSelectNode?: (n: GraphNode) => void;
+  src?: boolean;
 }) {
   const [selected, setSelected] = useState<Finding | null>(null);
-  const visible = useMemo(() => collectVulns(findings, nodes), [findings, nodes]);
+  const visible = useMemo(() => collectVulns(findings, nodes, { src }), [findings, nodes, src]);
 
   if (!visible.length) {
     return (

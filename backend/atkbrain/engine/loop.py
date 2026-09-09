@@ -166,7 +166,7 @@ def _intents_text(intents: list[dict], *, assigned: list[dict] | None = None,
         assigned = [i for i in (assigned or []) if not _intent_cites_peer(i, peer_entries)]
     lines: list[str] = []
     if assigned:
-        lines.append("【本轮必须推进】")
+        lines.append("【本轮前沿（局面优先）】")
         for i in assigned[:3]:
             lines.append(
                 f"  ★ [{i.get('id')}] ({round(i.get('priority', i.get('est_success', 0.5)), 2)}) "
@@ -829,6 +829,7 @@ async def _evaluate_supervisor(
             project=project, brief=brief,
             last_turn_text=summary if isinstance(summary, str) else "",
             last_tool_uses=int((result or {}).get("tool_uses") or 0),
+            task_subagents=list((result or {}).get("task_subagents") or []),
             turn=turn,
             assigned=assigned,
             open_intents=open_intents,
@@ -1046,8 +1047,6 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
     applied_lesson_ids: list[str] = []
     try:
         handle.slot_kind = hunt_slot_kind(project, objective)
-        if is_benchmark:
-            handle.slot_kind = "ctf"
         await manager.slot_sem(handle.slot_kind).acquire()
         handle.slot_held = True
         if is_benchmark:
@@ -1480,6 +1479,18 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                  )},
                 run_id=rid,
             )
+        else:
+            from ..objective import objective_is_src
+            if objective_is_src(objective):
+                await emit(
+                    project_id, "log",
+                    {"level": "info",
+                     "message": (
+                         f"SRC 本猎最多 {hunt_max_turns(objective, is_benchmark=is_benchmark)} 轮，"
+                         f"墙钟硬停 {max(0, runtime_hard) // 60} 分钟；高危不停工，满轮/满时记失败。"
+                     )},
+                    run_id=rid,
+                )
         _fc = int(((project.get("config") or {}).get("flag_count")) or 1)
         _base = int(settings.benchmark_run_budget_sec or 0)
         _cap = int(settings.benchmark_run_budget_cap or 0)
@@ -1755,7 +1766,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 assigned=assigned, open_intents=consult_open,
                 record_progress=False,
             )
-            # 御主=人工：有绑定时每轮钉住同一份指令。对话框真人输入仍排在前面并覆盖。
+            # 有绑定时每轮钉住局面段；参考假说可丢。对话框真人输入仍排在前面并覆盖。
             # 同一份方案再钉进下一轮只给从者看，不往协同窗口重复刷一条 🧭。
             sup_steer = supervisor.drain_steer()
             pinned_advisor = None
@@ -1802,15 +1813,23 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             prefer = supervisor.drain_prefer_tactics()
             verified = has_verified_asset(graph) and not supervisor.entry_identity_mismatch
             cats = verified_finding_categories(graph) if verified else frozenset()
+            from ..objective import objective_is_src
+            src_cycle = objective_is_src(objective)
             if verified:
-                prefer = set(prefer or ()) | set(chain_next_tactics(cats))
+                if src_cycle:
+                    prefer = set(prefer or ()) | {
+                        "impact_escalate", "web_inject", "access_control",
+                        "html_sink", "upload_bypass", "input_abuse",
+                    }
+                else:
+                    prefer = set(prefer or ()) | set(chain_next_tactics(cats))
             elif needs_channel_oracle(graph):
                 prefer = set(prefer or ()) | {"channel_oracle", "input_abuse"}
             gadget = live_gadget_tactics(graph)
-            if gadget:
+            if gadget and not src_cycle:
                 prefer = set(prefer or ()) | set(gadget)
             wz = weaponize_prefer_tactics(graph)
-            if wz:
+            if wz and not src_cycle:
                 prefer = set(prefer or ()) | set(wz)
             defer_tacs: set[str] = set()
             sidetrack_enum = enum_sidetrack_when_weaponizable(graph)
@@ -1823,7 +1842,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 prefer = set(prefer or ()) | {"reverse_binary", "protocol_model"}
                 defer_tacs |= {
                     "content_enum", "web_inject", "auth_surface",
-                    "access_control", "fingerprint",
+                    "access_control", "fingerprint", "file_read_chain",
                 }
                 prefer -= defer_tacs
             if kind in ("interactive", "mixed"):
@@ -1832,6 +1851,9 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     prefer = set(prefer or ()) | {"reverse_binary"}
             elif kind == "filter" and not verified:
                 prefer = set(prefer or ()) | {"filter_bypass", "channel_oracle"}
+            if not verified:
+                prefer = set(prefer or ()) | {"web_inject"}
+                prefer -= defer_tacs
             needs_cycle = False
             try:
                 from ..entry_fingerprint import merge_surface_tags
@@ -1909,10 +1931,13 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 graph, correct_flags=got, flag_count=fc,
             )
             from .advisor_bind import (
-                binding_is_locked, binding_reserve_tactics, ensure_postex_orthogonal,
+                binding_reserve_tactics, ensure_postex_orthogonal,
                 format_binding_block, pick_bound_assigned,
+                situation_protected_intent_ids,
             )
-            reserve = binding_reserve_tactics(
+            from ..objective import objective_is_src as _obj_is_src
+            src_cycle = _obj_is_src(objective)
+            reserve = () if src_cycle else binding_reserve_tactics(
                 has_foothold=bool(bind_flags.get("has_foothold")),
                 remaining_goals=bool(bind_flags.get("remaining_goals")),
                 has_verified_asset=bool(bind_flags.get("has_verified_asset")),
@@ -1940,14 +1965,16 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 oi = [i for i in oi if not _intent_cites_peer(i, peer_entries)]
             if claim_unverified and intent_claims_obtained_secret:
                 oi = [i for i in oi if not intent_claims_obtained_secret(i)]
-            updated = ensure_postex_orthogonal(
-                bind, oi,
-                has_foothold=bool(bind_flags.get("has_foothold")),
-                remaining_goals=bool(bind_flags.get("remaining_goals")),
-                has_verified_asset=bool(bind_flags.get("has_verified_asset")),
-                verified_categories=bind_flags.get("verified_categories"),
-                has_live_gadget=bool(bind_flags.get("has_live_gadget")),
-            )
+            updated = bind
+            if not src_cycle:
+                updated = ensure_postex_orthogonal(
+                    bind, oi,
+                    has_foothold=bool(bind_flags.get("has_foothold")),
+                    remaining_goals=bool(bind_flags.get("remaining_goals")),
+                    has_verified_asset=bool(bind_flags.get("has_verified_asset")),
+                    verified_categories=bind_flags.get("verified_categories"),
+                    has_live_gadget=bool(bind_flags.get("has_live_gadget")),
+                )
             if updated is not None and updated is not bind:
                 old_block = format_binding_block(bind)
                 new_block = format_binding_block(updated)
@@ -1965,12 +1992,9 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 exclude -= set(reserve)
             want_ids = supervisor.drain_assigned_intents()
             try:
-                agent.ctx.bound_must_intents = frozenset(
-                    str(i) for i in list((bind.must_intents if bind else None) or []) if i
-                )
+                agent.ctx.bound_must_intents = situation_protected_intent_ids(bind, oi)
             except Exception:
                 agent.ctx.bound_must_intents = frozenset()
-            lock = binding_is_locked(bind) and not human_steers
             bind_prefer = set((bind.prefer_tactics if bind else None) or ()) | set(lesson_do or ())
             bind_deny = set((bind.deny_tactics if bind else None) or ())
             bind_deny -= set(reserve)
@@ -1978,15 +2002,11 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 bind_deny |= set(avoid_tacs or ())
                 exclude |= set(avoid_tacs or ())
             extra: list[dict] = []
-            by_id = {i.get("id"): i for i in oi if i.get("id")}
-            must_hit = bool(want_ids) and any(
-                i in by_id and by_id[i].get("status") != "deferred" for i in want_ids
-            )
-            if (not claim_unverified) and not (lock and must_hit):
+            if not claim_unverified:
                 extra = await gstore.list_frontier_intents(
                     project_id, limit=8 if peer_entries else 3,
                     exclude_strategies=exclude,
-                    prefer_tactics=(bind_prefer if lock else prefer),
+                    prefer_tactics=bind_prefer or prefer,
                 )
                 if peer_entries:
                     extra = [i for i in extra if not _intent_cites_peer(i, peer_entries)]
@@ -1994,9 +2014,9 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 open_intents=oi,
                 want_ids=want_ids,
                 extras=extra,
-                prefer=bind_prefer if lock else set(),
+                prefer=set(),
                 deny=bind_deny,
-                lock=lock,
+                lock=False,
                 reserve=reserve,
                 exclusive=bool(reserve) and not bind_flags.get("has_foothold")
                 and not bind_flags.get("has_verified_asset"),
@@ -2006,7 +2026,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 await emit(
                     project_id, "log",
                     {"level": "info",
-                     "message": ("御主强制认领: " if lock else "本轮前沿任务: ") + ", ".join(
+                     "message": "本轮前沿（局面优先）: " + ", ".join(
                          f"{i.get('id')}({(i.get('strategy_key') or '')[:40]})" for i in assigned
                      )},
                     run_id=rid,
@@ -2018,7 +2038,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 entry_kind=getattr(agent.ctx, "entry_kind", "") or "",
                 entry_addrs=sorted(getattr(agent.ctx, "own_addrs", None) or []),
                 entry_surface=list(getattr(agent.ctx, "entry_surface", None) or []),
-                lock_intents=lock, has_human=bool(human_steers),
+                lock_intents=False, has_human=bool(human_steers),
                 workspace_dir=getattr(agent, "workspace_dir", "") or "",
             )
             if hang_note:
@@ -2159,7 +2179,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     ):
                         await supervisor.emit_skip(turn, reason="empty_turn")
                         continue
-                    result = {"text": "", "tool_uses": 0}
+                    result = {"text": "", "tool_uses": 0, "task_subagents": []}
                 empty_streak = 0
             except asyncio.TimeoutError:
                 # report_flag 可能在回合超时边界刚好完成。先读取共享上下文，
@@ -2197,6 +2217,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     result = {
                         "text": (summary or "")[:400],
                         "tool_uses": 1,
+                        "task_subagents": list(getattr(agent.ctx, "task_subagents", None) or []),
                     }
                     summary = (
                         (summary or "")
@@ -2261,7 +2282,11 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                         await _save_hunt(completed_turn)
                         await asyncio.sleep(2.0)
                         continue
-                    result = {"text": (summary or "")[:400], "tool_uses": 0}
+                    result = {
+                        "text": (summary or "")[:400],
+                        "tool_uses": 0,
+                        "task_subagents": [],
+                    }
                     summary = (
                         (summary or "")
                         + (f"\n本回合超过 {shown:.0f}s 无活动，已打断。" if summary else
@@ -2450,7 +2475,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             completed_turn = turn
             await _save_hunt(completed_turn)
             from .advisor_schedule import stall_pause_due
-            from ..objective import objective_allows_flag
+            from ..objective import objective_allows_flag, objective_is_src
             stall_limit = int(getattr(settings, "loop_stall_limit", 10) or 0)
             if uses_ctf_hunt_clocks(objective):
                 try:
@@ -2463,7 +2488,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 )
             nprog = int(getattr(supervisor, "no_progress", 0) or 0)
             due = stall_pause_due(nprog, stall_limit)
-            if due and not objective_allows_flag(objective):
+            if due and not objective_allows_flag(objective) and not objective_is_src(objective):
                 from pathlib import Path as _Path
                 from .spiral import ledger_allowed_ring, load_ledger, redteam_stall_pause_due
                 ws = getattr(getattr(agent, "ctx", None), "workspace_dir", None)

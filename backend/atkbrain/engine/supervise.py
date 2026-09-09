@@ -36,6 +36,7 @@ from .advisor_bind import (
     closeout_sidetrack_tactics,
     compile_binding,
     format_binding_block,
+    graph_has_http_service,
     in_flight_blocks_new_direction,
     intent_tactic,
     oracle_blocks_closeout,
@@ -868,14 +869,23 @@ class LoopSupervisor:
         self, graph: dict | None, *, correct_flags: int = 0, flag_count: int = 0,
     ) -> dict:
         from ..objective import objective_allows_flag
+        from .supervisor_brief import needs_postex_pivot_guidance, pending_loot_internal_hosts
         has_foot = graph_has_getshell(graph)
-        hops = bool(_internal_graph_hosts(graph))
+        pending = pending_loot_internal_hosts(graph)
+        hops = bool(_internal_graph_hosts(graph) or pending)
         remaining = False
         if objective_allows_flag(self.objective):
             if int(flag_count or 0) > 0:
                 remaining = int(correct_flags or 0) < int(flag_count)
             else:
                 remaining = bool(has_foot and hops)
+        if remaining and pending and (
+            has_foot
+            or needs_postex_pivot_guidance(
+                graph=graph, correct_flags=correct_flags, flag_count=flag_count,
+            )
+        ):
+            has_foot = True
         cats = verified_finding_categories(graph)
         return {
             "has_foothold": has_foot,
@@ -885,6 +895,7 @@ class LoopSupervisor:
             "verified_categories": sorted(cats),
             "has_live_gadget": bool(live_gadget_tactics(graph)),
             "needs_channel_oracle": bool(needs_channel_oracle(graph)),
+            "has_http_service": graph_has_http_service(graph),
         }
 
     def _protected_now(self, graph: dict | None, *, remaining_goals: bool | None = None) -> frozenset[str]:
@@ -910,10 +921,10 @@ class LoopSupervisor:
                 self.banned_strategies.append(fam)
         self.banned_strategies = self.banned_strategies[-20:]
         self.last_diagnosis = binding.diagnosis or plan.diagnosis
-        self.last_plan_text = binding.next_plan or plan.next_plan
-        # 御主看到的 prefer/deny 必须是编译后的绑定，不能漏出 LLM 原文里的 oracle。
+        self.last_plan_text = binding.next_plan
+        # 御主看到的 prefer/deny 必须是编译后的绑定；假说被丢掉时不要回填局面模板。
         plan.diagnosis = binding.diagnosis or plan.diagnosis
-        plan.next_plan = binding.next_plan or plan.next_plan
+        plan.next_plan = binding.next_plan
         plan.must_intents = list(binding.must_intents)
         plan.prefer_tactics = list(binding.prefer_tactics)
         plan.defer_families = list(binding.deny_tactics)
@@ -981,11 +992,13 @@ class LoopSupervisor:
 
     def _apply_plan(self, plan: SupervisorPlan, *, repeats: list[str], invert_ops: bool = False, postex_pivot: bool = False, open_intents: list | None = None, bind_flags: dict | None = None) -> None:
         extra_parts: list[str] = []
+        from ..objective import objective_is_src
+        cycle = objective_is_src(self.objective)
         if invert_ops:
             from .supervisor_brief import INVERT_OPS_GUIDE, sanitize_invert_ops_plan
             sanitize_invert_ops_plan(plan, invert_ops=True)
             extra_parts.append(INVERT_OPS_GUIDE)
-        if postex_pivot:
+        if postex_pivot and not cycle:
             from .supervisor_brief import POSTEX_PIVOT_GUIDE
             extra_parts.append(POSTEX_PIVOT_GUIDE)
         flags = bind_flags or {}
@@ -996,7 +1009,10 @@ class LoopSupervisor:
             has_verified_asset=bool(flags.get("has_verified_asset")),
             verified_categories=cats,
         )
-        if (
+        if cycle:
+            from .supervisor_brief import SRC_CYCLE_GUIDE
+            extra_parts.append(SRC_CYCLE_GUIDE)
+        elif (
             bool(flags.get("has_verified_asset"))
             and not bool(flags.get("has_foothold"))
             and not skip_close_guide
@@ -1019,6 +1035,10 @@ class LoopSupervisor:
             verified_categories=cats,
             has_live_gadget=bool(flags.get("has_live_gadget")),
             needs_channel_oracle=oracle_open,
+            cycle_hunt=cycle,
+            invert_ops=invert_ops,
+            extra_subagents=("src-hunt",) if cycle else (),
+            has_http_service=bool(flags.get("has_http_service")),
         )
         protect = protected_tactics(
             has_foothold=bool(flags.get("has_foothold")),
@@ -1139,9 +1159,9 @@ class LoopSupervisor:
         return quality
 
     async def _note_redteam_empty_plan(self, quality: str) -> None:
-        """红队：从者打完一轮后记御主方案空转；满 6 升圈。CTF 不走。"""
-        from ..objective import objective_allows_flag
-        if objective_allows_flag(self.objective):
+        """红队：从者打完一轮后记御主方案空转；满 6 升圈。CTF / SRC 不走。"""
+        from ..objective import objective_allows_flag, objective_is_src
+        if objective_allows_flag(self.objective) or objective_is_src(self.objective):
             return
         from pathlib import Path
         from .spiral import RING_LABELS, note_empty_plan
@@ -1358,6 +1378,7 @@ class LoopSupervisor:
         assigned: list | None = None,
         open_intents: list | None = None,
         record_progress: bool = True,
+        task_subagents: list | None = None,
     ) -> None:
         protected = verified_chain_paths(graph)
         chain_live = has_verified_asset(graph) and not self.entry_identity_mismatch
@@ -1401,6 +1422,7 @@ class LoopSupervisor:
                 last_turn_text=last_turn_text,
                 last_tool_uses=last_tool_uses,
                 quality=quality,
+                task_subagents=task_subagents,
             )
             if status == "oracle":
                 self.binding.misses = 0
@@ -1421,7 +1443,7 @@ class LoopSupervisor:
                         self.project_id, "log",
                         {"level": "info",
                          "message": (
-                             f"御主路线包空转 {self.binding.misses} 次，作废旧绑定，"
+                             f"御主局面空转 {self.binding.misses} 次，作废旧绑定，"
                              "按全局重开多路线审查。"
                          )},
                         run_id=self.run_id,
@@ -1448,8 +1470,8 @@ class LoopSupervisor:
                         self.project_id, "log",
                         {"level": "info",
                          "message": (
-                             f"御主绑定未执行，收紧约束后重注（miss={self.binding.misses}），"
-                             "不开新方案。"
+                             f"御主绑定违背局面，收紧禁令后重注（miss={self.binding.misses}），"
+                             "不另写一份菜谱。"
                          )},
                         run_id=self.run_id,
                     )

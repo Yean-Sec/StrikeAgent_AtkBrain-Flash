@@ -10,8 +10,9 @@ from jinja2 import Template
 
 from ..db import db
 from ..graph import store as gstore
-from ..graph.model import SEVERITY_ORDER, display_finding_severity
+from ..graph.model import SEVERITY_ORDER, display_finding_severity, is_placeholder_node
 from ..graph.verify import is_visible_finding
+from ..objective import finding_row_visible, normalize_objective, objective_is_src, sort_findings_by_severity
 from ..projects import get_project
 from .finding_report import (
     finding_guidance,
@@ -191,6 +192,8 @@ async def _export_findings(project_id: str, graph: dict, project: dict | None,
                            *, enrich_ai: bool = False) -> list[dict]:
     """DB 全量 finding（不截断）+ 图上无 finding 的 vuln 节点，并补详报字段。"""
     target = _http_target(project)
+    cfg = (project or {}).get("config") or {}
+    obj = normalize_objective(cfg.get("objective") or cfg.get("track"))
     nodes_by_key = {n["key"]: n for n in (graph.get("nodes") or []) if n.get("key")}
     edges = graph.get("edges") or []
     rows = await db.fetchall(
@@ -200,7 +203,10 @@ async def _export_findings(project_id: str, graph: dict, project: dict | None,
     findings: list[dict] = []
     linked: set[str] = set()
     for row in rows:
-        if not is_visible_finding(row):
+        if objective_is_src(obj):
+            if not finding_row_visible(obj, row):
+                continue
+        elif not is_visible_finding(row):
             continue
         nk = row["node_key"]
         related = _node_as_related(nodes_by_key.get(nk)) if nk else None
@@ -218,12 +224,16 @@ async def _export_findings(project_id: str, graph: dict, project: dict | None,
     for n in graph.get("nodes") or []:
         if n.get("type") != "vuln" or not n.get("key") or str(n["key"]) in linked:
             continue
+        tags = n.get("tags") if isinstance(n.get("tags"), list) else []
+        if is_placeholder_node(n.get("key"), n.get("title"), n.get("detail"), tags):
+            continue
         syn = finding_from_vuln_node(n, related_edges=_related_edges_for(n["key"], edges))
         syn.update(finding_guidance(syn))
         poc = poc_for_finding(syn, target)
         syn = prepare_finding_report(syn, poc=poc)
         syn["poc"] = poc
         findings.append(syn)
+    findings = sort_findings_by_severity(findings)
     if enrich_ai:
         findings = await ai_enrich_writeups(findings)
     out: list[dict] = []
@@ -535,28 +545,11 @@ _HTML_TMPL = Template(r"""
   <div class="card {% if f.severity in ['critical'] %}crit{% elif f.severity in ['high'] %}high{% elif f.severity in ['medium'] %}med{% endif %}">
     <span class="badge b-{{ f.severity }}">{{ f.severity }}</span>
     <b>{{ f.title }}</b>
-    <span class="meta"> · {{ f.category or '未分类' }}{% if f.cvss %} · CVSS {{ f.cvss }}{% endif %}{% if f.node_key %} · <code>{{ f.node_key }}</code>{% endif %} · {{ f.verification_status or 'verified' }}</span>
-    <h4>漏洞原理</h4>
-    <div class="vuln-body">{{ f.mechanism or '未采集' }}</div>
-    <h4>漏洞说明</h4>
-    <div class="vuln-body">{{ f.root_cause or f.description or '未采集' }}</div>
-    <h4>危害与影响</h4>
+    <span class="meta"> · {{ f.category or '未分类' }}{% if f.node_key %} · <code>{{ f.node_key }}</code>{% endif %} · {{ f.verification_status or 'verified' }}</span>
+    <h4>漏洞简介</h4>
+    <div class="vuln-body">{{ f.description or '未采集' }}</div>
+    <h4>危害</h4>
     <div class="vuln-body">{{ f.impact_detail or f.impact or '未采集' }}</div>
-    <h4>影响资产与攻击入口</h4>
-    <div class="vuln-body">{{ f.affected_scope or '未采集' }}</div>
-    {% if f.param_analysis %}
-    <h4>参数与可控点</h4>
-    <div class="vuln-body">{{ f.param_analysis }}</div>
-    {% endif %}
-    {% if f.http_raw %}
-    <h4>原始 HTTP 请求（粘贴到 Burp Repeater）</h4>
-    <pre>{{ f.http_raw }}</pre>
-    {% endif %}
-    {% if f.expected_result or f.expected_signals %}
-    <h4>复现成功判定</h4>
-    {% if f.expected_result %}<div class="vuln-body">{{ f.expected_result }}</div>{% endif %}
-    {% if f.expected_signals %}<ul>{% for s in f.expected_signals %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
-    {% endif %}
     <h4>手动复现</h4>
     {% if f.manual_steps %}
     <ol class="repro">
@@ -565,47 +558,18 @@ _HTML_TMPL = Template(r"""
     {% else %}
     <p class="empty">未采集可复现步骤。</p>
     {% endif %}
-    <h4>完整证据</h4>
-    {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% else %}<p class="empty">未采集 evidence</p>{% endif %}
-    <h4>PoC</h4>
     {% set curl = (f.poc.curl if f.poc else none) or f.poc_curl %}
     {% set pyp = (f.poc.python if f.poc else none) or f.poc_python %}
-    {% if curl %}<h4>curl</h4><pre>{{ curl }}</pre>{% endif %}
-    {% if pyp %}<h4>python</h4><pre>{{ pyp }}</pre>{% endif %}
-    {% if not curl and not pyp %}<p class="empty">未采集可执行 PoC。</p>{% endif %}
-    <h4>二次验证与红队评级</h4>
-    <div class="vuln-body">{{ f.secondary_review or '未采集' }}</div>
-    {% if f.proof_canary or f.proof_url or f.proof_detail %}
-    <h4>证明材料</h4>
-    <ul>
-      {% if f.proof_type %}<li>类型 <code>{{ f.proof_type }}</code></li>{% endif %}
-      {% if f.proof_canary %}<li>Canary <code>{{ f.proof_canary }}</code></li>{% endif %}
-      {% if f.proof_url %}<li>URL {{ f.proof_url }}</li>{% endif %}
-    </ul>
-    {% if f.proof_detail %}<pre>{{ f.proof_detail }}</pre>{% endif %}
-    {% endif %}
-    {% if f.remediation %}
-    <h4>修复建议</h4>
-    <div class="vuln-body">{{ f.remediation }}</div>
-    {% endif %}
-    {% if f.related_node %}
-    <h4>关联攻击图</h4>
-    <p class="meta"><code>{{ f.related_node.key }}</code> [{{ f.related_node.type }}/{{ f.related_node.severity }}] {{ f.related_node.title }}</p>
-    {% set nd = f.node_detail_unique if f.node_detail_unique is defined else f.related_node.detail %}
-    {% if nd %}<pre>{{ nd }}</pre>{% endif %}
-    {% endif %}
-    {% if f.related_edges %}
-    <ul>
-      {% for e in f.related_edges %}
-      <li><code>{{ e['from'] or e.src }}</code> --{{ e.relation }}--&gt; <code>{{ e.to or e.dst }}</code>{% if e.rationale %} · {{ e.rationale }}{% endif %}</li>
-      {% endfor %}
-    </ul>
-    {% endif %}
+    {% if curl %}<pre>{{ curl }}</pre>{% endif %}
+    {% if pyp %}<pre>{{ pyp }}</pre>{% endif %}
+    {% if not curl and not pyp and not f.manual_steps %}<p class="empty">未采集可执行 PoC。</p>{% endif %}
+    <h4>红队评级</h4>
+    <div class="vuln-body">{{ f.secondary_review or '未评级' }}</div>
   </div>
   {% endmacro %}
 
   <h2>项目 · 资产 · 漏洞</h2>
-  <p class="meta">按项目列出对应资产及其漏洞。每条含原理、成因、危害、原始 HTTP、成功判定与逐步手动复现。</p>
+  <p class="meta">按项目列出对应资产及其漏洞。每条含简介、危害、手动复现与红队评级。</p>
 
   {% if not sections %}
   <p class="empty">暂无项目数据。</p>

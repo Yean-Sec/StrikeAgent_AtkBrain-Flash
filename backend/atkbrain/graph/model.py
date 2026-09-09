@@ -143,13 +143,22 @@ def humanize_node_key(key: str) -> str:
 
 
 def coerce_declared_node_type(key: str, ntype: str, tags: list | None = None) -> str:
-    """key 前缀是 vuln:/foothold: 等时，禁止用 type=info 占位。已声明的更强类型保留。"""
+    """key 前缀是 vuln:/foothold: 等时，禁止用 type=info 占位。已声明的更强类型保留。
+
+    带 placeholder 标签的 vuln: 空壳按危险点处理，不算已确认漏洞；
+    report_finding / fill_source_node 会先去掉 placeholder 再升回 vuln。
+    """
     declared = coerce_goal_node_type(key, ntype or "info", tags)
     inferred = infer_node_type_from_key(key)
     if not inferred:
         return declared or "info"
     if inferred == "goal":
         return coerce_goal_node_type(key, "goal", tags)
+    tagset = {str(t).lower() for t in (tags or [])}
+    if inferred == "vuln" and "placeholder" in tagset:
+        if _TYPE_RANK.get(declared or "info", 0) <= _TYPE_RANK["vuln"]:
+            return "danger"
+        return declared or "danger"
     if _TYPE_RANK.get(declared or "info", 0) < _TYPE_RANK.get(inferred, 0):
         return inferred
     return declared or inferred
@@ -157,11 +166,13 @@ def coerce_declared_node_type(key: str, ntype: str, tags: list | None = None) ->
 
 def placeholder_node_spec(key: str) -> tuple[str, str, str, list[str]]:
     """边/旗引用了还不存在的节点时的占位：(type, title, severity, tags)。"""
-    ntype = coerce_declared_node_type(key, infer_node_type_from_key(key) or "info")
+    inferred = infer_node_type_from_key(key) or "info"
     title = humanize_node_key(key)
-    if ntype == "vuln":
-        sev = "high"
-    elif ntype in ("foothold", "goal"):
+    # vuln: 空壳不是已确认漏洞，按危险点占位，等填证据后再升 vuln。
+    if inferred == "vuln":
+        return "danger", title, "medium", ["placeholder"]
+    ntype = coerce_declared_node_type(key, inferred)
+    if ntype in ("foothold", "goal"):
         sev = "critical"
     elif ntype == "danger":
         sev = "medium"
@@ -381,6 +392,30 @@ def secondary_review_narrative(row: Any) -> str:
     else:
         lines.append("【阐述】未写。二次验证过程（怎么打、看到什么）和评级理由必须写在 redteam_rating_rationale。")
     return "\n".join(lines)
+
+
+def redteam_rating_block(row: Any) -> str:
+    """报告里「红队评级」一节：只写级别和为什么是这个级。"""
+    def _get(key: str):
+        try:
+            if isinstance(row, dict):
+                return row.get(key)
+            v = getattr(row, key, None)
+            if v is None:
+                v = row[key]
+            return v
+        except Exception:
+            return None
+
+    rating = normalize_redteam_rating(_get("redteam_rating") if _get("redteam_rating") is not None else None)
+    why = str(_get("redteam_rating_rationale") or "").strip()
+    if rating:
+        head = f"级别：**{redteam_rating_label(rating)}**（`{rating}`）"
+    else:
+        head = "级别：未评级"
+    if why:
+        return f"{head}\n为什么是这个级：{why}"
+    return f"{head}\n为什么是这个级：未写理由。"
 
 
 def compute_risk_score(

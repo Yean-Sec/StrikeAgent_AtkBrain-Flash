@@ -381,9 +381,32 @@ def scan_ban_repeats(ledger: dict, *, objective: str | None = None) -> list[str]
 
 
 def format_coverage_brief(ledger: dict, *, objective: str | None = None) -> str:
-    from ..objective import objective_allows_flag
+    from ..objective import objective_allows_flag, objective_is_src
     ctf = bool(objective and objective_allows_flag(objective))
+    src = bool(objective and objective_is_src(objective))
     scans = ledger.get("scans") or []
+    if src:
+        if not scans and not ledger.get("attacked"):
+            return (
+                "已覆盖（账本空）：SRC 先铺开入口，再按入口形态从厂商菜单选类型；"
+                "nmap top-1000 + 中档目录。不要升圈、不要横向、不要预开 11 路。"
+            )
+        lines = ["已覆盖（SRC 不升圈）· 按入口形态选类型挖高危"]
+        for s in scans[:16]:
+            hits = s.get("hits") or []
+            hit_txt = "、".join(str(h) for h in hits[:6]) if hits else "无命中记录"
+            tgt = s.get("target") or ""
+            lines.append(
+                f"  · {s.get('face')}/{s.get('tier')} {tgt} — {hit_txt}"
+            )
+        attacked = ledger.get("attacked") or []
+        if attacked:
+            bits = []
+            for a in attacked[:8]:
+                bits.append(str(a.get("url") or a.get("path") or a.get("tactic") or "").strip())
+            lines.append("已测路径：" + "、".join(x for x in bits if x))
+        lines.append("低/中/高危/严重都要 report_finding 进漏洞页。禁止横向与夺旗。")
+        return "\n".join(lines)
     if ctf:
         ring = infer_ring(ledger)
         label = RING_LABELS.get(ring, "小")

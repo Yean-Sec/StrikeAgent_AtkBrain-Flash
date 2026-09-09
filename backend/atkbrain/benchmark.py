@@ -777,6 +777,86 @@ async def ensure_challenge(sub_project: dict, *, hard_restart: bool = False) -> 
     return await start_challenge(sub_project)
 
 
+def _hint_text(res: dict | None) -> str:
+    if not isinstance(res, dict):
+        return ""
+    for k in ("hint", "tip", "content", "text"):
+        v = res.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        if isinstance(v, list):
+            joined = "\n".join(str(x).strip() for x in v if str(x).strip())
+            if joined:
+                return joined
+    data = res.get("data")
+    if isinstance(data, dict):
+        return _hint_text(data)
+    if isinstance(data, str) and data.strip():
+        return data.strip()
+    return ""
+
+
+async def fetch_hint(sub_project: dict) -> dict:
+    """拉取评测平台提示。成功调用会扣分；已拉取过则返回缓存，不再请求。"""
+    cfg = sub_project.get("config") if isinstance(sub_project.get("config"), dict) else {}
+    bm_cfg = cfg.get("benchmark") if isinstance(cfg.get("benchmark"), dict) else {}
+    cached = str(bm_cfg.get("hint") or "").strip()
+    if bm_cfg.get("hint_fetched") and cached:
+        return {
+            "hint": cached,
+            "cached": True,
+            "unique_code": bm_cfg.get("unique_code"),
+        }
+    client, uc = await _client_for_sub(sub_project)
+    if not uc:
+        local = str(cfg.get("hint") or cfg.get("tip") or "").strip()
+        if local:
+            return {"hint": local, "cached": True, "local": True}
+        return {
+            "hint": None,
+            "error": "no_unique_code",
+            "message": "本题未绑定评测 unique_code，没有平台提示接口。",
+        }
+    try:
+        res = await client.hint(uc)
+    except BenchmarkError as e:
+        if is_environment_closed_error(e):
+            try:
+                await mark_environment_closed(sub_project, f"hint:{e}"[:240])
+                await stop_sibling_runs(sub_project, except_id=sub_project.get("id"))
+            except Exception:
+                pass
+        return {"hint": None, "error": e.code, "message": e.message}
+    if not isinstance(res, dict):
+        res = {}
+    hint = _hint_text(res)
+    if not hint:
+        return {
+            "hint": None,
+            "error": "empty_hint",
+            "message": res.get("message") or "平台未返回提示正文。",
+        }
+    if not isinstance(sub_project.get("config"), dict):
+        sub_project["config"] = {}
+        cfg = sub_project["config"]
+    bm_cfg = cfg.setdefault("benchmark", {})
+    if not isinstance(bm_cfg, dict):
+        bm_cfg = {}
+        cfg["benchmark"] = bm_cfg
+    bm_cfg["hint"] = hint
+    bm_cfg["hint_fetched"] = True
+    cfg["hint"] = hint
+    pid = sub_project.get("id")
+    if pid:
+        from .projects import update_config
+        await update_config(pid, cfg)
+    out = {"hint": hint, "cached": False, "unique_code": uc}
+    for key in ("cost", "penalty", "score_cost", "deduct"):
+        if res.get(key) is not None:
+            out[key] = res[key]
+    return out
+
+
 async def submit_flag(sub_project: dict, flag: str) -> dict:
     """提交 flag，返回平台结果或结构化错误（duplicate 视为已得分）。"""
     client, uc = await _client_for_sub(sub_project)
@@ -1286,7 +1366,9 @@ async def _running_elapsed_sec(project_ids: list[str]) -> dict[str, float]:
 async def autopilot_tick(parent_id: str) -> dict:
     """把评测并发槽填满：按题号顺序做，每题至少开一轮，不按易/难跳过。
 
-    同时最多 benchmark_slot_limit() 道真正在跑（默认 3，上限 20），不把几十道塞进排队。
+    同时最多 benchmark_slot_limit() 道真正在跑（默认 3，上限 20）。
+    「全部启动」只填空槽，不一次塞几十道进排队。人工/批量点选启动的题可以排队等槽，
+    自动续跑不得把排队句柄 stop 掉（否则 UI 几秒后从「排队中」变回「未完成」）。
     空槽优先下一道从未开过的题。覆盖期每题最多约 40 分钟（不因排队压缩），
     到点让槽——含已有部分正确 flag，不按平台满分占槽。全部开过一轮后回头续啃
     （hard_restart=False，猎程/攻击图接着上次），不重开推理。续啃队列仍多于空槽
@@ -1478,14 +1560,21 @@ async def autopilot_tick(parent_id: str) -> dict:
             pass
         stopped.append(vid)
 
-    # 超额排队不占调度：只保留真正在跑的槽，下一题等空槽再按题号开。
+    # 人工/批量点选会先 start、再等 CTF 槽（handle.status=starting → UI「排队中」）。
+    # 自动续跑禁止 stop 这些句柄：那会把题打回 idle，「未完成」而非「排队中」。
+    # 有排队时也不另开/让槽，空槽由排队者 acquire，避免和焦点题抢位。
     if queued:
-        for s in list(queued):
-            try:
-                await manager.stop(s["id"])
-            except Exception:
-                pass
         running, slots = _live()
+        return {
+            "running": len(running),
+            "started": 0,
+            "stopped": stopped,
+            "queued": len(queued),
+            "orphans_closed": orphans.get("closed", 0),
+            "remaining": 0,
+            "picked": [],
+            "skipped": "user_queue",
+        }
 
     pool = [
         s for s in subs

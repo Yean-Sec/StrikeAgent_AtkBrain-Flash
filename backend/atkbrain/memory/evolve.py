@@ -16,6 +16,7 @@ from .store import (
 )
 from .methodology import (
     graph_methodology_signals,
+    lesson_consumes_evidence,
     score_methodology,
     scrub_chain,
     scrub_lesson,
@@ -250,7 +251,7 @@ async def upsert_lesson(draft: dict, *, episode_id: str | None = None) -> dict |
 
 
 async def evolve_from_episode_id(episode_id: str) -> dict | None:
-    """用 Claude Code 蒸馏这一条合格 episode。不用机械映射。"""
+    """把合格 episode 收成跨目标剧本。优先 Claude；未开或失败时只留手法/线索/类型链。"""
     if not episode_id:
         return None
     row = await db.fetchone("SELECT * FROM memory WHERE id=?", (episode_id,))
@@ -270,17 +271,21 @@ async def evolve_from_episode_id(episode_id: str) -> dict | None:
     }
     if not episode_qualifies_for_evolve(episode):
         return None
+    grounded = None
+    draft = distill_content(content, str(row.get("outcome") or ""), str(row.get("target_fp") or "*"))
+    if draft:
+        grounded = await upsert_lesson(draft, episode_id=episode_id)
     if not bool(getattr(settings, "evolve_ai", True)):
-        return None
+        return grounded
     try:
         applied = await ai_refine_playbook(
             recent_episodes=[episode],
             playbook=await list_playbook(limit=12),
         )
     except Exception:
-        return None
+        return grounded
     kept = [x for x in (applied or []) if x.get("action") != "retire"]
-    return (kept[-1] if kept else None)
+    return (kept[-1] if kept else grounded)
 
 
 def _graph_signals(project: dict | None, graph: dict | None) -> tuple[set[str], str]:
@@ -358,8 +363,10 @@ async def retrieve_lessons(
     )
     if not rows:
         return []
+    pid = str((project or {}).get("id") or "").strip()
     signals, fp = _graph_signals(project, graph)
-    ranked: list[tuple[float, dict]] = []
+    source_ids: list[str] = []
+    parsed: list[dict] = []
     for r in rows:
         item = serialize_lesson_row(r)
         clean = scrub_lesson(item.get("content") or item)
@@ -374,7 +381,27 @@ async def retrieve_lessons(
         item["route"] = clean.get("route") or ""
         item["method"] = clean.get("method") or ""
         item["idea"] = clean.get("idea") or ""
-        # CTF 与红队同一把尺子：图上要有栈/线索/战术交集才回灌。
+        parsed.append(item)
+        for sid in clean.get("source_episode_ids") or []:
+            s = str(sid or "").strip()
+            if s and s not in source_ids:
+                source_ids.append(s)
+    echo: set[str] = set()
+    if pid and source_ids:
+        q = ",".join("?" * len(source_ids))
+        for er in await db.fetchall(
+            f"SELECT id FROM memory WHERE kind='episode' AND project_id=? AND id IN ({q})",
+            tuple([pid, *source_ids]),
+        ):
+            echo.add(str(er.get("id") or ""))
+    ranked: list[tuple[float, dict]] = []
+    for item in parsed:
+        clean = item.get("content") or {}
+        # 本项目自己写下的 episode 不作为外援回灌。
+        if echo and any(str(x) in echo for x in (clean.get("source_episode_ids") or [])):
+            continue
+        if not lesson_consumes_evidence(item.get("do") or [], signals):
+            continue
         score = _score_lesson(clean, signals, fp, strict=True)
         if score <= 0:
             continue
@@ -480,6 +507,7 @@ EVOLVE_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的进化编辑。只把已
 - route：路线（类型链，如 entry → vuln(sqli) → foothold）
 when 只能是技术栈或线索名（php/java/auth_surface/inject_surface 等）。
 do/avoid 只能是战术名（sqli/ssti/ssrf/file_read_chain/weaponize/content_enum 等）。
+只解释如何消耗本条已列出的栈、线索、手法与类型链；不要写入这些列表里没有的服务或 hop。
 禁止：IP、主机、端口、题号、URL、题面路径、flag 原文、getflag 当手法、Intent id、具体 payload、机械罗列工具名。
 已有剧本可修订或退休，不要重复同一条。最多 3 条。
 只输出 JSON：
@@ -627,7 +655,7 @@ async def ai_refine_playbook(*, recent_episodes: list[dict], playbook: list[dict
         + "\n".join(ep_lines)
         + "\n\n# 当前共用剧本（CTF/红队同一份，不要重复）\n"
         + ("\n".join(pb_lines) or "（空）")
-        + "\n\n请蒸馏最多 3 条：思想、方式方法、路线。"
+        + "\n\n请蒸馏最多 3 条：思想、方式方法、路线。只消耗上面列出的栈/线索/手法，不要补链上没有的 hop。"
     )
     model = (getattr(settings, "evolve_model", None) or "").strip() or (
         (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model

@@ -3,7 +3,7 @@ import {
   forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY,
 } from "d3-force";
 import type { Graph, GraphEdge, GraphNode } from "../../types";
-import { nodeTypeColor, graphNodeTypeLabel, isGetshellNode, showsShellStar, severityColor, severityLabel, displayFindingSeverity, lateralColor, formatNodeDetail, scrubCandidateRceLabel } from "../../theme";
+import { nodeTypeColor, graphNodeTypeLabel, graphNodeDisplayType, graphNodeDisplaySeverity, isGetshellNode, showsShellStar, severityColor, severityLabel, displayFindingSeverity, lateralColor, formatNodeDetail, scrubCandidateRceLabel } from "../../theme";
 import { popIn } from "../../anim";
 
 interface SimNode extends GraphNode {
@@ -970,7 +970,7 @@ export function AttackGraph({ graph, onSelect, selectedKey, onClear }: { graph: 
           })()}
           {nodes.map((n) => {
             const r = radiusOf(n);
-            const color = nodeTypeColor[n.type] || "#8e8b82";
+            const color = nodeTypeColor[graphNodeDisplayType(n)] || "#8e8b82";
             const critical = n.severity === "critical" || isGetshellNode(n) || showsShellStar(n);
             const selected = n.key === selectedKey;
             const isLateral = (n.tags || []).some((t) => t === "lateral" || t === "pivot");
@@ -997,14 +997,14 @@ export function AttackGraph({ graph, onSelect, selectedKey, onClear }: { graph: 
                     className="ring-pulse"
                     r={r + 6}
                     fill="none"
-                    stroke={severityColor[n.severity] || color}
+                    stroke={severityColor[graphNodeDisplaySeverity(n)] || color}
                     strokeWidth={2}
                   />
                 )}
                 {selected && (
                   <circle r={r + 9} fill="none" stroke="var(--primary)" strokeWidth={2} strokeDasharray="3 3" />
                 )}
-                <circle r={r} fill={color} stroke={severityColor[n.severity] || "#fff"} strokeWidth={2.5} />
+                <circle r={r} fill={color} stroke={severityColor[graphNodeDisplaySeverity(n)] || "#fff"} strokeWidth={2.5} />
                 {showsShellStar(n) && (
                   <text textAnchor="middle" dy={4} fontSize={14} fill="#fff">★</text>
                 )}
@@ -1029,7 +1029,7 @@ export function AttackGraph({ graph, onSelect, selectedKey, onClear }: { graph: 
           <div className="node-popover-type">
             {graphNodeTypeLabel(selectedData)}
             {" · "}
-            {severityLabel[selectedData.severity] || selectedData.severity}
+            {severityLabel[graphNodeDisplaySeverity(selectedData)] || graphNodeDisplaySeverity(selectedData)}
             {selectedData.status ? ` · ${selectedData.status}` : ""}
             {showsShellStar(selectedData) ? " · GETSHELL / RCE" : ""}
           </div>

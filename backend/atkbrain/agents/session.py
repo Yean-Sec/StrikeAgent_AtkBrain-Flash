@@ -40,7 +40,7 @@ from ..exec.guard import Guard
 from ..objective import objective_allows_flag
 from ..scope import Scope
 from .context import AgentContext
-from .prompts import build_brief, build_subagents, build_system_prompt, builtin_allowed_tools
+from .prompts import build_brief, build_subagents, build_system_prompt, builtin_allowed_tools, builtin_disallowed_tools
 from .tools import SERVER_NAME, build_server, tool_names
 
 BUILTIN_ALLOWED = builtin_allowed_tools("getshell")
@@ -54,7 +54,11 @@ _DEAD_CLI_RE = re.compile(
     r"SIGSEGV|Broken pipe|Connection reset",
     re.I,
 )
-_CONTROL_TIMEOUT_RE = re.compile(r"Control request timeout", re.I)
+_SPAWN_TOOLS = frozenset({"Task", "Agent", "TaskCreate"})
+_GENERIC_AGENT_TYPES = frozenset({
+    "", "general-purpose", "general", "general_purpose", "generalpurpose",
+    "explore", "plan", "bash", "statusline",
+})
 
 
 def is_dead_cli_error(exc: BaseException | str) -> bool:
@@ -117,6 +121,9 @@ class ProjectAgent:
         self._write_brief()
         self._project_skill_names = self._write_skills()
         self.model = cfg.get("model", settings.claude_model)
+        self._subagent_names = frozenset(
+            str(k).strip().lower() for k in build_subagents(self.objective)
+        )
         # 只作日志；不再用这个 ID 续接旧对话（会把上一轮脏上下文带进下一轮）。
         self.last_session_id: str | None = None
         self.options = self._build_options()
@@ -132,9 +139,7 @@ class ProjectAgent:
         """构造 SDK options。resume/continue 默认关闭，避免跨轮对话污染。"""
         mcp_servers = {SERVER_NAME: self.server}
         allowed = tool_names(self.objective) + list(builtin_allowed_tools(self.objective))
-        disallowed = ["Bash", "WebFetch"]
-        if objective_allows_flag(self.objective):
-            disallowed.append("WebSearch")
+        disallowed = list(builtin_disallowed_tools(self.objective))
         opts: dict = dict(
             mcp_servers=mcp_servers,
             allowed_tools=allowed,
@@ -195,16 +200,68 @@ class ProjectAgent:
             return str(inp.get("tool_name") or inp.get("toolName") or "")
         return str(getattr(inp, "tool_name", None) or getattr(inp, "toolName", None) or "")
 
+    @staticmethod
+    def _hook_tool_input(inp) -> dict:
+        if isinstance(inp, dict):
+            raw = inp.get("tool_input") or inp.get("toolInput") or {}
+        else:
+            raw = getattr(inp, "tool_input", None) or getattr(inp, "toolInput", None) or {}
+        return raw if isinstance(raw, dict) else {}
+
+    @classmethod
+    def _spawn_subagent_type(cls, inp) -> str:
+        raw = cls._hook_tool_input(inp)
+        return str(
+            raw.get("subagent_type") or raw.get("agent") or raw.get("name") or ""
+        ).strip()
+
+    def _generic_agent_denied_hook(self) -> dict:
+        names = " / ".join(sorted(self._subagent_names)[:8]) or "web-exploit"
+        return {
+            "decision": "block",
+            "reason": (
+                f"禁止省略 subagent_type 的通用 Agent。必须 Agent(subagent_type=web-exploit) "
+                f"或 Task 派出具名子智能体（{names}）。"
+            ),
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    "必须指定 subagent_type=web-exploit（或其它已注册子智能体），禁止通用 Agent"
+                ),
+            },
+        }
+
+    def _remember_spawn(self, st: str) -> None:
+        if not st:
+            return
+        try:
+            bag = getattr(self.ctx, "task_subagents", None)
+            if not isinstance(bag, list):
+                bag = []
+                self.ctx.task_subagents = bag
+            bag.append(st)
+        except Exception:
+            pass
+
     async def _on_pre_tool_use(self, _input, _tool_use_id, _hook_context) -> dict:
         if self.ctx.goal_reached:
             return self._full_score_hook_block()
-        if self._hook_tool_name(_input) == "Task":
-            # 子智能体不设上限；_task_slots 只记账，不拦截。
-            self._task_slots = int(self._task_slots or 0) + 1
+        name = self._hook_tool_name(_input)
+        if name not in _SPAWN_TOOLS:
+            return {}
+        st = self._spawn_subagent_type(_input)
+        low = st.lower()
+        if name == "Agent" and (
+            low in _GENERIC_AGENT_TYPES or low not in self._subagent_names
+        ):
+            return self._generic_agent_denied_hook()
+        self._task_slots = int(self._task_slots or 0) + 1
+        self._remember_spawn(st)
         return {}
 
     async def _on_post_tool_use(self, _input, _tool_use_id, _hook_context) -> dict:
-        if self._hook_tool_name(_input) == "Task" and int(self._task_slots or 0) > 0:
+        if self._hook_tool_name(_input) in _SPAWN_TOOLS and int(self._task_slots or 0) > 0:
             self._task_slots -= 1
         return {}
 
@@ -394,6 +451,10 @@ class ProjectAgent:
         try:
             self._task_slots = 0
             self._wait_tool_ids = set()
+            try:
+                self.ctx.task_subagents = []
+            except Exception:
+                pass
             await self.begin_fresh_session(connect=True)
             try:
                 self.ctx.mark_activity()
@@ -418,6 +479,7 @@ class ProjectAgent:
                 "text": "\n".join(texts).strip(),
                 "tool_uses": tool_uses,
                 "goal_reached": self.ctx.goal_reached,
+                "task_subagents": list(getattr(self.ctx, "task_subagents", None) or []),
             }
         except Exception as e:
             if is_dead_cli_error(e):
@@ -452,7 +514,7 @@ class ProjectAgent:
                     if not b.name.startswith(f"mcp__{SERVER_NAME}__"):
                         payload = {"tool": b.name, "input": _preview(b.input)}
                         # Task 委派：单独摊开，便于监控主→子协同
-                        if b.name == "Task" and isinstance(b.input, dict):
+                        if b.name in _SPAWN_TOOLS and isinstance(b.input, dict):
                             payload["subagent"] = (
                                 b.input.get("subagent_type")
                                 or b.input.get("agent")
@@ -462,6 +524,17 @@ class ProjectAgent:
                             payload["description"] = str(
                                 b.input.get("description") or b.input.get("prompt") or ""
                             )[:300]
+                            st = str(payload["subagent"] or "").strip()
+                            if st:
+                                try:
+                                    bag = getattr(self.ctx, "task_subagents", None)
+                                    if not isinstance(bag, list):
+                                        bag = []
+                                        self.ctx.task_subagents = bag
+                                    if st not in bag:
+                                        bag.append(st)
+                                except Exception:
+                                    pass
                         await emit(self.project_id, "tool", payload, run_id=self.ctx.run_id)
         elif isinstance(msg, UserMessage):
             for b in getattr(msg, "content", []) or []:

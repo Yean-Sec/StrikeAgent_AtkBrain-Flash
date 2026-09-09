@@ -68,9 +68,9 @@ function fromSupervisorEvent(ev: RTEvent): SupervisorRow | null {
       ? `方案 #${pivot}`
       : "监督方案";
   const tags = [
-    chips("必须推进 Intent", p.must_intents),
-    chips("只委派", p.subagents),
-    chips("只允许战术", p.prefer_tactics),
+    chips("建议 Intent", p.must_intents),
+    chips("建议委派", p.subagents),
+    chips("建议战术", p.prefer_tactics),
     chips("禁止策略", p.defer_families),
     chips("禁止重复", p.ban_repeats),
   ].filter(Boolean) as { label: string; items: string[] }[];

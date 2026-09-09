@@ -25,6 +25,21 @@ from .projects import (
 )
 from .scope import _IP_RE
 
+# 导入表头/列名，不是主机
+_ASSET_HEADER_TOKENS = frozenset({
+    "host", "hosts", "hostname", "ip", "ips", "url", "urls",
+    "domain", "domains", "address", "addresses", "target", "targets",
+    "资产", "目标",
+})
+# 不引入完整 PSL；仅覆盖常见两段后缀
+_MULTI_PART_TLDS = frozenset({
+    "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn", "ac.cn",
+    "co.uk", "org.uk", "ac.uk", "gov.uk",
+    "co.jp", "or.jp", "ne.jp", "ac.jp",
+    "com.au", "net.au", "org.au", "co.nz",
+    "com.tw", "com.hk", "co.kr",
+})
+
 COMMON_WEB_PORTS = [80, 443, 8080, 8000, 8443, 8888, 8787]
 PROBE_CONCURRENCY = 8
 PROBE_TIMEOUT = 15.0
@@ -82,8 +97,11 @@ async def _set_import_progress(project_id: str, *, persist_cfg: bool = False, **
                     cfg.pop("import_progress", None)
                 else:
                     cfg["import_progress"] = {
-                        k: cur.get(k) for k in
-                        ("phase", "done", "total", "created", "started", "current", "message")
+                        k: cur.get(k) for k in (
+                            "phase", "done", "total", "created", "started", "current", "message",
+                            "group_count", "hosts", "policy", "groups",
+                        )
+                        if cur.get(k) is not None
                     }
                 await update_config(project_id, cfg)
         except Exception:
@@ -97,7 +115,7 @@ async def import_progress_for(project_id: str) -> dict:
     mem = _IMPORT.get(project_id)
     if mem and str(mem.get("phase") or "") not in ("idle", ""):
         phase = str(mem.get("phase") or "")
-        if phase in ("spawn", "start") and not live:
+        if phase in ("merge", "spawn", "start") and not live:
             paused = {
                 **mem,
                 "phase": "paused",
@@ -106,12 +124,12 @@ async def import_progress_for(project_id: str) -> dict:
             }
             _IMPORT[project_id] = paused
             return dict(paused)
-        return {**mem, "importing": live and phase in ("parse", "spawn", "start")}
+        return {**mem, "importing": live and phase in ("parse", "merge", "spawn", "start")}
     project = await get_project(project_id)
     cfg = ((project or {}).get("config") or {}).get("import_progress") or {}
     if isinstance(cfg, dict):
         phase = str(cfg.get("phase") or "")
-        if phase in ("spawn", "start", "paused") and not live:
+        if phase in ("merge", "spawn", "start", "paused") and not live:
             return {
                 **cfg,
                 "phase": "paused",
@@ -149,6 +167,49 @@ def fold_host_keys(host: str) -> set[str]:
     return {k for k in keys if k}
 
 
+def is_asset_header_token(raw: str) -> bool:
+    """单词语、无点、非 IP：导入表头（host/ip/url/资产），不当成目标。"""
+    s = (raw or "").strip().lower()
+    if not s or "://" in s or "/" in s or ":" in s:
+        return False
+    if "." in s or _IP_RE.match(s):
+        return False
+    return s in _ASSET_HEADER_TOKENS
+
+
+def registrable_domain(host: str) -> str:
+    """eTLD+1。IP 原样；example.com.cn → example.com.cn。"""
+    h = preferred_host(host)
+    if not h:
+        return ""
+    if _IP_RE.match(h):
+        return h
+    parts = [p for p in h.split(".") if p]
+    if len(parts) < 2:
+        return h
+    last2 = ".".join(parts[-2:])
+    if last2 in _MULTI_PART_TLDS and len(parts) >= 3:
+        return ".".join(parts[-3:])
+    return last2
+
+
+def product_zone(host: str) -> str:
+    """SRC 产品域：注册域再往左留 1 级。pay 与 ipay 分开；*.bbs.ztgame.com 一组。"""
+    h = preferred_host(host)
+    if not h:
+        return ""
+    if _IP_RE.match(h):
+        return h
+    e = registrable_domain(h)
+    if not e or h == e:
+        return e or h
+    rest = h[: -(len(e) + 1)]
+    if not rest:
+        return e
+    left = rest.rsplit(".", 1)[-1]
+    return f"{left}.{e}"
+
+
 def parse_asset_lines(items: list | str | None) -> list[str]:
     """拆行并丢掉空行/注释/BOM，保留原始 URL 以便 entry_url 仍是用户能打开的那条。"""
     if items is None:
@@ -175,9 +236,36 @@ def parse_asset_lines(items: list | str | None) -> list[str]:
         # 已是 URL 的整行不再按逗号切开（query 里可能有逗号）
         parts = [raw] if "://" in raw else [p.strip() for p in raw.split(",")]
         for p in parts:
-            if p and not p.startswith(("#", ";", "//")):
-                out.append(p)
+            if not p or p.startswith(("#", ";", "//")):
+                continue
+            if is_asset_header_token(p):
+                continue
+            out.append(p)
     return out
+
+
+def list_skipped_headers(items: list | str | None) -> list[str]:
+    """parse 丢掉的表头词，供预览展示。"""
+    found: list[str] = []
+    if items is None:
+        chunks: list[str] = []
+    elif isinstance(items, str):
+        chunks = items.replace("\ufeff", "").splitlines()
+    else:
+        chunks = []
+        for it in items:
+            s = (it if isinstance(it, str) else str(it)).replace("\ufeff", "")
+            chunks.extend(s.splitlines())
+    for line in chunks:
+        raw = line.strip()
+        if not raw or raw.startswith(("#", ";", "//")):
+            continue
+        raw = raw.strip(",;，")
+        parts = [raw] if "://" in raw else [p.strip() for p in raw.split(",")]
+        for p in parts:
+            if p and is_asset_header_token(p):
+                found.append(p)
+    return found
 
 
 def compact_assets_by_host(assets: list | None) -> tuple[list[str], list[str]]:
@@ -227,6 +315,7 @@ class MachineGroup:
     ips: list[str]
     ports: list[int]
     entry_url: str = ""
+    zone: str = ""
 
 
 class _UnionFind:
@@ -259,31 +348,27 @@ def _pick_primary(members: list[str], ordered_hosts: list[str]) -> str:
     return (names or ordered or members)[0]
 
 
-def group_hosts_by_origin_ips(
+def _zone_for_members(members: list[str]) -> str:
+    names = [h for h in members if not _IP_RE.match(h)]
+    if names:
+        return product_zone(names[0])
+    return members[0] if members else ""
+
+
+def _machine_groups_from_uf(
+    uf: _UnionFind,
+    ordered_hosts: list[str],
     by_host: dict[str, dict],
     ports_by_host: dict[str, set[int]],
     origin_ips: dict[str, set[str]],
 ) -> list[MachineGroup]:
-    """按源站 IP 并查集合并。origin_ips 为空的主机保持独立（解析失败）。"""
-    hosts = list(by_host.keys())
-    if not hosts:
-        return []
-    uf = _UnionFind(hosts)
-    ip_to_hosts: dict[str, list[str]] = {}
-    for host in hosts:
-        for ip in origin_ips.get(host) or ():
-            if not ip:
-                continue
-            ip_to_hosts.setdefault(str(ip), []).append(host)
-    for _ip, hs in ip_to_hosts.items():
-        for other in hs[1:]:
-            uf.union(hs[0], other)
     groups: list[MachineGroup] = []
     for _root, members in uf.groups().items():
-        primary = _pick_primary(members, hosts)
+        in_group = set(members)
+        primary = _pick_primary(members, ordered_hosts)
         vhosts: list[str] = []
         seen: set[str] = set()
-        for h in [primary, *(x for x in hosts if x in members)]:
+        for h in [primary, *(x for x in ordered_hosts if x in in_group)]:
             if h not in seen:
                 seen.add(h)
                 vhosts.append(h)
@@ -299,8 +384,85 @@ def group_hosts_by_origin_ips(
             ips=sorted(ips),
             ports=sorted(int(p) for p in ports),
             entry_url=str(info.get("probe_url") or ""),
+            zone=_zone_for_members(members),
         ))
     return groups
+
+
+def group_hosts_by_origin_ips(
+    by_host: dict[str, dict],
+    ports_by_host: dict[str, set[int]],
+    origin_ips: dict[str, set[str]],
+) -> list[MachineGroup]:
+    """红队默认：全局同源站 IP 并查集。origin_ips 为空的主机保持独立。"""
+    hosts = list(by_host.keys())
+    if not hosts:
+        return []
+    uf = _UnionFind(hosts)
+    ip_to_hosts: dict[str, list[str]] = {}
+    for host in hosts:
+        for ip in origin_ips.get(host) or ():
+            if not ip:
+                continue
+            ip_to_hosts.setdefault(str(ip), []).append(host)
+    for _ip, hs in ip_to_hosts.items():
+        for other in hs[1:]:
+            uf.union(hs[0], other)
+    return _machine_groups_from_uf(uf, hosts, by_host, ports_by_host, origin_ips)
+
+
+def group_hosts_for_objective(
+    by_host: dict[str, dict],
+    ports_by_host: dict[str, set[int]],
+    origin_ips: dict[str, set[str]],
+    *,
+    objective: str | None = None,
+) -> list[MachineGroup]:
+    """红队：全局源站 IP 并查集。SRC：先按产品域分桶，只在桶内并 IP。"""
+    from .objective import objective_is_src
+
+    hosts = list(by_host.keys())
+    if not hosts:
+        return []
+    mapping = origin_ips or {}
+    if not objective_is_src(objective):
+        return group_hosts_by_origin_ips(by_host, ports_by_host, mapping)
+
+    uf = _UnionFind(hosts)
+    buckets: dict[str, list[str]] = {}
+    for h in hosts:
+        if _IP_RE.match(h):
+            continue
+        buckets.setdefault(product_zone(h), []).append(h)
+    for members in buckets.values():
+        for other in members[1:]:
+            uf.union(members[0], other)
+
+    ip_to_domains: dict[str, list[str]] = {}
+    for host in hosts:
+        if _IP_RE.match(host):
+            continue
+        for ip in mapping.get(host) or ():
+            if ip:
+                ip_to_domains.setdefault(str(ip), []).append(host)
+    for _ip, hs in ip_to_domains.items():
+        by_z: dict[str, list[str]] = {}
+        for h in hs:
+            by_z.setdefault(product_zone(h), []).append(h)
+        for z_members in by_z.values():
+            for other in z_members[1:]:
+                uf.union(z_members[0], other)
+
+    for iph in (h for h in hosts if _IP_RE.match(h)):
+        domains = ip_to_domains.get(iph) or []
+        if not domains:
+            continue
+        by_z: dict[str, list[str]] = {}
+        for d in domains:
+            by_z.setdefault(product_zone(d), []).append(d)
+        best_z = max(by_z, key=lambda z: (len(buckets.get(z) or []), len(by_z[z])))
+        uf.union(iph, by_z[best_z][0])
+    return _machine_groups_from_uf(uf, hosts, by_host, ports_by_host, mapping)
 
 
 def machine_group_keys(group: MachineGroup) -> set[str]:
@@ -359,7 +521,56 @@ async def group_hosts_by_machine(
 
         pairs = await asyncio.gather(*[_one(h) for h in missing])
         mapping.update(pairs)
-    return group_hosts_by_origin_ips(by_host, ports_by_host, mapping)
+    return group_hosts_for_objective(by_host, ports_by_host, mapping, objective=objective)
+
+
+def preview_asset_groups(
+    assets: list | str | None,
+    *,
+    track: str | None = None,
+    objective: str | None = None,
+) -> dict:
+    """同步预览：去路径/www/表头后按赛道收组。不做 DNS，导入时才会按源站 IP 再并。"""
+    from .objective import normalize_objective, objective_is_src
+
+    t = (track or "").strip().lower()
+    o = (objective or "").strip().lower()
+    if t in ("src", "ctf", "redteam"):
+        obj = {"src": "src", "ctf": "flag", "redteam": "redteam"}[t]
+    else:
+        obj = normalize_objective(o or t)
+        t = "src" if obj == "src" else ("ctf" if obj == "flag" else "redteam")
+    src = objective_is_src(obj)
+    headers = list_skipped_headers(assets)
+    kept, skipped_dup = compact_assets_by_host(assets)
+    by_host, ports_by_host = _hosts_from_assets(kept)
+    origin = {h: ({h} if _IP_RE.match(h) else set()) for h in by_host}
+    groups = group_hosts_for_objective(by_host, ports_by_host, origin, objective=obj)
+    return {
+        "track": t,
+        "objective": obj,
+        "policy": "product_zone" if src else "machine",
+        "lines_kept": len(kept),
+        "skipped_dup": skipped_dup[:80],
+        "skipped_dup_count": len(skipped_dup),
+        "skipped_header": headers,
+        "hosts": len(by_host),
+        "groups": [
+            {
+                "primary": g.primary,
+                "zone": g.zone,
+                "vhosts": g.vhosts,
+                "ports": g.ports,
+            }
+            for g in groups
+        ],
+        "group_count": len(groups),
+        "note": (
+            "导入时还会按源站 IP 再并（SRC 仅同产品域内）。"
+            if src else
+            "导入时还会把解析到同一源站 IP 的主机并成一台。"
+        ),
+    }
 
 
 async def _persist_machine_identity(
@@ -429,10 +640,19 @@ async def _spawn_machine_group(
     if group.entry_url:
         cfg["entry_url"] = group.entry_url
     cfg["vhosts"] = list(group.vhosts)
+    if group.zone:
+        cfg["product_zone"] = group.zone
     extra = [h for h in group.vhosts if h != group.primary]
     extra_ips = set(group.ips)
     n_alias = len(group.vhosts)
-    label = group.primary if n_alias <= 1 else f"{group.primary}（同机 {n_alias}）"
+    from .objective import objective_is_src
+    obj = (project.get("config") or {}).get("objective")
+    if n_alias <= 1:
+        label = group.primary
+    elif objective_is_src(obj):
+        label = f"{group.primary}（产品域 {n_alias}）"
+    else:
+        label = f"{group.primary}（同机 {n_alias}）"
     sub = await create_single_project(
         name=f"{project['name']} · {label}",
         target=group.primary,
@@ -817,12 +1037,20 @@ async def spawn_subprojects_from_assets(project_id: str, *, auto_start: bool = F
     assets = (project.get("config") or {}).get("assets") or project.get("scope", {}).get("targets", [])
     by_host, ports_by_host = _hosts_from_assets(assets)
     objective = ((project.get("config") or {}).get("objective"))
+    from .objective import objective_is_src
+    src = objective_is_src(objective)
+    policy = "product_zone" if src else "machine"
+    merge_msg = "正在按产品域合并…" if src else "正在按同机（FQDN/源站 IP）合并…"
     await _set_import_progress(
         project_id, persist_cfg=True,
-        phase="spawn", done=0, total=len(by_host), created=0, started=0, current="",
-        message="正在按同机（FQDN/源站 IP）合并…",
+        phase="merge", done=0, total=len(by_host), created=0, started=0, current="",
+        message=merge_msg, hosts=len(by_host), policy=policy, group_count=0, groups=[],
     )
     machines = await group_hosts_by_machine(by_host, ports_by_host, objective=objective)
+    group_rows = [
+        {"primary": g.primary, "zone": g.zone, "vhosts": g.vhosts, "ports": g.ports}
+        for g in machines[:40]
+    ]
     existing_subs = await list_subprojects(project_id)
     existing_keys: set[str] = set()
     for s in existing_subs:
@@ -839,7 +1067,12 @@ async def spawn_subprojects_from_assets(project_id: str, *, auto_start: bool = F
         project_id, persist_cfg=True,
         phase="spawn" if (pending or absorb_groups) else "done",
         done=0, total=total, created=0, started=0, current="",
-        message="正在创建子项目" if pending else ("没有新主机" if not absorb_groups else "正在并入已有同机项目"),
+        hosts=len(by_host), policy=policy, group_count=len(machines), groups=group_rows,
+        message=(
+            f"已合并为 {len(machines)} 个子项目，正在创建…"
+            if pending else
+            ("没有新主机" if not absorb_groups else f"已合并为 {len(machines)} 组，正在并入已有项目")
+        ),
     )
 
     queue = absorb_groups + pending
@@ -880,7 +1113,13 @@ async def spawn_subprojects_from_assets(project_id: str, *, auto_start: bool = F
             continue
         if not sub:
             continue
-        alias = f"，同机 {len(group.vhosts)} 个域名" if len(group.vhosts) > 1 else ""
+        n_alias = len(group.vhosts)
+        if n_alias > 1 and objective_is_src(objective):
+            alias = f"，产品域 {n_alias} 个域名"
+        elif n_alias > 1:
+            alias = f"，同机 {n_alias} 个域名"
+        else:
+            alias = ""
         if is_new:
             created.append(sub)
             existing_subs.append(sub)
@@ -979,13 +1218,13 @@ def schedule_cluster_import(project_id: str, *, auto_start: bool = True, total_h
         _IMPORT_RESCAN.add(project_id)
         return {**import_snapshot(project_id), "already_running": True, "importing": True}
     snap = {
-        "phase": "spawn",
+        "phase": "merge",
         "done": 0,
         "total": int(total_hint or 0),
         "created": 0,
         "started": 0,
         "current": "",
-        "message": "开始导入",
+        "message": "正在合并资产…",
         "ts": time.time(),
     }
     _IMPORT[project_id] = snap

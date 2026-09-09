@@ -87,10 +87,10 @@ export function TopNav() {
             <div
               className="row status-control"
               style={{ gap: 8 }}
-              title="红队与 CTF 各有独立项目槽，互不占用。多点的启动会在本赛道槽满时排队。Claude Code 栏显示两道合计。"
+              title="红队与 SRC 共用项目槽，CTF 另有独立槽，互不占用。多点的启动会在本赛道槽满时排队。Claude Code 栏显示两道合计。"
             >
               <span className="pulse-dot" style={{ background: (rtActive + ctfActive) > 0 ? "var(--success)" : "var(--muted-soft)" }} />
-              <span>红队 {rtActive}/{rt?.limit ?? "-"}</span>
+              <span>红队/SRC {rtActive}/{rt?.limit ?? "-"}</span>
               {rt && (
                 <SlotSelect
                   value={rt.limit}
@@ -108,7 +108,7 @@ export function TopNav() {
               )}
             </div>
             {cl && (
-              <div className="row status-control" style={{ gap: 6 }} title="编排会话合计：红队项目 + CTF 项目，每项目 2 个（从者 + 御主）。子智能体不设上限。">
+              <div className="row status-control" style={{ gap: 6 }} title="编排会话合计：红队/SRC 项目 + CTF 项目，每项目 2 个（从者 + 御主）。子智能体不设上限。">
                 <span className="pulse-dot" style={{ background: h.claude_sdk?.state === "unavailable" ? "var(--error)" : "var(--success)" }} />
                 <span>{h.claude_sdk?.label || "Claude Code 连接正常"}</span>
                 <span className="muted" style={{ fontSize: 11 }}>· {cl.active}/{cl.limit}</span>

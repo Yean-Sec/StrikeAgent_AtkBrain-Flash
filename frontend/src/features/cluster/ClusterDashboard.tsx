@@ -76,6 +76,10 @@ export function ClusterDashboard({
   const importPoll = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const assets: string[] = project.config?.assets || project.scope?.targets || [];
+  const clusterTrack = (String(project.config?.track || "").toLowerCase() === "src"
+    || String(project.config?.objective || "").toLowerCase() === "src")
+    ? "src"
+    : "redteam";
 
   const load = () => api.subprojects(project.id).then(setSubs).catch(() => {});
   useEffect(() => {
@@ -232,7 +236,8 @@ export function ClusterDashboard({
     setBusy(true); setErr("");
     setImporting(true);
     setImportProgress({
-      phase: "spawn", done: 0, total: lineHint, message: `已提交 ${lineHint} 条，正在按主机去重…`,
+      phase: "merge", done: 0, total: lineHint,
+      message: clusterTrack === "src" ? "正在按产品域合并…" : "正在按同机合并…",
     });
     try {
       const r = await api.addClusterAssets(project.id, [blob], true);
@@ -400,7 +405,9 @@ export function ClusterDashboard({
         <div className="card-cream" style={{ marginBottom: 20, padding: 18 }}>
           <h3 style={{ marginBottom: 8, fontSize: 16 }}>向集群追加目标</h3>
           <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-            每行一个域名 / URL / IP:端口。同一主机名的不同端口会并进一台机；解析到同一非 CDN 源站 IP 的不同域名也会合成一个子项目，端口只扫一次。CDN 边缘 IP 不合并且各建独立项目。
+            {clusterTrack === "src"
+              ? "SRC：导入时按产品域自动收组（注册域再往左 1 级，如 *.bbs.ztgame.com 一组）。跨产品域即使 CDN 同 IP 也不并。"
+              : "红队：导入时同一主机名的不同端口并进一台；解析到同一源站 IP 的域名合成一个子项目。CDN 边缘 IP 不合并。"}
           </p>
           <div className="row" style={{ gap: 10, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
             <label className="btn btn-secondary btn-sm" style={{ cursor: busy || importing ? "not-allowed" : "pointer" }}>
@@ -413,7 +420,7 @@ export function ClusterDashboard({
                 onChange={(e) => { onPickAssetFile(e.target.files?.[0]); e.target.value = ""; }}
               />
             </label>
-            <span className="muted" style={{ fontSize: 12 }}>文件内容会追加到下面文本框，确认后再导入</span>
+            <span className="muted" style={{ fontSize: 12 }}>文件内容会追加到下面文本框，点导入后自动合并并显示进度</span>
           </div>
           <textarea
             className="input"
@@ -426,7 +433,7 @@ export function ClusterDashboard({
           />
           <div className="row" style={{ gap: 10 }}>
             <button className="btn btn-primary" disabled={busy || importing} onClick={addAssets}>
-              {busy || importing ? "添加中…" : "确认添加并启动"}
+              {busy || importing ? "导入中…" : "确认添加并启动"}
             </button>
             <button className="btn btn-secondary" disabled={busy} onClick={() => { setShowAdd(false); setNewAssets(""); }}>
               取消
@@ -529,7 +536,7 @@ function SubprojectsTable({
                   <span className="row" style={{ gap: 7, alignItems: "center", flexWrap: "wrap" }}>
                     <span className="pulse-dot" style={{ background: statusColor[displayStatus(p)] || colors.muted }} />
                     {statusLabel[displayStatus(p)] || p.status}
-                    {p.queued ? <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="已启动，等待本赛道（红队或 CTF）并发槽空出后才会真正开跑">等并发槽</span> : null}
+                    {p.queued ? <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="已启动，等待本赛道（红队/SRC 或 CTF）并发槽空出后才会真正开跑">等并发槽</span> : null}
                     {!p.running && p.config?.completion_reason === "entry_dead" ? <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="入口连续不可达；站点恢复后可再启动">入口不可达</span> : null}
                     {!p.running && (p.config?.completion_reason === "env_closed" || p.config?.completion_reason === "env_unreachable" || p.config?.env_closed) ? <span className="badge" style={{ background: "rgba(198,69,69,.12)", color: "#c64545", borderColor: "rgba(198,69,69,.35)" }} title="评测任务已到期或平台不可达">环境已到期</span> : null}
                   </span>

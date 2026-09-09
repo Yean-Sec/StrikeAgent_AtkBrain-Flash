@@ -58,7 +58,55 @@ export const nodeTypeLabel: Record<string, string> = {
   goal: "GETSHELL / RCE",
 };
 
-type GraphTypeNode = { type?: string; key?: string; tags?: string[] };
+type GraphTypeNode = {
+  type?: string;
+  key?: string;
+  tags?: string[];
+  title?: string;
+  detail?: unknown;
+  severity?: string;
+};
+
+function humanizeNodeKey(key: string): string {
+  const raw = String(key || "").trim();
+  if (!raw.includes(":")) return raw;
+  const rest = raw.split(":").slice(1).join(":").trim();
+  return rest || raw;
+}
+
+function isEmptyNodeDetail(detail: unknown): boolean {
+  if (detail == null || detail === "") return true;
+  if (typeof detail === "string") return !detail.trim();
+  if (Array.isArray(detail)) return detail.length === 0;
+  if (typeof detail === "object") return Object.keys(detail as object).length === 0;
+  return false;
+}
+
+/** 边引用留下的空壳：不是已确认漏洞。 */
+export function isPlaceholderGraphNode(n: GraphTypeNode): boolean {
+  const tags = (n.tags || []).map((t) => String(t).toLowerCase());
+  if (tags.includes("placeholder")) return true;
+  const key = String(n.key || "");
+  const title = String(n.title || "");
+  if (key && isEmptyNodeDetail(n.detail) && (title === key || title === humanizeNodeKey(key))) {
+    return true;
+  }
+  return false;
+}
+
+export function graphNodeDisplayType(n: GraphTypeNode): string {
+  const t = n.type || "";
+  if (isPlaceholderGraphNode(n) && (t === "vuln" || t === "danger")) return "danger";
+  return t;
+}
+
+export function graphNodeDisplaySeverity(n: GraphTypeNode): string {
+  const sev = String(n.severity || "info").toLowerCase();
+  if (isPlaceholderGraphNode(n) && (n.type === "vuln" || n.type === "danger") && (sev === "high" || sev === "critical")) {
+    return "medium";
+  }
+  return n.severity || "info";
+}
 
 export function isGetshellNode(n: GraphTypeNode): boolean {
   if (n.type !== "goal") return false;
@@ -91,7 +139,8 @@ export function graphNodeTypeLabel(n: GraphTypeNode): string {
   // GETSHELL 与 RCE 同属一类
   if (isGetshellNode(n)) return "GETSHELL / RCE";
   if (n.type === "goal") return "目标成果";
-  return nodeTypeLabel[n.type || ""] || n.type || "";
+  const t = graphNodeDisplayType(n);
+  return nodeTypeLabel[t] || t || "";
 }
 
 export const severityLabel: Record<string, string> = {

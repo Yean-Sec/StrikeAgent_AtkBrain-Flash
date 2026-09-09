@@ -144,9 +144,19 @@ _INFO_DANGER_RE = re.compile(
     r"\bdebug\s*(?:port|panel|interface|endpoint))",
     re.I,
 )
+# 文件投递面：下载/附件/路径参数。不写某题路径或 payload。
+_FILE_DELIVERY_RE = re.compile(
+    r"\bdownload\b|\battachment\b|\breadfile\b|\bsendfile\b|\bsend_file\b|"
+    r"filepath|file_path|fileid|file_id|"
+    r"任意文件|文件下载|附件下载|路径穿越|path.?traversal|"
+    r"[?&](?:file|filename|filepath|path|doc|document|attachment)=|"
+    r"/(?:file|files|download|attach|attachment|export)(?:\.[a-z0-9]+)?",
+    re.I,
+)
 _SECRET_MOUNT_HINT = (
-    "浅层路径 404 不能否证带叶子的深层路径。无密钥基线先找 401/403（路存在），"
-    "再把同一密钥值用短名与字段名回挂。没见过 401/403 就不能写无挂载点。"
+    "浅层路径 404 不能否证带叶子的深层路径，也不等于无挂载点。"
+    "无密钥基线先找 401/403（路存在），再把同一密钥值用查询参数、请求头、Cookie、body 回挂。"
+    "没见过 401/403 就不能写无挂载点。字段名不等于查询参数名或头名。"
 )
 
 # 已验证洞停在「证明存在」不够：提危害常打出另一条独立高危。
@@ -181,13 +191,17 @@ _IMPACT_LADDER_DEFAULT_RT = (
 def _impact_escalate_intent(
     key: str, title: str, cat: str, *, sev: str, node: dict, obj: str | None,
 ) -> IntentIn | None:
-    from ..objective import FLAG, normalize_objective
+    from ..objective import FLAG, SRC, normalize_objective
     o = normalize_objective(obj)
     if o == FLAG:
         return None
     c = (cat or "").strip().lower()
-    ladder = _IMPACT_LADDER.get(c, _IMPACT_LADDER_DEFAULT_RT)
-    extra = "提权/横向只在已有立足点之后，不要为换路丢掉这条已验证洞。"
+    if o == SRC:
+        ladder = "把已确认漏洞打到高危影响（大量数据/命令执行/改价），不要停在存在性 PoC"
+        extra = "不要横向、不要为拿 shell 放弃未测类型；继续挖厂商清单下一类。"
+    else:
+        ladder = _IMPACT_LADDER.get(c, _IMPACT_LADDER_DEFAULT_RT)
+        extra = "提权/横向只在已有立足点之后，不要为换路丢掉这条已验证洞。"
     return _mk(
         key, "impact_escalate",
         f"提升已验证洞「{title}」的危害：{ladder}。"
@@ -735,6 +749,8 @@ def stale_tactics_for_node(node: dict, brief: str = "") -> list[str]:
     stale: list[str] = ["split_tier"]
     if ntype == "vuln" and _node_is_ssrf(blob, tags) and not _node_is_rce(node, blob, tags):
         stale.append("weaponize")
+    if ntype == "vuln" and looks_like_local_gate(blob, title):
+        stale.extend(["weaponize", "finding_rce_close", "flag_or_privesc"])
     if ntype == "credential" and looks_like_secret(blob, tags) and not looks_like_login_cred(blob, title):
         stale.extend(["auth_reuse", "priv_enum"])
     if ntype == "credential" and looks_like_local_gate(blob, title):
@@ -825,6 +841,11 @@ _OBJECT_STORE_SIDETRACK_RE = re.compile(
     r"方法矩阵|method[\s_-]*matrix|方法枚举|verb\s*enum",
     re.I,
 )
+
+
+def looks_like_file_delivery(blob: str, title: str = "", key: str = "") -> bool:
+    """信息点是否像文件/下载/附件投递面。不认某题路径。"""
+    return bool(_FILE_DELIVERY_RE.search(f"{key} {title} {blob}"))
 
 
 def live_surfaces_from_node(blob: str, tags: set[str]) -> list[str]:
@@ -919,6 +940,40 @@ def _surface_intents(key: str, title: str, node: dict, sev: str, surfaces: list[
     return out
 
 
+def _src_vendor_intents(
+    key: str, title: str, node: dict, sev: str, blob: str, tags: set[str],
+) -> list[IntentIn]:
+    """SRC：按这一节点的入口形态选类型，不预开 11 路。"""
+    from ..engine.src_surface import suggest_src_types
+    fake = {
+        "nodes": [{
+            "key": key, "type": "service", "title": title,
+            "detail": blob, "tags": sorted(tags),
+        }],
+    }
+    advice = suggest_src_types(fake)
+    seen_tac: set[str] = set()
+    out: list[IntentIn] = []
+    for p in advice.suggested:
+        if p.tactic in seen_tac:
+            continue
+        seen_tac.add(p.tactic)
+        out.append(_mk(
+            key, p.tactic,
+            f"围绕 {title} 按入口形态测{p.label}：{p.why}；没有对应面不要硬打其它厂商类型",
+            rationale=f"SRC 按面选类型，不是每轮全开；本节点命中 {p.label}",
+            est=0.7, severity=sev, boost=0.1, node=node,
+        ))
+    if not out:
+        out.append(_mk(
+            key, "access_control",
+            f"测试 {title} 的鉴权/越权/未授权访问（当前无注入/文件等分型）",
+            rationale="SRC HTTP 活体至少留一格打洞，优先越权",
+            est=0.66, severity=sev, node=node,
+        ))
+    return out
+
+
 def hypotheses_for_node(
     node: dict, allows_flag: bool = True, objective: str | None = None,
     brief: str = "",
@@ -927,7 +982,7 @@ def hypotheses_for_node(
 
     allows_flag=False（红队）时，派生话术不出现 flag/夺旗。
     """
-    from ..objective import REDTEAM, normalize_objective
+    from ..objective import REDTEAM, SRC, normalize_objective
     obj = normalize_objective(objective) if objective is not None else (
         "flag" if allows_flag else "redteam"
     )
@@ -944,7 +999,8 @@ def hypotheses_for_node(
     if ntype == "service":
         is_http = _service_is_http(blob, tags)
         out.append(_mk(key, "fingerprint", f"确认 {title} 的产品/版本指纹与已知漏洞面",
-                       rationale="服务发现后先定性技术栈，才能选对利用族", est=0.7, severity=sev, node=node))
+                       rationale="服务发现后先定性技术栈，才能选对利用族",
+                       est=0.48 if is_http else 0.7, severity=sev, node=node))
         if binary:
             out.append(_mk(
                 key, "reverse_binary",
@@ -963,9 +1019,13 @@ def hypotheses_for_node(
             out.extend([
                 _mk(key, "auth_surface",
                     f"枚举 {title} 的登录/鉴权/管理入口并测默认口令与弱鉴权{cred_sfx}",
-                    rationale="多数 Web 服务的高价值面在认证边界", est=0.62, severity=sev, node=node),
+                    rationale="多数 Web 服务的高价值面在认证边界", est=0.58, severity=sev, node=node),
+                _mk(key, "access_control",
+                    f"测试 {title} 的鉴权/越权/未授权访问",
+                    rationale="访问控制缺陷常比复杂 exploit 更快出成果",
+                    est=0.68, severity=sev, boost=0.08, node=node),
                 _mk(key, "content_enum", f"对 {title} 做目录与脚本文件枚举（先看入口已知路径与源码；禁止超 10 万行词表）",
-                    rationale="未链接脚本常无目录命中；无扩展名扫描不能当内容枚举完成", est=0.58, severity=sev, node=node),
+                    rationale="未链接脚本常无目录命中；无扩展名扫描不能当内容枚举完成", est=0.52, severity=sev, node=node),
             ])
             if _node_looks_like_gadget(blob, tags, title):
                 out.append(_mk(
@@ -979,9 +1039,12 @@ def hypotheses_for_node(
                                f"对 {title} 做 JSON-RPC 指纹与未授权方法探测，不要当网站做目录枚举",
                                rationale="JSON-RPC 的入口是方法表，不是目录与 SQLi",
                                est=0.72, severity=sev, boost=0.1, node=node))
+            elif obj == SRC:
+                out.extend(_src_vendor_intents(key, title, node, sev, blob, tags))
             else:
                 out.append(_mk(key, "web_inject", f"围绕 {title} 探测注入类漏洞（SQLi/SSTI/命令注入/反序列化）",
-                               rationale="Web 服务常见通往 RCE/读文件的入口族", est=0.55, severity=sev, boost=0.05, node=node))
+                               rationale="Web 服务常见通往 RCE/读文件的入口族",
+                               est=0.72, severity=sev, boost=0.12, node=node))
             if any(x in blob or x in tags for x in ("403", "waf", "拦截", "blocked", "forbidden", "filter")):
                 if not _gadget_skips_entry_filter(
                     blob, tags, title, is_ssrf=_node_is_ssrf(blob, tags),
@@ -1046,7 +1109,9 @@ def hypotheses_for_node(
                 rationale="白名单反序列化的下一事件是 gadget 搜索，不是停手",
                 est=0.7, severity=sev, boost=0.1, node=node,
             ))
-        if any(x in blob or x in tags for x in ("download", "read", "include", "path", "lfi", "穿越")):
+        if any(x in blob or x in tags for x in (
+            "download", "read", "include", "path", "lfi", "穿越",
+        )) and not _AUTHZ_HIT_RE.search(f"{title} {blob}"):
             _loot = "配置/源码/flag" if allows_flag else "配置/源码/凭证/敏感数据"
             _loot_r = "文件读可直接转凭证或 flag" if allows_flag else "文件读可直接转凭证或大量数据泄露"
             out.append(_mk(key, "file_read_chain", f"利用 {title} 尝试任意文件读并定位{_loot}",
@@ -1069,6 +1134,14 @@ def hypotheses_for_node(
                                "不要只改前端角色字段，也不要把令牌面写成已关闭",
                                rationale="持有令牌后下一事件是打校验类，不是关闭伪造面或只改 UI 角色",
                                est=0.76, severity=sev, boost=0.12, node=node))
+            elif looks_like_local_gate(blob, title):
+                out.append(_mk(
+                    key, "reverse_binary",
+                    f"把 {title} 当本地开门钥匙：校验通过后按本题已出现的运算取循环末态或真实出口，"
+                    "不要当成 Web RCE 去读文件/提权",
+                    rationale="本地二进制访问码的下一事件是反演/取末态，不是 HTTP 武器化",
+                    est=0.8, severity=sev, boost=0.16, node=node,
+                ))
             elif is_sqli:
                 out.append(_mk(key, "weaponize",
                                f"把 {title} 先打成应用控制流/回显（状态码/Cookie/跳转），再 dump 库/密钥；"
@@ -1088,11 +1161,16 @@ def hypotheses_for_node(
             ), sev=sev, node=node, obj=obj)
             if esc:
                 out.append(esc)
-        if is_rce:
-            _rce_desc = (f"基于 {title} 的执行能力搜 flag / 提权 / 横向" if allows_flag
-                         else f"基于 {title} 的执行能力做提权 / 横向 / 收数据库与大量数据")
-            out.append(_mk(key, "flag_or_privesc", _rce_desc,
-                           rationale="已有 RCE 时应优先收口而不是继续盲扫", est=0.8, severity="critical", boost=0.15, node=node))
+        if is_rce and not looks_like_local_gate(blob, title):
+            if obj == SRC:
+                out.append(_mk(key, "src_next_type",
+                               f"「{title}」命令执行已是高危证据：独立 report_finding 后挖厂商清单下一类，不要转后渗",
+                               rationale="SRC 不以 getshell 收工", est=0.8, severity="critical", boost=0.12, node=node))
+            else:
+                _rce_desc = (f"基于 {title} 的执行能力搜 flag / 提权 / 横向" if allows_flag
+                             else f"基于 {title} 的执行能力做提权 / 横向 / 收数据库与大量数据")
+                out.append(_mk(key, "flag_or_privesc", _rce_desc,
+                               rationale="已有 RCE 时应优先收口而不是继续盲扫", est=0.8, severity="critical", boost=0.15, node=node))
         if any(x in blob or x in tags for x in ("file_read", "lfi", "path", "read", "穿越", "include")):
             out.append(_mk(key, "read_to_creds", f"用 {title} 读取配置/密钥/会话并尝试登录复用",
                            rationale="文件读→凭证→更高权限是高胜率链路", est=0.75, severity=sev, boost=0.12, node=node))
@@ -1125,9 +1203,10 @@ def hypotheses_for_node(
                            est=0.74, severity=sev, boost=0.12, node=node))
             out.append(_mk(key, "secret_mount",
                            f"若 {title} 已读到配置/token：在被访问的那台服务上做有/无密钥路由差分"
-                           f"（查询参数；401/403=路存在）。JSON 字段名不等于参数名，短名 token/key/auth 都要试。"
+                           f"（查询参数、请求头、Cookie、body；401/403=路存在）。"
+                           f"JSON 字段名不等于参数名或头名，短名 token/key/auth 都要试。"
                            f"{_SECRET_MOUNT_HINT}",
-                           rationale="泄露密钥是开门钥匙；GET-only SSRF 仍可用查询参数携带",
+                           rationale="泄露密钥是开门钥匙；GET-only SSRF 仍可用查询参数或头携带",
                            est=0.83, severity=sev, boost=0.18, node=node))
 
     elif ntype == "credential":
@@ -1137,7 +1216,8 @@ def hypotheses_for_node(
         if secret_only:
             out.append(_mk(key, "secret_mount",
                            f"把 {title} 当开门钥匙：在同一服务上做有/无该密钥的路由差分，盯 401/403 而不是只看 200。"
-                           f"字段名不等于查询参数/头名；GET-only 通道用查询参数。{_SECRET_MOUNT_HINT}",
+                           f"字段名不等于查询参数/头名；查询参数、请求头、Cookie、body 都要试。"
+                           f"{_SECRET_MOUNT_HINT}",
                            rationale="机器令牌的第一事件是鉴权差分挂载，不是当战利品结束",
                            est=0.84, severity=sev, boost=0.18, node=node))
         else:
@@ -1188,19 +1268,24 @@ def hypotheses_for_node(
             ))
 
     elif ntype == "foothold":
-        out.extend([
-            _mk(key, "stabilize", f"巩固立足点 {title}：持久化通道、环境枚举、敏感文件",
-                rationale="立足后先稳住再扩权", est=0.7, severity=sev, boost=0.1, node=node),
-            _mk(key, "privesc_lateral", f"从 {title} 做本地提权与授权范围内横向/跳板",
-                rationale="foothold 的下一事件是提权或横向", est=0.68, severity=sev, boost=0.1, node=node),
-        ])
-        if allows_flag:
-            out.append(_mk(key, "flag_hunt", f"在 {title} 权限下定位并 report_flag",
-                           rationale="flag 赛道下立足点应立即转夺旗；未满分继续，满分由平台收工",
-                           est=0.74, severity=sev, boost=0.12, node=node))
+        if obj == SRC:
+            out.append(_mk(key, "src_next_type",
+                           f"立足点 {title} 只当高危证据，按厂商清单挖下一类，不要提权/横向",
+                           rationale="SRC 不转后渗", est=0.72, severity=sev, boost=0.1, node=node))
         else:
-            out.append(_mk(key, "flag_hunt", f"在 {title} 权限下确认 getshell（report_shell）并收工",
-                           rationale="红队立足后 report_shell 即收工，不夺旗", est=0.74, severity=sev, boost=0.12, node=node))
+            out.extend([
+                _mk(key, "stabilize", f"巩固立足点 {title}：持久化通道、环境枚举、敏感文件",
+                    rationale="立足后先稳住再扩权", est=0.7, severity=sev, boost=0.1, node=node),
+                _mk(key, "privesc_lateral", f"从 {title} 做本地提权与授权范围内横向/跳板",
+                    rationale="foothold 的下一事件是提权或横向", est=0.68, severity=sev, boost=0.1, node=node),
+            ])
+            if allows_flag:
+                out.append(_mk(key, "flag_hunt", f"在 {title} 权限下定位并 report_flag",
+                               rationale="flag 赛道下立足点应立即转夺旗；未满分继续，满分由平台收工",
+                               est=0.74, severity=sev, boost=0.12, node=node))
+            else:
+                out.append(_mk(key, "flag_hunt", f"在 {title} 权限下确认 getshell（report_shell）并收工",
+                               rationale="红队立足后 report_shell 即收工，不夺旗", est=0.74, severity=sev, boost=0.12, node=node))
 
     elif ntype == "info":
         # 假穷尽/过程笔记/表单字段清单不是资产：再派生换凭证或挂密钥会把图带歪。
@@ -1222,6 +1307,18 @@ def hypotheses_for_node(
             return out
         if is_negative_conclusion(blob, title) or is_non_asset_info(blob, title):
             return out
+        if (
+            looks_like_file_delivery(blob, title, key)
+            and not looks_like_served_binary(blob, title, brief)
+            and not _AUTHZ_HIT_RE.search(f"{title} {blob}")
+        ):
+            _loot = "配置/源码/flag" if allows_flag else "配置/源码/凭证/敏感数据"
+            out.append(_mk(
+                key, "file_read_chain",
+                f"对 {title} 的文件/下载参数做路径与对象差分，尝试任意文件读并定位{_loot}",
+                rationale="下载/附件/文件路径参数是文件读面，不要停在状态码或回头打登录表单",
+                est=0.72, severity=sev, boost=0.12, node=node,
+            ))
         if looks_like_secret(blob, tags):
             out.append(_mk(key, "secret_mount",
                            f"把信息点 {title} 里的密钥当开门钥匙：同一服务有/无密钥路由差分，401/403=路存在。"
@@ -1255,6 +1352,15 @@ def hypotheses_for_finding(finding: Any, node: dict, allows_flag: bool = True,
     fblob = f"{title} {desc} {evid} {cat} {_blob(node)}".lower()
     out: list[IntentIn] = []
 
+    if looks_like_local_gate(fblob, str(title or "")):
+        out.append(_mk(
+            key, "reverse_binary",
+            f"把发现「{title}」当本地开门钥匙：校验通过后取循环末态或真实出口，不要推进到读文件/提权",
+            rationale="本地访问码不是 Web RCE finding",
+            est=0.8, severity=sev, boost=0.16, evidence_extra=cat, node=node,
+        ))
+        return out
+
     if cat in ("file_read", "lfi", "arbitrary_file_read"):
         _loot = "配置/源码/flag" if allows_flag else "配置/源码/凭证/大量敏感数据"
         out.append(_mk(key, "finding_read_loot", f"利用文件读发现「{title}」提取{_loot}",
@@ -1276,6 +1382,9 @@ def hypotheses_for_finding(finding: Any, node: dict, allows_flag: bool = True,
         if allows_flag:
             _rce = "落地 shell/webshell 并夺旗或提权"
             _why = "执行类 finding 优先收口"
+        elif obj == "src":
+            _rce = "作为高危证据独立上报后继续挖厂商清单下一类，不要转后渗"
+            _why = "SRC 不以 getshell 收工"
         else:
             _rce = "落地 shell/webshell 并提权/横向/收数据"
             _why = "执行类 finding 优先收口"
@@ -1293,8 +1402,8 @@ def hypotheses_for_finding(finding: Any, node: dict, allows_flag: bool = True,
                        evidence_extra=cat, node=node))
         out.append(_mk(key, "secret_mount",
                        f"若 SSRF「{title}」已读到 token/配置：在被访问服务上做有/无密钥路由差分"
-                       f"（查询参数；401/403=路存在）。{_SECRET_MOUNT_HINT}",
-                       rationale="泄露密钥是钥匙；GET-only 通道仍可用查询参数",
+                       f"（查询参数、请求头、Cookie、body；401/403=路存在）。{_SECRET_MOUNT_HINT}",
+                       rationale="泄露密钥是钥匙；GET-only 通道仍可用查询参数或头",
                        est=0.84, severity=sev, boost=0.18, evidence_extra=cat, node=node))
     elif cat in ("jwt", "token", "signed_token", "jws"):
         out.append(_mk(key, "weaponize",

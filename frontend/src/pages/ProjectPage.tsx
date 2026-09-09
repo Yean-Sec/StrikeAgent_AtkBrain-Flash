@@ -322,7 +322,8 @@ export function ProjectPage() {
   }
 
   const isFlag = project.config?.objective === "flag" || project.config?.track === "ctf";
-  const visibleFindings = collectVulns(graph.findings, graph.nodes);
+  const isSrc = project.config?.objective === "src" || project.config?.track === "src";
+  const visibleFindings = collectVulns(graph.findings, graph.nodes, { src: isSrc });
   const visibleHigh = visibleFindings.filter(
     (f) => displayFindingSeverity(f) === "high",
   ).length;
@@ -365,10 +366,14 @@ export function ProjectPage() {
                   : flagsCorrect > 0
                     ? <span className="badge" style={{ fontSize: 13 }}>{ctfProgress} 未满分</span>
                     : null
+              ) : isSrc ? (
+                (visibleHigh + visibleCritical) > 0
+                  ? <span className="badge" style={{ fontSize: 13 }}>已验证高危 {visibleHigh + visibleCritical}</span>
+                  : null
               ) : (
                 graph.stats.has_shell && <span className="badge badge-coral" style={{ fontSize: 13 }}>GETSHELL 已达成</span>
               )}
-              {graph.stats.lateral_active && (
+              {!isSrc && graph.stats.lateral_active && (
                 <span className="badge" style={{ fontSize: 13, background: "rgba(109,92,240,0.14)", color: "#4a3fb0", border: "1px solid #6d5cf0" }}>
                   内网横向{graph.stats.hosts_footed ? ` · ${graph.stats.hosts_footed} 台` : ""}
                 </span>
@@ -380,7 +385,7 @@ export function ProjectPage() {
                 <span className="pulse-dot" style={{ background: statusColor[shownStatus] || colors.muted }} />
                 <span className="muted" style={{ fontSize: 13 }}>{statusLabel[shownStatus] || shownStatus}</span>
                 {queued ? (
-                  <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="已启动，等待本赛道（红队或 CTF）并发槽空出后才会真正开跑">等并发槽</span>
+                  <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="已启动，等待本赛道（红队/SRC 或 CTF）并发槽空出后才会真正开跑">等并发槽</span>
                 ) : null}
                 {stopReason === "entry_dead" ? (
                   <span className="badge" style={{ background: "rgba(217,190,132,0.16)", color: "#d9be84", borderColor: "rgba(217,190,132,0.35)" }} title="入口连续不可达；站点恢复后可再启动">入口不可达</span>
@@ -392,6 +397,10 @@ export function ProjectPage() {
               {isFlag ? (
                 <span className="muted" style={{ fontSize: 13 }} title="CTF 只看正确 flag 收工">
                   正确 flag <b style={{ color: colors.primary }}>{flagsCorrect}/{needed}</b>
+                </span>
+              ) : isSrc ? (
+                <span className="muted" style={{ fontSize: 13 }} title="SRC 看已验证高危/严重，单条不停工">
+                  高危/严重 <b style={{ color: colors.primary }}>{visibleHigh + visibleCritical}</b>
                 </span>
               ) : null}
               <span
@@ -429,7 +438,7 @@ export function ProjectPage() {
         </div>
         <div className="card-cream project-side-pane">
           <div className="tabs project-side-tabs">
-            {([["timeline", "时间线"], ["findings", `漏洞 ${visibleFindings.length || ""}`], ["services", `发现的服务 ${serviceCount || ""}`], ["memory", "自进化"], ["supervisor", `自循环 ${supervisorCount || ""}`]] as const).map(([k, label]) => (
+            {([["timeline", "时间线"], ["findings", `漏洞 ${visibleFindings.length || ""}`], ["services", `发现的服务 ${serviceCount || ""}`], ["memory", "自进化"], ["supervisor", `自监督 ${supervisorCount || ""}`]] as const).map(([k, label]) => (
               <div key={k} className={`tab ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>{label}</div>
             ))}
           </div>
@@ -446,6 +455,7 @@ export function ProjectPage() {
                 findings={graph.findings}
                 nodes={graph.nodes}
                 onSelectNode={onSelect}
+                src={isSrc}
               />
             )}
             {tab === "services" && <ServicesPanel graph={graph} onSelect={onSelect} />}

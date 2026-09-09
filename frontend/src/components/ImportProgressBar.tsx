@@ -8,10 +8,15 @@ export type ImportProgress = {
   message?: string;
   importing?: boolean;
   stale?: boolean;
+  group_count?: number;
+  hosts?: number;
+  policy?: string;
+  groups?: { primary: string; zone?: string; vhosts?: string[]; ports?: number[] }[];
 };
 
 const PHASE_LABEL: Record<string, string> = {
   parse: "解析资产",
+  merge: "合并资产",
   spawn: "创建子项目",
   start: "排队启动",
   done: "导入完成",
@@ -23,7 +28,7 @@ const PHASE_LABEL: Record<string, string> = {
 export function isImportRunning(p?: ImportProgress | null): boolean {
   const phase = (p?.phase || "").toLowerCase();
   if (!p || p.stale) return false;
-  return phase === "parse" || phase === "spawn" || phase === "start";
+  return phase === "parse" || phase === "merge" || phase === "spawn" || phase === "start";
 }
 
 export function isImportPaused(p?: ImportProgress | null): boolean {
@@ -71,7 +76,30 @@ export function ImportProgressBar({
         {progress.message || (progress.current ? `当前 ${progress.current}` : "请稍候，正在写入子项目…")}
         {typeof progress.created === "number" && progress.created > 0 ? ` · 已建 ${progress.created}` : ""}
         {typeof progress.started === "number" && progress.started > 0 ? ` · 已启动 ${progress.started}` : ""}
+        {typeof progress.group_count === "number" && progress.group_count > 0
+          ? ` · ${progress.policy === "product_zone" ? "产品域" : "同机"} ${progress.group_count} 组`
+          : ""}
       </div>
+      {Array.isArray(progress.groups) && progress.groups.length > 0 && (
+        <ul style={{ margin: "8px 0 0", paddingLeft: 18, maxHeight: 160, overflow: "auto", fontSize: 12 }}>
+          {progress.groups.slice(0, 12).map((g) => {
+            const n = g.vhosts?.length || 1;
+            const active = progress.current === g.primary;
+            return (
+              <li key={g.primary} style={{ marginBottom: 2, fontWeight: active ? 600 : 400 }}>
+                {g.primary}
+                {g.zone ? ` · ${g.zone}` : ""}
+                {n > 1 ? ` · ${n} 域` : ""}
+                {g.ports?.length ? ` · ${g.ports.join(",")}` : ""}
+                {active ? " ←" : ""}
+              </li>
+            );
+          })}
+          {progress.groups.length > 12 && (
+            <li className="muted">另有 {progress.groups.length - 12} 组…</li>
+          )}
+        </ul>
+      )}
       {(onPause || onResume) && (running || paused) && (
         <div className="import-progress-actions">
           {running && onPause && (

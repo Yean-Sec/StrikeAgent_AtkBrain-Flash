@@ -25,14 +25,14 @@ description: >
 
 1. **端口**：`timeout 60 /usr/bin/nmap -sV -T4 -Pn --top-ports 100 --open <host>`（`run_cmd` `timeout=60`）
 2. **目录**：小档 ffuf，`/usr/share/wordlists/dirb/common.txt`，`timeout=90`
-3. **HTTP 指纹 + WAF**：whatweb、wafw00f
+3. **HTTP 指纹 + WAF**：whatweb、wafw00f。已识别产品/版本立刻 WebSearch 查 CVE/N-day，公告页用 `http_request` 拉取。
 4. **HTTP 入口面**：https/http、robots、sitemap、security.txt
 5. **DNS 记录**：系统解析器，不要钉死 `8.8.8.8`
 6. **JS 接口**（已确认 HTTP）：调用 skill `kali-kit` 取 `JSFinder.py` 绝对路径
 
 禁止第 1 圈：中档目录、top-1000、`-p-`、gobuster vhost 当攻击、扫兄弟站、hydra/sqlmap。
 
-入口已确认时 `web-exploit` 与第 1 圈 recon **同时** 开。新端口/路径至少测→证一轮。
+入口已确认时 `web-exploit` 与第 1 圈 recon **同一回合 Agent/Task 并行** 开（必须带 `subagent_type`）。禁止先写完一圈 info 再打洞，禁止省略类型的通用 Agent。新端口/路径至少测→证一轮。静态 SPA / 同源 API=0 不是无攻击面。
 
 ## 第 2 圈（中 · 允许圈=2 后做满）
 

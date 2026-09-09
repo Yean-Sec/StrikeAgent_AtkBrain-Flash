@@ -15,9 +15,6 @@ HUNT_FAILED_REASONS = frozenset({
 
 def uses_ctf_hunt_clocks(objective: str | None = None) -> bool:
     """图空转只给 CTF（含评测子题）。墙钟红队与 CTF 各自有上限。CTF 不限轮次、不审查。"""
-    raw = str(objective or "").strip().lower()
-    if raw in ("src", "lab_src"):
-        return False
     from .objective import FLAG, normalize_objective
     return normalize_objective(objective) == FLAG
 
@@ -64,10 +61,16 @@ def ctf_pass_index(*, ended_real_attempts: int = 0) -> int:
 
 
 def hunt_runtime_hard_stop_sec(objective: str | None = None, *, pass_n: int | None = None) -> int:
-    """本猎墙钟硬上限（秒）。CTF 按遍次；红队 4 小时；0 表示不限。"""
+    """本猎墙钟硬上限（秒）。CTF 按遍次；SRC 180 分钟；红队 4 小时；0 表示不限。"""
     from .config import settings
+    from .objective import objective_is_src
     if uses_ctf_hunt_clocks(objective):
         return ctf_pass_hard_stop_sec(pass_n)
+    if objective_is_src(objective):
+        try:
+            return max(0, int(getattr(settings, "src_runtime_hard_stop_sec", 3 * 60 * 60) or 0))
+        except (TypeError, ValueError):
+            return 3 * 60 * 60
     try:
         return max(0, int(getattr(settings, "redteam_runtime_hard_stop_sec", 4 * 60 * 60) or 0))
     except (TypeError, ValueError):
@@ -77,9 +80,9 @@ def hunt_runtime_hard_stop_sec(objective: str | None = None, *, pass_n: int | No
 def hunt_max_turns(objective: str | None = None, *, is_benchmark: bool = False) -> int:
     """本猎最大编排轮次。0=不限。CTF（含评测）不限；SRC 30；红队不限。"""
     from .config import settings
+    from .objective import objective_is_src
     del is_benchmark
-    raw = str(objective or "").strip().lower()
-    if raw in ("src", "lab_src"):
+    if objective_is_src(objective):
         try:
             return max(0, int(getattr(settings, "loop_max_turns_src", 30) or 30))
         except (TypeError, ValueError):

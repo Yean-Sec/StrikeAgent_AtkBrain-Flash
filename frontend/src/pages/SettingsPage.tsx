@@ -17,9 +17,9 @@ export function SettingsPage() {
       <div className="settings-grid">
         <section className="card-cream">
           <h3>运行并发</h3>
-          <p className="muted">红队默认 5 个项目、CTF 默认 3 个，两道都可调到 20，互不占槽。每项目 2 个编排会话（从者 + 御主），默认合计 16 路。从者派出的子智能体不设上限。</p>
+          <p className="muted">红队/SRC 默认 5 个项目、CTF 默认 3 个，两道都可调到 20，互不占槽。每项目 2 个编排会话（从者 + 御主），默认合计 16 路。从者派出的子智能体不设上限。</p>
           <dl className="settings-list">
-            <dt>红队项目并发</dt><dd>{settings?.concurrency?.redteam?.active ?? 0}/{settings?.concurrency?.redteam?.limit ?? "-"}</dd>
+            <dt>红队/SRC 项目并发</dt><dd>{settings?.concurrency?.redteam?.active ?? 0}/{settings?.concurrency?.redteam?.limit ?? "-"}</dd>
             <dt>CTF 项目并发</dt><dd>{settings?.concurrency?.ctf?.active ?? 0}/{settings?.concurrency?.ctf?.limit ?? "-"}</dd>
             <dt>Agent 会话合计</dt><dd>{settings?.concurrency?.claude?.active ?? 0}/{settings?.concurrency?.claude?.limit ?? "-"}</dd>
             <dt>模型</dt><dd className="mono">{defaults.model || "-"}</dd>

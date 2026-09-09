@@ -25,13 +25,16 @@ from ..objective import (
     DATA_ACCESS_CATEGORIES,
     KEY_LEAK_CATEGORIES,
     REDTEAM,
+    SRC,
     awarded_sum,
     ctf_full_score,
     normalize_objective,
     objective_allows_flag,
+    objective_is_src,
+    src_impact_proven,
 )
 from .. import benchmark as bm
-from ..scope import unauthorized_peer_endpoint, unauthorized_private_host
+from ..scope import unauthorized_peer_endpoint, unauthorized_private_host, private_out_of_scope_hint
 from .context import AgentContext
 
 SERVER_NAME = "atkbrain"
@@ -95,11 +98,11 @@ def _text(s: str, is_error: bool = False) -> dict:
 
 FULL_SCORE_HALT = "本题已满分，立即收工换题。不要再调用任何工具。"
 GOAL_REACHED_HALT = "本项目已达成终极目标，立即收工。不要再调用任何工具。"
-MUST_DISPROVE_REFUSE = "绑定未完成，不能否证顾问 must Intent。"
+MUST_DISPROVE_REFUSE = "局面战术未关闭，不能在无证据时否证该 Intent。"
 
 
 def refuse_disprove_bound_must(ctx, intent_id, verified) -> str | None:
-    """顾问 must Intent 仍在绑定时，御主不得写成否证。"""
+    """局面战术（换通道/收口）在无证据时不可否证；参考假说可以否证。"""
     if verified:
         return None
     bound = getattr(ctx, "bound_must_intents", None) or ()
@@ -172,15 +175,16 @@ def _host_already_authorized(ctx: AgentContext, host: str) -> bool:
 
 
 def _attacker_identity_reason(host: str) -> str | None:
-    """本机网卡 / 物机网关：禁止当目标、立足点或内网资产。"""
+    """本机网卡 / 物机网关 / 回环：禁止当目标、立足点或内网资产。"""
     h = _norm_host(host)
     if not h:
         return None
     try:
-        from ..config import settings
-        from ..scope import is_attacker_identity
+        from ..scope import is_attacker_identity, is_loopback
+        if is_loopback(h):
+            return f"host={h} 是回环，不能作为立足点。"
         if is_attacker_identity(h):
-            return f"host={h} 不能作为立足点。"
+            return f"host={h} 是本机网卡或物机网关，不能作为立足点。"
     except Exception:
         pass
     return None
@@ -246,11 +250,11 @@ async def _land_shell(
     """report_shell 与工具输出自动落图共用。"""
     ctx.shell_evidence = evidence or ""
     ctx.shell_access = access or ""
-    is_goal = ctx.objective in ("getshell", "redteam")
+    is_goal = normalize_objective(ctx.objective) == REDTEAM
     primary = _primary_host(ctx)
     host = _norm_host(host or "") or primary
     from ..config import settings
-    from ..scope import is_platform_endpoint, local_self_hosts
+    from ..scope import is_internal_tld, is_loopback, is_platform_endpoint, is_private, is_single_label, local_self_hosts
     blocked = _attacker_identity_reason(host)
     if blocked:
         return _text(f"拒绝：{blocked}", is_error=True)
@@ -262,13 +266,23 @@ async def _land_shell(
         return _text(f"拒绝：host={host} 为本机控制台，不能作为立足点。", is_error=True)
     ctx.active_host = host
     is_new_host = bool(host) and not _host_already_authorized(ctx, host)
+    if is_new_host and (
+        is_private(host) or is_single_label(host) or is_internal_tld(host)
+    ) and not is_loopback(host):
+        if not await gstore.has_verified_internal_vantage(ctx.project_id):
+            return _text(
+                "⛔ 拒绝凭空登记内网主机：尚未在授权目标上拿到立足点"
+                "（verified shell 或已核实 SSRF）。"
+                "从攻击机扫到的邻居/物机不是目标内网。",
+                is_error=True,
+            )
     base_key = "goal:shell" if is_goal else "foothold:shell"
     gkey = f"{base_key}@{host}" if is_new_host else base_key
 
     tags = (["getshell", "rce"] if is_goal else ["foothold", "rce"])
     if host:
         tags.append(f"host:{host}")
-    if is_new_host:
+    if is_new_host and not objective_is_src(ctx.objective):
         tags += ["lateral", "pivot"]
 
     title_host = f" @ {host}" if is_new_host else ""
@@ -311,6 +325,23 @@ async def _land_shell(
     _append_shell_asset(ctx, host=host or "target", access=ctx.shell_access,
                         evidence=ctx.shell_evidence, channel=channel,
                         reconnect=reconnect)
+    if objective_is_src(ctx.objective):
+        ctx.postex_phase = ""
+        await emit(ctx.project_id, "shell",
+                   {"access": ctx.shell_access, "evidence": ctx.shell_evidence[:2000],
+                    "node_key": gkey, "host": host,
+                    "proof_canary": proof_canary, "proof_url": proof_url},
+                   run_id=ctx.run_id)
+        _schedule_milestone(
+            ctx, "high_critical_finding",
+            title=f"命令执行 ({ctx.shell_access or 'access'})".strip(),
+            category="rce", node_key=gkey,
+            evidence=(ctx.shell_evidence or "")[:400],
+        )
+        return _text(
+            "✅ 已验证命令执行（高危）。SRC 不转后渗、不打内网横向。"
+            "请独立 report_finding 后按厂商清单挖下一类。"
+        )
     ctx.postex_phase = "active"
     await emit(ctx.project_id, "shell",
                {"access": ctx.shell_access, "evidence": ctx.shell_evidence[:2000],
@@ -547,8 +578,8 @@ async def _touch_http_service(ctx: AgentContext, url: str, res: dict | None) -> 
         title = server or f"HTTP {port}"
         tags = ["http", f"port:{port}", f"host:{host}", "auto"]
         try:
-            from ..objective import REDTEAM, normalize_objective
-            if normalize_objective(ctx.objective) == REDTEAM:
+            from ..objective import REDTEAM, SRC, normalize_objective
+            if normalize_objective(ctx.objective) in (REDTEAM, SRC):
                 tags.append("tier:app")
         except Exception:
             pass
@@ -844,13 +875,20 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         ntype = args.get("type", "info")
         tags = args.get("tags", []) or []
         from ..graph.model import agent_goal_reserved_error, coerce_declared_node_type, infer_node_type_from_key
-        from ..graph.model import SEVERITY_ORDER
+        from ..graph.model import SEVERITY_ORDER, is_placeholder_node
         ntype = coerce_declared_node_type(args["key"], ntype, tags)
         reserved = agent_goal_reserved_error(args["key"], ntype, tags)
         if reserved:
             return _text(f"⛔ {reserved}", is_error=True)
         sev = args.get("severity", "info") or "info"
-        if (
+        stub = is_placeholder_node(args["key"], args.get("title"), args.get("detail"), tags)
+        if stub and infer_node_type_from_key(args["key"]) == "vuln":
+            ntype = "danger"
+            if "placeholder" not in {str(t).lower() for t in tags}:
+                tags = list(tags) + ["placeholder"]
+            if SEVERITY_ORDER.get(str(sev), 0) > SEVERITY_ORDER["medium"]:
+                sev = "medium"
+        elif (
             ntype == "vuln"
             and infer_node_type_from_key(args["key"]) == "vuln"
             and SEVERITY_ORDER.get(str(sev), 0) < SEVERITY_ORDER["high"]
@@ -878,8 +916,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                         "message": f"越界拦截：节点 {args['key']} 触碰非授权主机 {hit}，未写入攻击图。"},
                        run_id=ctx.run_id)
             return _text(
-                f"⛔ 越界主机 {hit}：不在授权域名/IP 身份内，节点未记录。"
-                f"（本题入口端口可以换路径；邻题端口即使同 IP 也越界。）",
+                f"⛔ 越界主机 {hit}：尚未写入 Scope。"
+                + private_out_of_scope_hint(),
                 is_error=True,
             )
         confirmed_shell = (
@@ -926,7 +964,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                             "message": f"越界拦截：PIVOTS_TO 触碰非授权主机 {oos}，未写入边。"},
                            run_id=ctx.run_id)
                 return _text(
-                    f"⛔ 越界：横向目标 {oos} 不在授权 Scope 内，边未记录。",
+                    f"⛔ 越界：横向目标 {oos} 不在授权 Scope 内，边未记录。"
+                    + private_out_of_scope_hint(),
                     is_error=True,
                 )
             if not await gstore.is_verified_lateral_pivot(ctx.project_id, args["from"], args["to"]):
@@ -1028,16 +1067,22 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         )
         row = await gstore.add_finding(ctx.project_id, f, run_id=ctx.run_id)
         nk = str(args.get("node_key") or "").strip()
+        obj = normalize_objective(ctx.objective)
+        src_clue = obj == SRC and (
+            (isinstance(row, dict) and row.get("verify_reason") == "src_impact_not_proven")
+            or not src_impact_proven(f)
+        )
         if nk:
             from ..graph.model import infer_node_type_from_key
             inferred = infer_node_type_from_key(nk)
             if inferred in ("vuln", "danger", "foothold"):
+                ntype = "vuln" if inferred in ("vuln", "danger") else inferred
                 await gstore.fill_source_node(
                     ctx.project_id, nk,
                     title=str(args.get("title") or ""),
                     detail=str(args.get("evidence") or args.get("description") or ""),
                     severity=str(args.get("severity") or ""),
-                    ntype="vuln" if inferred in ("vuln", "danger") else inferred,
+                    ntype=ntype,
                     run_id=ctx.run_id,
                 )
         cat = (f.category or "").lower()
@@ -1063,11 +1108,18 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         if rt:
             extra.append(f"红队评级 {rt}")
         tail = "；".join(extra)
-        rt_note = " 红队请继续推进直至 report_shell。" if normalize_objective(ctx.objective) == REDTEAM else ""
+        rt_note = ""
+        if obj == REDTEAM:
+            rt_note = " 红队请继续推进直至 report_shell。"
+        elif obj == SRC:
+            if src_clue:
+                rt_note = " 已进漏洞页。当前证据偏业务报错，不能评高危；打出非空业务数据或领取/兑换/拖库/RCE 后再升评级。"
+            else:
+                rt_note = " 已进漏洞页。不要停在这一条，继续按厂商清单挖。"
         if isinstance(row, dict):
             try:
                 from ..memory.evolve import finding_qualifies_for_evolve
-                if finding_qualifies_for_evolve(row):
+                if finding_qualifies_for_evolve(row) and not src_clue:
                     _schedule_milestone(
                         ctx, "high_critical_finding",
                         title=str(f.title or "")[:120],
@@ -1142,6 +1194,11 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         evidence = args.get("evidence") or ""
         if not from_host or not to_host or not mechanism or not evidence:
             return _text("参数不足：from_host / to_host_or_ip / mechanism / evidence 均必填。", is_error=True)
+        if objective_is_src(ctx.objective):
+            return _text(
+                "⛔ SRC 赛道不打内网横向：不要 report_pivot_capability。命令执行只当高危证据，继续挖下一类。",
+                is_error=True,
+            )
         blocked = _attacker_identity_reason(to_host)
         if blocked:
             return _text(f"拒绝：{blocked}", is_error=True)
@@ -1228,7 +1285,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
     async def report_flag(args: dict) -> dict:
         if not objective_allows_flag(ctx.objective):
             return _text(
-                "本项目为红队赛道，不夺旗。请用 report_shell / report_finding 上报。",
+                "本项目为红队/SRC 赛道，不夺旗。请用 report_shell / report_finding 上报。",
                 is_error=True,
             )
         flag = (args.get("flag") or "").strip()
@@ -1359,6 +1416,84 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         return _text(
             f"flag 已记录且得分。未齐，继续夺取剩余 flag（{ctx.flags_correct}/{ctx.flags_needed}）。"
         )
+
+    @tool(
+        "request_hint",
+        "向评测平台拉取本题提示。每次成功调用都会扣分；开局禁止。先打入口活体和题面功能，"
+        "实在做不出来再用。已拉取过会返回缓存，不再请求、不再扣分。",
+        {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "为何卡住（已试过什么）。可选，便于时间线记录。",
+                },
+            },
+        },
+    )
+    async def request_hint(args: dict) -> dict:
+        halted = halt_if_full_score(ctx)
+        if halted:
+            return halted
+        if not objective_allows_flag(ctx.objective):
+            return _text("本项目不是 CTF 赛道，没有评测提示接口。", is_error=True)
+        if not ctx.project:
+            return _text("当前会话没有绑定项目，无法拉取平台提示。", is_error=True)
+        res = await bm.fetch_hint(ctx.project)
+        if res.get("error"):
+            return _text(
+                f"拉取提示失败[{res.get('error')}]：{res.get('message') or '未知错误'}",
+                is_error=True,
+            )
+        hint = str(res.get("hint") or "").strip()
+        if not hint:
+            return _text("平台未返回提示正文。", is_error=True)
+        reason = str((args or {}).get("reason") or "").strip()
+        if res.get("local"):
+            msg = (
+                "本题没有评测扣分接口；以下是题面/操作员提示（未向平台扣分）：\n"
+                f"{hint}"
+            )
+        elif res.get("cached"):
+            msg = (
+                "此前已查看过平台提示（当时已扣分），本次返回缓存，没有再次请求。\n"
+                f"{hint}"
+            )
+        else:
+            extra = ""
+            for key in ("cost", "penalty", "score_cost", "deduct"):
+                if res.get(key) is not None:
+                    extra = f"（平台返回扣分={res[key]}）"
+                    break
+            msg = (
+                f"本次查看平台提示会扣分{extra}。后续同一提示走缓存，不要重复调用。\n"
+                f"{hint}"
+            )
+        try:
+            await emit(
+                ctx.project_id,
+                "log",
+                {
+                    "level": "warn",
+                    "message": (
+                        "已查看平台提示（扣分）"
+                        if not res.get("local") and not res.get("cached")
+                        else (
+                            "已使用本地题面提示（未扣分）"
+                            if res.get("local")
+                            else "复用已查看的平台提示缓存（未再扣分）"
+                        )
+                    )
+                    + (f"：{reason[:120]}" if reason else ""),
+                },
+                run_id=ctx.run_id,
+            )
+        except Exception:
+            pass
+        if ctx.benchmark is not None and isinstance(ctx.benchmark, dict):
+            ctx.benchmark["hint_fetched"] = True
+            ctx.benchmark["hint"] = hint
+        return _text(msg)
 
     @tool(
         "propose_intents",
@@ -1526,6 +1661,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
     ]
     if objective_allows_flag(ctx.objective):
         tools.insert(6, report_flag)
+        tools.insert(7, request_hint)
     return tools
 
 
@@ -1540,5 +1676,6 @@ def tool_names(objective: str | None = None) -> list[str]:
     # 仅 flag 赛道声明 report_flag。覆盖账本 CTF 与红队都用。
     if objective is None or objective_allows_flag(objective):
         names.insert(6, "report_flag")
+        names.insert(7, "request_hint")
     names.append("note_scan_coverage")
     return [f"mcp__{SERVER_NAME}__{n}" for n in names]

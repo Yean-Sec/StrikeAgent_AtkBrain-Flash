@@ -94,10 +94,16 @@ class CreateProjectReq(BaseModel):
     mode: str = "strict"
     model: str | None = None
     assets: list[str] | None = None
-    track: str | None = None             # 赛道：redteam | ctf
-    objective: str = "getshell"          # 目标类型：redteam(旧值 getshell) | flag
+    track: str | None = None             # 赛道：redteam | ctf | src
+    objective: str = "getshell"          # 目标类型：redteam(旧值 getshell) | flag | src
     base_url: str | None = None          # benchmark 平台基址
     token: str | None = None             # BENCHMARK_TOKEN
+
+
+class PreviewAssetsReq(BaseModel):
+    assets: list[str] | str | None = None
+    track: str | None = None
+    objective: str | None = None
 
 
 class SteerReq(BaseModel):
@@ -266,18 +272,15 @@ async def api_list_projects():
 
 def _resolve_track_objective(track: str | None, objective: str | None) -> tuple[str, str]:
     """把二级赛道 track（优先）与旧字段 objective 归一为 (track, objective)。
-    track ∈ {redteam, ctf}；src 旧值按红队处理。objective ∈ {redteam, flag}。
+    track ∈ {redteam, ctf, src}；objective ∈ {redteam, flag, src}。
     """
-    from ..objective import FLAG, normalize_objective
     t = (track or "").strip().lower()
     o = (objective or "").strip().lower()
     if o == "getshell":
         o = "redteam"
-    if t == "src":
-        t = "redteam"
-    if t not in ("redteam", "ctf"):
-        t = "ctf" if normalize_objective(o) == FLAG else "redteam"
-    obj = "flag" if t == "ctf" else "redteam"
+    if t not in ("redteam", "ctf", "src"):
+        t = {"flag": "ctf", "src": "src"}.get(o, "redteam")
+    obj = {"redteam": "redteam", "ctf": "flag", "src": "src"}[t]
     return t, obj
 
 
@@ -295,11 +298,19 @@ async def api_create_project(req: CreateProjectReq):
             cfg["track"] = "ctf"
             cfg["objective"] = "flag"
             proj = await create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
+        elif req.kind == "cluster" and track == "src" and req.base_url and req.token:
+            cfg["track"] = "src"
+            cfg["objective"] = "src"
+            proj = await create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
         elif req.kind == "benchmark":
             if not req.base_url or not req.token:
                 raise HTTPException(400, "评测项目需要提供 base_url 与 token")
-            cfg["track"] = "ctf"
-            cfg["objective"] = "flag"
+            if track == "src":
+                cfg["track"] = "src"
+                cfg["objective"] = "src"
+            else:
+                cfg["track"] = "ctf"
+                cfg["objective"] = "flag"
             proj = await create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
         elif req.kind == "cluster":
             if not req.assets:
@@ -323,6 +334,15 @@ async def api_create_project(req: CreateProjectReq):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     return proj
+
+
+@router.post("/projects/assets/preview")
+async def api_preview_assets(req: PreviewAssetsReq):
+    """集群导入前预览分组：SRC=产品域，红队=同机。不做 DNS。"""
+    assets = req.assets
+    if assets is None:
+        raise HTTPException(400, "需要提供资产列表 assets")
+    return cluster_mod.preview_asset_groups(assets, track=req.track, objective=req.objective)
 
 
 @router.get("/projects/{pid}")

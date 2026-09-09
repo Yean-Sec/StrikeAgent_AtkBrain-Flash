@@ -6,7 +6,7 @@ import re
 import socket
 
 from .db import db, new_id, now, _dumps, _loads
-from .objective import FLAG, REDTEAM, normalize_objective
+from .objective import FLAG, REDTEAM, SRC, normalize_objective
 from .scope import Scope, forbidden_project_target_reason, is_loopback, is_private
 
 _IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
@@ -59,7 +59,7 @@ def _filter_scope_ips(host: str, ips: set[str], objective: str | None) -> tuple[
     """创建期 DNS 去漂移：域名解析结果剔除回环；红队额外剔除私网。显式 IP 目标原样保留。"""
     if _IP_RE.match(host):
         return set(ips), None
-    external = normalize_objective(objective) == REDTEAM
+    external = normalize_objective(objective) in (REDTEAM, SRC)
     kept: set[str] = set()
     for ip in ips:
         if is_loopback(ip):
@@ -173,17 +173,20 @@ async def create_cluster_project(name: str, assets: list[str], config: dict | No
 async def create_benchmark_project(
     name: str, base_url: str, token: str, config: dict | None = None
 ) -> dict:
-    """CTF 评测父项目（objective=flag）。"""
+    """评测父项目。incoming 为 src 时只叠胶水：复用拉题/起容器，不夺旗。"""
     pid = new_id("p_")
     ts = now()
     scope = Scope(targets=[], mode="strict")
     incoming = dict(config or {})
+    is_src = normalize_objective(incoming.get("objective") or incoming.get("track")) == SRC
     cfg = {
         **incoming,
-        "objective": "flag",
-        "track": incoming.get("track") or "ctf",
+        "objective": "src" if is_src else "flag",
+        "track": "src" if is_src else incoming.get("track") or "ctf",
         "benchmark": {"base_url": (base_url or "").rstrip("/"), "token": token or ""},
-        "autopilot": True if incoming.get("autopilot") is None else bool(incoming.get("autopilot")),
+        "autopilot": False if is_src else (
+            True if incoming.get("autopilot") is None else bool(incoming.get("autopilot"))
+        ),
     }
     await db.execute(
         """INSERT INTO projects(id, name, kind, target, ports, scope, config, status, parent_id, created_at, updated_at)
@@ -195,19 +198,16 @@ async def create_benchmark_project(
 
 
 def _backfill_track(kind: str, cfg: dict) -> dict:
-    """给旧数据回填二级赛道 track（前端徽章用）。不落库，仅序列化时补齐。
-    kind=benchmark → ctf；src 旧值按红队处理；flag→ctf，其余→redteam。
-    """
+    """给旧数据回填二级赛道 track（前端徽章用）。不落库，仅序列化时补齐。"""
     t = str(cfg.get("track") or "").lower()
-    if t == "src":
-        t = "redteam"
-    if t in ("redteam", "ctf"):
+    if t in ("redteam", "ctf", "src"):
         return {**cfg, "track": t}
-    if kind == "benchmark":
+    obj = normalize_objective(cfg.get("objective"))
+    if obj == SRC:
+        return {**cfg, "track": "src"}
+    if kind == "benchmark" or obj == FLAG:
         return {**cfg, "track": "ctf"}
-    obj = str(cfg.get("objective") or "").lower()
-    track = "ctf" if normalize_objective(obj) == FLAG else "redteam"
-    return {**cfg, "track": track}
+    return {**cfg, "track": "redteam"}
 
 
 def _serialize(row: dict) -> dict:

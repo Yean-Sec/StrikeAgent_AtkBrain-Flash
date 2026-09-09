@@ -14,6 +14,7 @@ from ..scope import (
     attacker_lan_forbidden,
     attacker_loopback_forbidden,
     canonical_host,
+    is_attacker_identity,
     is_platform_endpoint,
     local_self_hosts,
     unauthorized_peer_endpoint,
@@ -52,6 +53,7 @@ class AgentContext:
     last_local_progress_mono: float = 0.0
     turn_activity_mono: float = 0.0
     cmd_inflight: int = 0
+    task_subagents: list = field(default_factory=list)
     _cookies: dict = field(default_factory=dict)
     _httpx_cli: object = None
     _ssrf_gw_hosts: set = field(default_factory=set)
@@ -75,7 +77,6 @@ class AgentContext:
         if not port:
             port = 443 if parsed.scheme == "https" else 80
         self_hosts = getattr(self.guard, "self_hosts", None) or local_self_hosts()
-        self_nets = getattr(self.guard, "self_networks", None)
         self_ports = getattr(self.guard, "self_ports", None) or {
             int(settings.port), int(settings.frontend_port),
         }
@@ -102,14 +103,11 @@ class AgentContext:
         why = attacker_loopback_forbidden(host, authorized=authorized)
         if why:
             return f"越界：{why}。不要 http_request 直连回环。"
-        why = attacker_lan_forbidden(
-            host,
-            self_hosts=self_hosts,
-            self_networks=self_nets,
-            authorized=authorized,
-        )
+        if is_attacker_identity(host, extra=self_hosts):
+            return f"越界：{host} 是本机网卡或物机网关。本机网卡和物机网关是守卫，不是目标。"
+        why = attacker_lan_forbidden(host, self_hosts=self_hosts)
         if why:
-            return f"越界：{why}。只打当前入口，不要扫物理机内网。"
+            return f"越界：{why}。本机网卡和物机网关是守卫，不是目标。"
         why = unauthorized_peer_endpoint(
             host, port,
             primary=primary,

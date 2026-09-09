@@ -67,6 +67,7 @@ class SupervisorFacts:
     wrong_flags: int = 0
     correct_flags: int = 0
     flag_count: int = 0
+    pending_internal: list[str] = field(default_factory=list)
     evo_do: list[str] = field(default_factory=list)
     evo_avoid: list[str] = field(default_factory=list)
 
@@ -86,16 +87,19 @@ _PLACEHOLDER_RE = re.compile(
 
 INVERT_OPS_GUIDE = (
     "收口手法（仅在简报标明假收口或占位输出时适用）："
-    "校验通过但只打印固定占位时，占位不是答案；只用本题入口已经出现过的运算与数据反演，立刻 report_flag。"
+    "校验通过但只打印固定占位时，占位不是答案，也不是诱饵、不等于链已死；"
+    "只用本题入口已经出现过的运算与数据反演，立刻 report_flag。"
     "不要用 flag 格式字符串去拟合未知量，不要把改过的 dump 当答案，不要另找图上没出现过的算法。"
+    "unicorn/原生跑通只输出点号或 denied，取循环末态或真实出口，不要把 VM 写成诱饵。"
 )
 
 POSTEX_PIVOT_GUIDE = (
-    "横向收口（可迁移，不是某题 payload）：已验证 SSRF/开放代理或 GETSHELL 之后，"
+    "横向收口（可迁移，不是某题 payload）：本机已交过旗或已 GETSHELL，且 flag 未齐时，"
     "剩余 flag 通常不在本容器。从跳板看见的容器网/内网主机（arp、hosts、init 拓扑）"
     "用 report_pivot_capability 扩进 Scope。"
+    "图上凭证/备份/SQL/代理用法里出现的 RFC1918 是本题内网线索，不是邻题；简报「待扩容」必须先扩再打。"
     "经 SSRF 扩容的主机，攻击机网卡通常到不了：把目标 URL 放进已验证 SSRF 参数，或从 webshell 访问；"
-    "禁止 Kali 直连，禁止把这些地址当邻题入口。"
+    "禁止 Kali 直连，禁止把这些地址当邻题入口，禁止去打攻击机 docker 网桥。"
     "邻机是新身份域：must_intents 按 tactic 正交，同一 tactic 只占一格。"
     "身份验证与未授权可达并行；上一跳账密只是候选。同一身份面无新秘密则结束该跳 hop_auth。"
     "跳板扫描到的每一台都要单独 report_pivot_capability，不要只扩一台。"
@@ -109,14 +113,31 @@ CHAIN_CLOSE_GUIDE = (
     "同一耗时通道按位 dump 只是退路。不要再校准耗时，也不要把库侧文件读原语当默认收口（常被配置挡住），更不要把抽出的哈希拿去超级大字典硬撞。"
     "前端/JS 字段反复 4xx、或错误正文点名了你没发的键 → 客户端契约过时，按错误正文与同接口其它泄露名换键，禁止对已否证键做编码变体；恒定 4xx 点名缺字段说明通道活着，不要把整条网关写成存根。"
     "已验证跳板（SSRF/导入/代理）不要改成攻击机直连错误正文里的内网地址。"
+    "图上已有机器密钥但还没 401/403：在跳板已到达的同一服务上换查询参数/请求头/Cookie/body 做有无密钥差分。"
+    "浅层路径 404 只否证该路径，不关闭密钥，也不要因此转去旁路网段。"
     "过滤器拒绝的是这一次提交的形态：不要给同一形态加包装；同一绕过族已否证就换正交表示类。"
     "写/反序列化/上传已验证 → 投递执行，不是继续分析 gadget/封装理论。"
     "已持有签名令牌：少数算法或弱密钥变体失败不关闭整类；把令牌当服务端校验对象继续打，不要只改前端角色字段。"
     "一种证明通道被挡，换抽取面，不要把整点钟花在同一通道。"
+    "已验证调试/注入能力：握手、版本、可 attach 不是命令执行；一种客户端形态失败不关闭整面。"
+)
+
+SRC_CYCLE_GUIDE = (
+    "SRC 挖洞循环（不是红队收口）：已验证洞不收工、不 GETSHELL、不横向。"
+    "至多一格把已证洞打到高危标准（impact_escalate），其余格换简报「建议测」且还没覆盖的类型，"
+    "每条独立 report_finding。禁止为凑数去打「暂缓」类型，禁止三格都消耗同一条利用链。"
+    "命令执行只写无害 txt canary 当高危证据。禁止 report_pivot_capability。"
 )
 
 SINGLE_CHANNEL_GUIDE = (
     "单通道否证：状态码/正文无差异，输入面未关；禁止把恒定错误页写成已验证利用，也禁止 defer channel_oracle。"
+    "换通道 = 同一 URL、同一参数换观测；另一个路由因为允许 POST 不是换通道，禁止写成唯一可写面。"
+)
+CONSUME_SESSION_GUIDE = (
+    "已有可用凭证：必须消费该会话打后认证功能面。"
+    "普通文件/路径参数面：must 至少一格是 file_read_chain 或 access_control；"
+    "题面下发的可执行文件/固件则占 reverse_binary。"
+    "不要把这一格让给 html_sink 或回头只打登录表单注入。"
 )
 
 _TEMPLATE_DECRYPT_RE = re.compile(
@@ -151,7 +172,11 @@ def needs_postex_pivot_guidance(
     correct_flags: int = 0,
     flag_count: int = 0,
 ) -> bool:
-    """已有跳板且 flag 未齐：引导从跳板扩内网，而不是把容器网当邻题。"""
+    """本机已 GETSHELL，或已经交过旗且仍有剩余旗：引导从跳板扩内网。
+
+    仅有已验证 SSRF、正确旗仍为 0 时不要把「剩余旗在别的容器」当主线——
+    先消耗跳板与未挂载密钥。
+    """
     if int(flag_count or 0) > 0 and int(correct_flags or 0) >= int(flag_count):
         return False
     g = graph or {}
@@ -164,8 +189,52 @@ def needs_postex_pivot_guidance(
         for n in nodes
     ):
         return True
+    if int(correct_flags or 0) < 1:
+        return False
     blob = _graph_text(g)
     return bool(re.search(r"\bssrf\b|开放代理|file://|webshell|GETSHELL", blob, re.I))
+
+
+_PRIV_IP_RE = re.compile(
+    r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b"
+)
+
+
+def pending_loot_internal_hosts(
+    graph: dict | None,
+    *,
+    scope_hosts: list[str] | None = None,
+    peer_entries: list[str] | None = None,
+    current_entry: str = "",
+) -> list[str]:
+    """图上正文已出现、尚未进 Scope 的题目内网 IP（不是邻题入口、不是攻击机身份）。"""
+    from ..scope import is_attacker_identity, is_loopback
+
+    skip: set[str] = set()
+    for raw in list(scope_hosts or []) + list(peer_entries or []) + [current_entry]:
+        h = str(raw or "").split(":")[0].strip()
+        if h:
+            skip.add(h)
+    for n in (graph or {}).get("nodes") or []:
+        key = str(n.get("key") or "")
+        if key.startswith("info:scope-expanded:"):
+            skip.add(key.split(":", 2)[-1].strip())
+        elif key.startswith("target:"):
+            skip.add(key.split(":", 1)[-1].strip())
+    blob = _graph_text(graph)
+    out: list[str] = []
+    seen: set[str] = set()
+    for h in _PRIV_IP_RE.findall(blob):
+        if h.endswith(".0") or h.endswith(".255") or h in skip or h in seen:
+            continue
+        if is_loopback(h) or is_attacker_identity(h):
+            continue
+        seen.add(h)
+        out.append(h)
+        if len(out) >= 8:
+            break
+    return out
 
 
 def _graph_text(graph: dict | None) -> str:
@@ -212,7 +281,7 @@ def _clip(s: str, n: int) -> str:
 
 def _goal_line(objective: str) -> str:
     if (objective or "").strip().lower() in ("flag", "ctf"):
-        return "CTF：唯一目标是夺齐正确 flag 后收工（平台扣分不是漏旗）。本题必有解，禁止超级大字典撞库/撞哈希。"
+        return "CTF：唯一目标是夺齐正确 flag 后收工（平台总分差不是漏旗）。卡住再用 request_hint（扣分），开局不要看。本题必有解，禁止超级大字典撞库/撞哈希。"
     return "红队：report_shell 确认服务器命令执行后收工"
 
 
@@ -457,6 +526,14 @@ def node_is_template_decrypt(n: dict | None) -> bool:
     return bool(_TEMPLATE_DECRYPT_RE.search(blob))
 
 
+def node_is_placeholder_decoy(n: dict | None) -> bool:
+    """占位输出局面下，把仿真写成 decoy/链已死的节点不是观测。"""
+    if not n:
+        return False
+    blob = f"{n.get('key') or ''} {n.get('title') or ''} {str(n.get('detail') or '')[:240]}"
+    return bool(_DECOY_CLAUSE_RE.search(blob))
+
+
 def intent_is_template_decrypt(intent: dict | None) -> bool:
     """开放 Intent 是否还在把花括号模板 / keystream 当前缀约束。"""
     if not intent:
@@ -470,13 +547,24 @@ def intent_is_template_decrypt(intent: dict | None) -> bool:
     return bool(_TEMPLATE_DECRYPT_RE.search(blob) or _CLAIM_RE.search(blob))
 
 
+_DECOY_CLAUSE_RE = re.compile(
+    r"\bdecoy\b|纯诱饵|当(?:成|作)诱饵|链已死|"
+    r"(?:VM|解释器|字节码).{0,24}(?:诱饵|无用|无关)|"
+    r"只输出.{0,12}(?:点号|点|\.|denied)",
+    re.I,
+)
+
+
 def strip_template_xor_clauses(text: str) -> str:
-    """去掉「用花括号模板 XOR/约束 keystream」的句子，保留其余步骤。"""
+    """去掉花括号 XOR 拟合句，以及把占位输出写成 decoy 的句子。"""
     raw = text or ""
     if not raw.strip():
         return raw
     parts = re.split(r"(?<=[。；;\n])", raw)
-    kept = [p for p in parts if p and not _TEMPLATE_XOR_CLAUSE_RE.search(p)]
+    kept = [
+        p for p in parts
+        if p and not _TEMPLATE_XOR_CLAUSE_RE.search(p) and not _DECOY_CLAUSE_RE.search(p)
+    ]
     return "".join(kept).strip()
 
 
@@ -493,24 +581,26 @@ def sanitize_invert_ops_plan(plan, *, invert_ops: bool = False):
         cleaned = strip_template_xor_clauses(str(plan.next_plan or ""))
         plan.next_plan = cleaned or INVERT_OPS_GUIDE
         bans = list(plan.ban_repeats or [])
-        tag = "用 flag 花括号模板拟合密文"
-        if tag not in bans:
-            bans.append(tag)
+        for tag in ("用 flag 花括号模板拟合密文", "把占位输出写成 decoy"):
+            if tag not in bans:
+                bans.append(tag)
         plan.ban_repeats = bans[:12]
     except Exception:
         return plan
     return plan
 
 
-def _node_line(n: dict, *, peer: bool = False, disproved: bool = False) -> str:
+def _node_line(n: dict, *, peer: bool = False, disproved: bool = False, decoy: bool = False) -> str:
     label = _LEGEND_LABEL.get(str(n.get("type") or ""), str(n.get("type") or "?"))
     star = "★GETSHELL " if _is_getshell(n) else ""
     peer_bit = "邻题 " if peer else ""
-    dead_bit = "已否证·假收口 " if disproved else ""
+    dead_bit = "已否证·假收口 " if (disproved or decoy) else ""
     sev = str(n.get("severity") or "").strip()
     sev_bit = f"/{sev}" if sev and sev.lower() not in ("", "info") else ""
     title = _clip(str(n.get("title") or ""), 70)
-    if disproved:
+    if decoy:
+        title = "占位输出不是诱饵，禁止写成链已死"
+    elif disproved:
         title = "模板拟合约束已否证，禁止写入 next_plan"
     return (
         f"  · {star}{dead_bit}{peer_bit}[{label}{sev_bit}] {n.get('key')} — "
@@ -577,11 +667,13 @@ def _graph_block(
         for n in group:
             if listed >= cap:
                 break
+            decoy = bool(invert_ops and node_is_placeholder_decoy(n))
             lines.append(_node_line(
                 n,
                 disproved=bool(
                     (claim_unverified or invert_ops) and node_is_template_decrypt(n)
                 ),
+                decoy=decoy,
             ))
             listed += 1
         if listed >= cap:
@@ -809,10 +901,18 @@ def _facts_block(facts: SupervisorFacts) -> str:
         lines.append("- " + INVERT_OPS_GUIDE)
     if facts.postex_pivot:
         lines.append("- " + POSTEX_PIVOT_GUIDE)
+    if facts.pending_internal:
+        lines.append(
+            "- 待扩容内网主机（图上已出现、尚未 Scope，不是邻题）："
+            + "、".join(facts.pending_internal[:8])
+            + "。next_plan 必须先 report_pivot_capability，再经已有 shell/SSRF 打，禁止 Kali 直连。"
+        )
     if facts.chain_close:
         lines.append("- " + CHAIN_CLOSE_GUIDE)
     if facts.channel_oracle_open and not facts.chain_close:
         lines.append("- " + SINGLE_CHANNEL_GUIDE)
+    if facts.chain_live and not facts.postex and not facts.channel_oracle_open:
+        lines.append("- " + CONSUME_SESSION_GUIDE)
     if facts.active_plan_live:
         dwell = max(1, int(facts.plan_dwell_turns or 2))
         lines.append(
@@ -1054,6 +1154,18 @@ async def assemble_supervisor_brief(
         correct_flags=facts.correct_flags,
         flag_count=facts.flag_count,
     )
+    facts.pending_internal = pending_loot_internal_hosts(
+        graph,
+        scope_hosts=list(scope_hosts or []),
+        peer_entries=facts.peer_entries,
+        current_entry=str(facts.current_entry or entry or ""),
+    )
+    if facts.pending_internal and (
+        facts.postex_pivot
+        or int(facts.correct_flags or 0) > 0
+        or int(facts.flag_count or 0) > 1
+    ):
+        facts.postex_pivot = True
     facts.chain_close = bool(facts.chain_live) and not bool(facts.postex_pivot)
     if not facts.channel_oracle_open:
         try:
@@ -1151,12 +1263,20 @@ async def assemble_supervisor_brief(
         ws = Path(_st.workspaces_dir) / project_id
         ledger = load_ledger(ws)
         cov = format_coverage_brief(ledger, objective=objective)
-        parts.extend(["## 已覆盖（螺旋账本）", cov, ""])
-        from ..objective import objective_allows_flag
+        from ..objective import objective_allows_flag, objective_is_src
+        heading = "## 已覆盖（扫描账本）" if objective_is_src(objective) else "## 已覆盖（螺旋账本）"
+        parts.extend([heading, cov, ""])
         if objective_allows_flag(objective):
             for b in scan_ban_repeats(ledger, objective=objective):
                 if b and b not in facts.repeats:
                     facts.repeats.append(b)
+    except Exception:
+        pass
+    try:
+        from ..objective import objective_is_src as _is_src
+        if _is_src(objective):
+            from .src_surface import format_src_surface_brief
+            parts.extend(["## 本轮建议测的类型", format_src_surface_brief(graph), ""])
     except Exception:
         pass
     if evo_block:

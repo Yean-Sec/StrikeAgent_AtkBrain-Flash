@@ -56,6 +56,32 @@ _CHAIN_OK_RE = re.compile(
     r"(?:\([a-z0-9_]+\))?$",
     re.I,
 )
+# 思想/方法若在预告尚未出现的 hop，则不是在消耗当前面上的能力。
+_AHEAD_RE = re.compile(
+    r"尚未出现|尚未发现|图上没有|下一台主机|其它主机|其它容器|"
+    r"还差\s*\d|其余面|未出现的",
+)
+# 图上已有的面允许推进到的下一手法；不在此表里的手法必须自己先出现在图上。
+_CONSUME: dict[str, frozenset[str]] = {
+    "file_read_chain": frozenset({"weaponize", "finding_read_loot", "read_to_creds", "filter_bypass"}),
+    "upload_bypass": frozenset({"weaponize"}),
+    "finding_sqli_chain": frozenset({"weaponize", "finding_read_loot", "file_read_chain"}),
+    "ssrf_as_gateway": frozenset({"file_read_chain", "finding_read_loot"}),
+    "weaponize": frozenset({"finding_read_loot", "privesc_lateral"}),
+    "ssti": frozenset({"weaponize"}),
+    "access_control": frozenset({"weaponize", "finding_read_loot"}),
+    "xml_parse": frozenset({"finding_read_loot", "weaponize"}),
+    "restricted_deserialize": frozenset({"weaponize"}),
+    "web_inject": frozenset({"weaponize"}),
+    "error_reflects_input": frozenset({"ssti", "weaponize"}),
+    "file_read_surface": frozenset({"file_read_chain", "weaponize"}),
+    "inject_surface": frozenset({"finding_sqli_chain", "ssti", "web_inject"}),
+    "upload_surface": frozenset({"upload_bypass", "weaponize"}),
+    "deserialize_surface": frozenset({"restricted_deserialize", "weaponize"}),
+    "auth_surface": frozenset({"access_control", "info_to_cred"}),
+    "debug_endpoint": frozenset({"weaponize"}),
+    "foothold": frozenset({"finding_read_loot", "privesc_lateral", "access_control"}),
+}
 
 
 def stack_tokens_of(tags: list[str] | None) -> list[str]:
@@ -151,14 +177,33 @@ def scrub_chain(chain: str) -> str:
     return " → ".join(parts)
 
 
-def keep_thought(s: str) -> str:
+def keep_thought(s: str, *, stacks: list[str] | None = None) -> str:
     """路线/方法/思想：可迁移中文原则，丢掉 IP/路径/题面。"""
     t = re.sub(r"\s+", " ", str(s or "").strip())
     if len(t) < 8 or len(t) > 240:
         return ""
-    if _HOSTISH_RE.search(t):
+    if _HOSTISH_RE.search(t) or _AHEAD_RE.search(t):
         return ""
+    allowed = {str(x).lower() for x in (stacks or []) if x}
+    if allowed:
+        low = t.lower()
+        for tok in STACK_TOKENS:
+            if tok in allowed:
+                continue
+            if re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z0-9])", low):
+                return ""
     return t
+
+
+def lesson_consumes_evidence(do: list[str] | None, signals: set[str]) -> bool:
+    """手法必须能接到当前图已有的栈/线索/战术上，不能凭空多出一跳。"""
+    need = {str(x).lower() for x in (do or []) if x}
+    if not need:
+        return True
+    allowed = {str(x).lower() for x in signals}
+    for s in list(allowed):
+        allowed |= _CONSUME.get(s, frozenset())
+    return need <= allowed
 
 
 def format_methodology(
@@ -206,9 +251,9 @@ def scrub_lesson(content: dict | None) -> dict | None:
         if len(avoid) >= 6:
             break
     chain = scrub_chain(str(c.get("chain") or c.get("winning_chain") or c.get("route") or ""))
-    idea = keep_thought(str(c.get("idea") or ""))
-    method = keep_thought(str(c.get("method") or ""))
-    route = keep_thought(str(c.get("route") or "")) or chain
+    idea = keep_thought(str(c.get("idea") or ""), stacks=when)
+    method = keep_thought(str(c.get("method") or ""), stacks=when)
+    route = keep_thought(str(c.get("route") or ""), stacks=when) or chain
     if not do and not avoid and not chain and not (method and idea):
         return None
     rule = format_methodology(
@@ -282,6 +327,8 @@ def score_methodology(lesson: dict, signals: set[str], *, strict: bool) -> float
     do_hit = len(do & signals)
     stack_hit = len((when & STACK_TOKENS) & signals)
     if strict and when_hit == 0 and do_hit == 0 and stack_hit == 0:
+        return 0.0
+    if strict and do and not lesson_consumes_evidence(list(do), signals):
         return 0.0
     conf = float(lesson.get("confidence") or 0.4)
     score = conf * 0.45 + 0.28 * when_hit + 0.22 * do_hit + 0.12 * stack_hit

@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     loot_dir: Path = DATA_DIR / "loot"
     reports_dir: Path = DATA_DIR / "reports"
 
-    max_redteam_concurrency: int = 5           # 红队默认同时猎数；上限 20，与 CTF 互不占槽
+    max_redteam_concurrency: int = 5           # 红队/SRC 默认同时猎数；上限 20，与 CTF 互不占槽
     max_redteam_concurrency_cap: int = 20
     max_ctf_concurrency: int = 3               # CTF 默认同时猎数；上限 20，不是 3
     max_ctf_concurrency_cap: int = 20
@@ -57,6 +57,7 @@ class Settings(BaseSettings):
 
     loop_max_turns: int = 0           # CTF 不限轮次（含评测）；停猎看墙钟 / 图空转
     loop_max_turns_src: int = 30      # SRC：第 30 轮必须停，记失败
+    src_runtime_hard_stop_sec: int = 3 * 60 * 60  # SRC：180 分钟墙钟硬停
     loop_max_turns_benchmark: int = 0  # 已弃用：评测 CTF 不走轮次硬停
     loop_stall_limit: int = 10
     loop_stall_limit_flag: int = 0     # CTF：不走「连续 N 轮无进展」暂停，改看 6 个空方案

@@ -70,21 +70,23 @@ class RunHandle:
 
 
 def hunt_slot_kind(project: dict | None, objective: str | None = None) -> str:
-    """CTF / 评测子题走 ctf 槽，其余走红队槽。两道闸互不占。"""
-    from ..objective import objective_allows_flag
+    """CTF / 评测 CTF 子题走 ctf 槽；红队与 SRC（含胶水 SRC 子猎）走红队槽。"""
+    from ..objective import objective_allows_flag, objective_is_src
     from .. import benchmark as bmk
-    if project and bmk.is_benchmark_sub(project):
-        return "ctf"
     obj = objective
     if not obj and project:
         cfg = project.get("config") or {}
         obj = (cfg.get("objective") or cfg.get("track") or "") if isinstance(cfg, dict) else ""
+    if objective_is_src(obj):
+        return "redteam"
+    if project and bmk.is_benchmark_sub(project):
+        return "ctf"
     return "ctf" if objective_allows_flag(obj) else "redteam"
 
 
 class RunManager:
     """两道互不占槽的项目闸 + 编排会话展示：
-    - 红队 `redteam_sem`：红队/单目标同时跑的数量（默认 5）。
+    - 红队 `redteam_sem`：红队与 SRC 同时跑的数量（默认 5）。
     - CTF `ctf_sem`：CTF / 评测子题（默认 3，上限 20）。
     - 会话层 `claude_per_project`：每项目 2 路（从者 + 御主）。
       顶栏 Claude Code 显示两道合计 × 2（默认 8 项目 → 16 路）。

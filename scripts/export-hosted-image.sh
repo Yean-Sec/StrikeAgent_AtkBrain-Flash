@@ -8,7 +8,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TAG="${1:-strikeagent-atkbrain-flash:latest}"
 STAMP="$(date +%Y%m%d-%H%M)"
-OUT="${2:-$ROOT/StrikeAgent_AtkBrain-Flash-${STAMP}.tar.gz}"
+OUT_DIR=""
+for d in "${HOME}/Downloads" "${HOME}/hgfs/Downloads" "/mnt/hgfs/Downloads"; do
+  if [[ -d "$d" ]]; then
+    OUT_DIR="$d"
+    break
+  fi
+done
+if [[ -n "${2:-}" ]]; then
+  OUT="$2"
+elif [[ -n "$OUT_DIR" ]]; then
+  OUT="${OUT_DIR}/StrikeAgent_AtkBrain-Flash-${STAMP}.tar.gz"
+else
+  OUT="${ROOT}/StrikeAgent_AtkBrain-Flash-${STAMP}.tar.gz"
+fi
 LIMIT=$((3 * 1024 * 1024 * 1024))
 
 cd "$ROOT"
@@ -21,12 +34,12 @@ fi
 echo "[*] docker build -t ${TAG}"
 docker build -t "$TAG" -f Dockerfile .
 
-echo "[*] 检查镜像未带本地库/工作区/题解痕迹"
+echo "[*] 检查镜像未带本地库/工作区/对话/题解痕迹"
 docker run --rm --entrypoint /bin/bash "$TAG" -lc '
 set -euo pipefail
-hits=$(find /opt/atkbrain -type f \( -name "*.db" -o -name "*.db-wal" -o -name "*.db-shm" \) 2>/dev/null || true)
+hits=$(find /opt/atkbrain -type f \( -name "*.db" -o -name "*.db-wal" -o -name "*.db-shm" -o -name "*.jsonl" \) 2>/dev/null || true)
 if [[ -n "${hits}" ]]; then
-  echo "[!] 镜像里出现数据库文件：" >&2
+  echo "[!] 镜像里出现数据库或对话文件：" >&2
   echo "${hits}" >&2
   exit 1
 fi
@@ -36,6 +49,18 @@ if [[ -n "${ws}" ]]; then
   echo "${ws}" >&2
   exit 1
 fi
+if [[ -d /opt/atkbrain/.cursor ]] || [[ -d /root/.cursor ]]; then
+  echo "[!] 镜像里出现编辑器对话目录" >&2
+  exit 1
+fi
+if [[ ! -f /opt/atkbrain/.claude/skills/recon-fanout/SKILL.md ]]; then
+  echo "[!] 镜像缺少 CTF skill recon-fanout" >&2
+  exit 1
+fi
+if [[ ! -f /opt/atkbrain/backend/atkbrain/memory/evolve.py ]]; then
+  echo "[!] 镜像缺少自进化模块" >&2
+  exit 1
+fi
 if grep -R -E -n --include="*.py" \
     "Weaver@|submit_fact|commit_step" \
     /opt/atkbrain/backend/atkbrain >/tmp/atkbrain-pack-hits 2>/dev/null; then
@@ -43,7 +68,7 @@ if grep -R -E -n --include="*.py" \
   cat /tmp/atkbrain-pack-hits >&2
   exit 1
 fi
-echo "[*] 镜像数据目录为空，源码无赛题痕迹"
+echo "[*] 镜像数据目录为空，含自进化代码与 skill，无库/对话"
 '
 
 echo "[*] docker save | gzip > ${OUT}"

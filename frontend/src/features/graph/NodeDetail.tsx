@@ -1,6 +1,6 @@
 import type { Graph, GraphNode } from "../../types";
 import { SeverityBadge } from "../../components/Badge";
-import { displayFindingSeverity, formatNodeDetail, graphNodeTypeLabel, nodeTypeColor, showsShellStar, scrubCandidateRceLabel } from "../../theme";
+import { displayFindingSeverity, formatNodeDetail, graphNodeDisplaySeverity, graphNodeDisplayType, graphNodeTypeLabel, nodeTypeColor, showsShellStar, scrubCandidateRceLabel } from "../../theme";
 
 function formatUnix(ts?: number) {
   if (!ts) return "";
@@ -18,10 +18,10 @@ export function NodeDetail({ node, graph }: { node: GraphNode | null; graph: Gra
   return (
     <div className="scroll-y" style={{ maxHeight: 520 }}>
       <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-        <span className="badge badge-pill" style={{ background: nodeTypeColor[node.type], color: "#fff" }}>
+        <span className="badge badge-pill" style={{ background: nodeTypeColor[graphNodeDisplayType(node)], color: "#fff" }}>
           {graphNodeTypeLabel(node)}
         </span>
-        <SeverityBadge severity={node.severity} />
+        <SeverityBadge severity={graphNodeDisplaySeverity(node)} />
         {node.status && <span className="badge badge-pill">{node.status}</span>}
         {showsShellStar(node) && <span className="badge badge-coral">GETSHELL</span>}
       </div>

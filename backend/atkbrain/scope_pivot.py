@@ -262,8 +262,7 @@ async def hydrate_scope_from_graph(
     if not project_id:
         return False
     rows = await _db.fetchall(
-        "SELECT key, tags FROM nodes WHERE project_id=? AND "
-        "(key LIKE 'info:scope-expanded:%' OR key LIKE 'info:host:%' OR key LIKE 'target:%')",
+        "SELECT key, tags FROM nodes WHERE project_id=? AND key LIKE 'info:scope-expanded:%'",
         (project_id,),
     )
     reject = {_norm_host(h) for h in (reject_hosts or ()) if h}

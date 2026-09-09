@@ -7,7 +7,6 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlparse
 
 from ..config import settings
-from ..graph.model import display_finding_severity
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 _JSON_OBJ_RE = re.compile(r"\{[\s\S]*\}")
@@ -18,25 +17,17 @@ _DATA_RE = re.compile(
     r"""(?:^|\s)(?:--data-raw|--data-binary|--data|-d|--data-urlencode)\s+(['"])([\s\S]*?)\1"""
 )
 
-WRITEUP_SYSTEM = """你是给安全工程师看的授权渗透测试报告撰写人。读者要能只靠本报告理解成因、危害，并在授权环境中逐步复现。
+WRITEUP_SYSTEM = """你是给安全工程师看的授权渗透测试报告撰写人。只写短文，不要套话、不要 CIA 模板。
 
 硬约束
-- 不得编造事实包里没有的 URL、路径、参数名、payload、CVE、响应原文、文件路径或状态码。
-- 没有的信息写「未采集」，不要用 SQLMap/典型 payload 填空。
-- 原理必须扣到本条入口、参数和服务端处理，禁止只写「存在注入」。
-- 危害分「证据已证实」和「未证实的潜在后续」，不要把潜在写成已打穿。
-- 复现步骤必须是操作级：用哪个工具、点哪、填哪一栏、点 Send 后看什么。只能解释如何使用事实包里的 curl/python/证据。
+- 不得编造事实包里没有的 URL、路径、参数名、payload、响应原文或状态码。
+- 危害只写证据已经证明的影响；没打到的后续标「潜在」，不要写成已打穿。
 
-每个漏洞输出一个 JSON 对象（不要数组包裹以外的解释）：
+每个漏洞输出一个 JSON 对象：
 {
   "id": "与事实包 id 一致",
-  "mechanism": "漏洞原理（400～800 字：缺陷类型、数据如何流入、为何校验失败）",
-  "root_cause": "成因与说明（800～1500 字，分现象、入口、可控点、服务端缺陷、与证据的对应）",
-  "impact_detail": "危害分析（600～1200 字：已证实影响、权限主体、机密性/完整性/可用性、未证实的后续）",
-  "affected_scope": "影响资产、Host、路径、参数、会话条件",
-  "expected_result": "复现成功时响应/输出必须出现的、证据里已有的特征",
-  "remediation": "针对本入口的修复（参数化、鉴权、落地校验等，落到本条路径）",
-  "reproduction_notes": ["8～15 条 Burp/curl 操作提示，不新增 payload"]
+  "impact_detail": "危害（80～200 字：未授权能做什么、影响谁）",
+  "reproduction_notes": ["最多 8 条操作提示，不新增 payload"]
 }
 """
 
@@ -196,14 +187,6 @@ def _edge_lines(finding: dict) -> list[str]:
             bit += f"：{why}"
         out.append(bit)
     return out
-
-
-def _evidence_excerpt(finding: dict, n: int = 800) -> str:
-    ev = (finding.get("evidence") or "").strip()
-    if not ev:
-        return ""
-    one = re.sub(r"[ \t]+", " ", ev)
-    return one if len(one) <= n else one[:n] + "…"
 
 
 def _parsed_of(finding: dict, poc: dict | None = None) -> dict | None:
@@ -407,61 +390,38 @@ def deterministic_impact(finding: dict) -> str:
     proof = (finding.get("proof_detail") or "").strip()
     blob = f"{ev}\n{proof}"
     blob_l = blob.lower()
-    sev = display_finding_severity(finding)
-    bits: list[str] = []
-
-    bits.append(
-        f"【评级】报告严重度为 `{sev}`，类别 `{cat or '未分类'}`。"
-        "以下「已证实」只引用本条证据；未在证据中出现的读库、写文件、横向移动一律标为潜在。"
-    )
-
     proved: list[str] = []
     potential: list[str] = []
     uid_m = re.search(r"uid=\d+\([^)]+\)", blob)
     if uid_m or "www-data" in blob_l or "nt authority" in blob_l:
         who = uid_m.group(0) if uid_m else ("www-data" if "www-data" in blob_l else "Windows 系统账户")
-        proved.append(
-            f"命令执行已证实：证据含 `{who}`，说明漏洞通道能在 Web/服务进程的操作系统权限下跑命令。"
-            "当前权限边界就是该进程用户，能否提权未在本条证明。"
-        )
+        proved.append(f"命令执行已证实（`{who}`）；能否提权未证明。")
     if re.search(r"root:[^:\n]*:0:0:|/etc/passwd", blob):
-        proved.append("本地文件读取已证实：证据含 passwd 特征行，说明可读系统账号文件，后续可读配置与密钥的风险成立。")
+        proved.append("本地文件读取已证实（passwd 特征行）。")
     if re.search(r"SQL syntax|SQLException|mysql_|syntax error", blob, re.I):
-        proved.append(
-            "SQL 语句可被攻击者数据改写已证实（语法错误/驱动异常）。"
-            "这证明注入点存在；是否已 UNION 出库、是否可写库，本条证据未写明则不算已证实。"
-        )
+        proved.append("SQL 可被改写已证实（语法错误/驱动异常）；是否已出库未写明则不算已打穿。")
     if finding.get("proof_canary") or finding.get("proof_url"):
         proved.append(
-            "写入/回显通道已用 canary 或证明 URL 钉死，说明影响不是一次性误报。"
+            "写入/回显通道已用 canary 或证明 URL 钉死。"
             + (f" Canary `{finding.get('proof_canary')}`。" if finding.get("proof_canary") else "")
             + (f" URL {finding.get('proof_url')}。" if finding.get("proof_url") else "")
         )
     if cat in ("auth_bypass", "unauth", "idor", "admin_access") and ev:
-        proved.append("鉴权/对象级授权在本条入口上可被绕过或未执行；具体对象以证据里的接口和返回为准。")
+        proved.append("本条入口未校验会话/对象级授权；未授权方可打到业务分支，具体对象以接口返回为准。")
     if cat in ("info_disclosure", "info") and ev:
-        proved.append("信息泄露已采集到响应内容；单独通常不构成接管，但会暴露版本、路径或配置，降低攻击成本。")
+        proved.append("已采到未授权响应内容，会暴露版本、路径或配置。")
 
     if cat in ("sqli", "db_access"):
-        potential.append("潜在：在注入被证实后，可能读取业务表、拖取账号哈希；未做出网或堆叠写入则不要写成已发生。")
+        potential.append("潜在可读业务表；未做出库则不要写成已拖库。")
     if cat in ("rce", "command_injection", "deserialization", "file_upload", "file_write"):
-        potential.append("潜在：在当前进程权限下可能读环境变量、连内网、写 Web 目录；未做横向则不写「已控制内网」。")
+        potential.append("潜在可读环境变量或写 Web 目录；未做横向则不写已控内网。")
     if cat in ("ssrf",):
-        potential.append("潜在：可探测内网 HTTP 服务或云元数据；证据未出现内网回显则只保留「具备发请求能力」。")
+        potential.append("潜在可打内网 HTTP 或云元数据；证据无内网回显则只算能发请求。")
 
-    bits.append("【已证实】\n" + ("\n".join(f"- {x}" for x in proved) if proved else "- 除类别与描述外，没有可引用的执行/读文件/报错证据。不要把严重度当成已打穿。"))
-    bits.append("【机密性 / 完整性 / 可用性】")
-    bits.append(
-        "- 机密性：若证据含文件内容、SQL 报错中的表/列、未授权响应体，则机密性已受损；否则为潜在。\n"
-        "- 完整性：仅当证据表明写入文件、改数据或执行了改变状态的命令时成立。\n"
-        "- 可用性：本报告默认不做破坏性验证；证据未出现拒绝服务则可用性未测。"
-    )
+    bits = proved or ["证据未证明读库、写文件或横向；不要把严重度当成已打穿。"]
     if potential:
-        bits.append("【未证实的后续（不得当作已发生）】\n" + "\n".join(f"- {x}" for x in potential))
-    excerpt = _evidence_excerpt(finding, 900)
-    if excerpt:
-        bits.append("【证据摘要】原文见「完整证据」。摘要：\n" + excerpt)
-    return "\n\n".join(bits)
+        bits.extend(potential)
+    return " ".join(bits)
 
 
 def deterministic_scope(finding: dict) -> str:
@@ -531,13 +491,8 @@ def manual_reproduction_steps(finding: dict, poc: dict | None = None) -> list[st
         n += 1
 
     add(
-        "确认你有书面授权，且目标就是本报告中的 Host/资产。"
+        "准备工具：Burp Suite（Proxy + Repeater）或可编辑原始 HTTP 的客户端，以及 curl。"
         + (f" 关联节点 `{loc}`。" if loc else "")
-        + " 禁止把 payload 打到非授权域名或生产只读禁令范围之外。"
-    )
-    add(
-        "准备工具：Burp Suite（Proxy + Repeater）或任何可编辑原始 HTTP 的客户端，以及系统自带 curl。"
-        " 浏览器只用于需要 Cookie 登录的场景。"
     )
     if parsed and parsed.get("host"):
         add(
@@ -588,8 +543,7 @@ def manual_reproduction_steps(finding: dict, poc: dict | None = None) -> list[st
                 body = body[:1200] + "…"
             add("请求体使用 PoC 原文（不要改字段名）：\n```\n" + body + "\n```")
         add(
-            "点击 Send。在 Response 面板同时看 Status、Body、Length。"
-            " 成功判定只认「完整证据」里出现过的特征，不要把网关 502/WAF 拦截页当漏洞。"
+            "点击 Send。成功判定只认证据里已出现的特征，不要把网关 502/WAF 拦截页当漏洞。"
         )
         if sigs:
             add("复现成功时，响应或命令输出应出现：\n" + "\n".join(f"  - {s}" for s in sigs))
@@ -621,15 +575,15 @@ def manual_reproduction_steps(finding: dict, poc: dict | None = None) -> list[st
         )
     elif evidence:
         add(
-            "本条未提供独立 poc_curl。打开「完整证据」，"
-            "按其中出现的方法、URL、参数和响应特征手工构造等价请求；证据里没有的字段不要编。"
+            "本条未提供独立 poc_curl。"
+            "按证据里的方法、URL、参数和响应特征手工构造等价请求；证据里没有的字段不要编。"
         )
     else:
         add("未采集可复现 PoC 与证据。请结合漏洞说明与关联节点复核，禁止用类别典型 payload 盲打。")
 
     if evidence and not (parsed and sigs):
         add(
-            "将响应或命令输出与「完整证据」逐字对照。"
+            "将响应或命令输出与证据逐字对照。"
             " 成功标准是证据中已记录的特征（状态码、回显、文件内容、canary）。"
         )
     add(
@@ -670,8 +624,8 @@ def apply_deterministic_writeup(finding: dict, *, poc: dict | None = None) -> di
         out["node_detail_unique"] = ""
     else:
         out["node_detail_unique"] = nd
-    from ..graph.model import secondary_review_narrative
-    out["secondary_review"] = secondary_review_narrative(out)
+    from ..graph.model import redteam_rating_block
+    out["secondary_review"] = redteam_rating_block(out)
     if not (out.get("impact_detail") or "").strip():
         out["impact_detail"] = deterministic_impact(out)
     if not (out.get("affected_scope") or "").strip():
@@ -815,8 +769,7 @@ async def _ai_one_writeup(finding: dict) -> dict | None:
 
     facts = _facts_for_ai(finding)
     prompt = (
-        "请为下面这一条漏洞写给安全工程师看的中文详报。"
-        "只使用事实包，写满 mechanism / root_cause / impact_detail / reproduction_notes。\n\n"
+        "请为下面这一条漏洞写短危害说明。只使用事实包，只填 impact_detail。\n\n"
         + json.dumps(facts, ensure_ascii=False, indent=2)[:80000]
     )
     model = (getattr(settings, "report_model", None) or "").strip() or (

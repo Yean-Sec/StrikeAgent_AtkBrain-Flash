@@ -1,5 +1,26 @@
 import type { FindingDetail, Graph, Project, RTEvent } from "./types";
 
+export type AssetGroupPreview = {
+  primary: string;
+  zone?: string;
+  vhosts: string[];
+  ports: number[];
+};
+
+export type AssetPreviewResult = {
+  track?: string;
+  objective?: string;
+  policy?: string;
+  group_count: number;
+  hosts: number;
+  lines_kept: number;
+  skipped_dup_count: number;
+  skipped_dup?: string[];
+  skipped_header: string[];
+  groups: AssetGroupPreview[];
+  note?: string;
+};
+
 const J = { "Content-Type": "application/json" };
 
 /** API Token：优先 localStorage，其次 Vite 环境变量（ATKBRAIN_API_TOKEN 非空时后端强制校验）。 */
@@ -132,6 +153,12 @@ export const api = {
       method: "POST",
       headers: J,
       body: JSON.stringify({ assets, auto_start: autoStart }),
+    }),
+  previewAssets: (assets: string[], track: string) =>
+    req<AssetPreviewResult>("/api/projects/assets/preview", {
+      method: "POST",
+      headers: J,
+      body: JSON.stringify({ assets, track }),
     }),
   importProgress: (id: string) => req<any>(`/api/projects/${id}/import_progress`),
   pauseImport: (id: string) =>
