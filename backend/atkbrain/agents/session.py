@@ -208,6 +208,72 @@ class ProjectAgent:
         except Exception:
             pass
 
+    async def _run_finding_review(self) -> int:
+        """对当前未二次验证的入库漏洞立刻开专职复核 Pi；没有待办则跳过。"""
+        from ..graph.store import findings_pending_secondary
+
+        try:
+            pending = await findings_pending_secondary(self.project_id)
+        except Exception:
+            pending = []
+        if not pending:
+            return 0
+        names = list(getattr(self.ctx, "task_subagents", None) or [])
+        if FINDING_REVIEW_ROLE not in names:
+            names.append(FINDING_REVIEW_ROLE)
+            try:
+                self.ctx.task_subagents = names
+            except Exception:
+                pass
+        await emit(
+            self.project_id, "log",
+            {
+                "level": "info",
+                "message": f"专职二次验证 {len(pending)} 条（从者入库后立刻复核）",
+            },
+            run_id=self.ctx.run_id,
+        )
+        await emit(
+            self.project_id, "finding_review",
+            {
+                "status": "running",
+                "count": len(pending),
+                "ids": [str(f.get("id") or "") for f in pending if f.get("id")],
+                "titles": [str(f.get("title") or "")[:80] for f in pending],
+                "role": FINDING_REVIEW_ROLE,
+            },
+            run_id=self.ctx.run_id,
+        )
+        try:
+            await self._run_one(
+                FINDING_REVIEW_ROLE,
+                finding_review_system_prompt(self.workspace_dir, self.objective),
+                build_finding_review_instruction(pending),
+            )
+            try:
+                from ..projects import get_project as _gp_rev
+                from ..report.pi_finding_page import fill_missing_pi_pages
+                await fill_missing_pi_pages(
+                    self.project_id, project=await _gp_rev(self.project_id),
+                )
+            except Exception:
+                pass
+        finally:
+            try:
+                await emit(
+                    self.project_id, "finding_review",
+                    {
+                        "status": "done",
+                        "count": len(pending),
+                        "ids": [str(f.get("id") or "") for f in pending if f.get("id")],
+                        "role": FINDING_REVIEW_ROLE,
+                    },
+                    run_id=self.ctx.run_id,
+                )
+            except Exception:
+                pass
+        return len(pending)
+
     async def _run_one(self, role: str, system_prompt: str, instruction: str) -> dict:
         sess = PiSession(
             cwd=self.workspace_dir,
@@ -255,36 +321,24 @@ class ProjectAgent:
             self.ctx.task_subagents = list(roles)
         except Exception:
             pass
-        pending: list[dict] = []
+        leftover = 0
         try:
             from ..graph.store import findings_pending_secondary
-            pending = await findings_pending_secondary(self.project_id)
+            leftover = len(await findings_pending_secondary(self.project_id))
         except Exception:
-            pending = []
+            leftover = 0
         pi_names = ["从者"] + list(roles)
-        if pending:
-            pi_names.append(FINDING_REVIEW_ROLE)
         await emit(
             self.project_id, "log",
             {
                 "level": "info",
                 "message": "本回合并发 Pi：" + "、".join(pi_names)
-                + (f"（专职二次验证 {len(pending)} 条）" if pending else ""),
+                + "（新入库漏洞立刻交专职二次验证"
+                + (f"；上回合残留 {leftover} 条马上复核" if leftover else "")
+                + "）",
             },
             run_id=self.ctx.run_id,
         )
-        if pending:
-            await emit(
-                self.project_id, "finding_review",
-                {
-                    "status": "running",
-                    "count": len(pending),
-                    "ids": [str(f.get("id") or "") for f in pending if f.get("id")],
-                    "titles": [str(f.get("title") or "")[:80] for f in pending],
-                    "role": FINDING_REVIEW_ROLE,
-                },
-                run_id=self.ctx.run_id,
-            )
         lead_instr = instruction
         extra_lead = []
         if roles:
@@ -293,28 +347,58 @@ class ProjectAgent:
                 + "、".join(f"`{r}`" for r in roles)
                 + "。你负责计划、短验证、写图与汇总；不要再开子进程。"
             )
-        if pending:
-            extra_lead.append(
-                f"另有专职 `{FINDING_REVIEW_ROLE}` 处理 {len(pending)} 条未二次验证漏洞；"
-                "你不要把二次验证当本回合主线。"
-            )
-        if extra_lead:
-            lead_instr = instruction + "\n\n" + "\n".join(extra_lead)
+        extra_lead.append(
+            f"从者或工人一 `report_finding`，专职 `{FINDING_REVIEW_ROLE}` 会立刻二次验证并红队评级；"
+            "你不要把二次验证当本回合主线。"
+        )
+        lead_instr = instruction + "\n\n" + "\n".join(extra_lead)
         jobs = [
             self._run_one("lead", self._lead_system(), lead_instr),
         ]
         for role in roles:
             jobs.append(self._run_one(role, self._role_system(role), instruction))
-        if pending:
-            jobs.append(
-                self._run_one(
-                    FINDING_REVIEW_ROLE,
-                    finding_review_system_prompt(self.workspace_dir, self.objective),
-                    build_finding_review_instruction(pending),
-                )
-            )
 
-        results = await asyncio.gather(*jobs, return_exceptions=True)
+        wake = asyncio.Event()
+        stop = False
+        lock = asyncio.Lock()
+
+        def _kick_review() -> None:
+            wake.set()
+
+        self.ctx.wake_finding_review = _kick_review
+
+        async def _review_pass() -> None:
+            async with lock:
+                await self._run_finding_review()
+
+        async def _review_loop() -> None:
+            while True:
+                await wake.wait()
+                if stop:
+                    return
+                wake.clear()
+                try:
+                    await _review_pass()
+                except Exception:
+                    pass
+
+        loop_task = asyncio.create_task(_review_loop())
+        if leftover:
+            _kick_review()
+        try:
+            results = await asyncio.gather(*jobs, return_exceptions=True)
+        finally:
+            stop = True
+            _kick_review()
+            try:
+                await loop_task
+            except Exception:
+                loop_task.cancel()
+            try:
+                await _review_pass()
+            except Exception:
+                pass
+            self.ctx.wake_finding_review = None
         texts: list[str] = []
         tool_uses = 0
         first_err: BaseException | None = None
@@ -325,28 +409,6 @@ class ProjectAgent:
                 continue
             texts.append(str(item.get("text") or ""))
             tool_uses += int(item.get("tool_uses") or 0)
-        if pending:
-            try:
-                from ..projects import get_project as _gp_rev
-                from ..report.pi_finding_page import fill_missing_pi_pages
-                await fill_missing_pi_pages(
-                    self.project_id, project=await _gp_rev(self.project_id),
-                )
-            except Exception:
-                pass
-            try:
-                await emit(
-                    self.project_id, "finding_review",
-                    {
-                        "status": "done",
-                        "count": len(pending),
-                        "ids": [str(f.get("id") or "") for f in pending if f.get("id")],
-                        "role": FINDING_REVIEW_ROLE,
-                    },
-                    run_id=self.ctx.run_id,
-                )
-            except Exception:
-                pass
         if self.ctx.goal_reached:
             try:
                 await self.interrupt()

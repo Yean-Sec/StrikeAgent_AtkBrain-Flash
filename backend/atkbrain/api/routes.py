@@ -10,6 +10,8 @@ from ..config import settings
 from ..db import db, _loads
 from ..engine.scheduler import manager
 from ..graph import store as gstore
+from ..project_status import hunt_hard_stop_info
+from ..app_version import check_latest, local_version
 from ..projects import (
     assert_safe_project_target,
     create_benchmark_project,
@@ -129,6 +131,21 @@ class BatchRunReq(BaseModel):
     confirm_restart: bool = False
 
 
+class ProxyEnableReq(BaseModel):
+    enabled: bool
+
+
+class ProxyPoolReq(BaseModel):
+    custom_text: str = ""
+
+
+def _proxy_snap() -> dict:
+    from ..proxy.pool import pool
+    snap = pool.snapshot()
+    snap.pop("custom_text", None)
+    return snap
+
+
 async def _stop_project_tree(pid: str) -> list[str]:
     """先停子项目再停自身，返回实际被 stop 的 id 列表。同级子树并行停，避免 400 个子项目串行卡死。"""
     child_ids = await list_child_ids(pid)
@@ -168,18 +185,29 @@ async def health():
         claude_sdk = {"state": "ready", "label": "Pi 就绪", "version": ver[:80], "bin": bin_path}
     except Exception as exc:
         claude_sdk = {"state": "unavailable", "label": "Pi 不可用", "error": str(exc)[:160]}
-    return {"ok": True, "version": "0.1.0", "claude_sdk": claude_sdk, **manager.snapshot()}
+    return {"ok": True, "version": local_version(), "claude_sdk": claude_sdk, "proxy": _proxy_snap(), **manager.snapshot()}
+
+
+@router.get("/version")
+async def get_version(refresh: bool = False):
+    return check_latest(force=bool(refresh))
 
 
 @router.get("/settings")
 async def get_settings():
     return {
         "concurrency": manager.snapshot(),
+        "proxy": _proxy_snap(),
         "defaults": {
             "model": settings.claude_model,
             "supervisor_model": (settings.supervisor_model or settings.claude_model),
             "evolve_ai": bool(getattr(settings, "evolve_ai", True)),
             "loop_max_turns": settings.loop_max_turns,
+            "hard_stop": {
+                "src": hunt_hard_stop_info("src"),
+                "redteam": hunt_hard_stop_info("redteam"),
+                "flag": hunt_hard_stop_info("flag"),
+            },
         },
     }
 
@@ -198,6 +226,35 @@ async def set_concurrency(req: ConcurrencyReq):
         "ctf": snap["ctf"],
         "claude": snap["claude"],
     }
+
+
+@router.get("/proxy/status")
+async def api_proxy_status():
+    return _proxy_snap()
+
+
+@router.post("/proxy/enabled")
+async def api_proxy_enabled(req: ProxyEnableReq):
+    from ..proxy.pool import pool
+    return await pool.set_enabled(bool(req.enabled))
+
+
+@router.get("/proxy/pool")
+async def api_proxy_pool_get():
+    from ..proxy.pool import pool
+    return pool.snapshot()
+
+
+@router.post("/proxy/pool")
+async def api_proxy_pool_set(req: ProxyPoolReq):
+    from ..proxy.pool import pool
+    return await pool.set_custom_text(req.custom_text or "")
+
+
+@router.post("/proxy/verify")
+async def api_proxy_verify():
+    from ..proxy.pool import pool
+    return await pool.verify()
 
 
 def _slim_list_config(cfg: dict | None) -> dict:
@@ -499,7 +556,7 @@ async def api_graph(pid: str):
     return await gstore.get_graph(pid)
 
 
-_PINNED_EVENT_TYPES = ("steer", "drift_alert", "supervisor", "finding_review")
+_PINNED_EVENT_TYPES = ("steer", "drift_alert", "supervisor", "finding_review", "report_export")
 
 
 async def fetch_project_event_rows(pid: str, after: int = 0):
@@ -519,7 +576,7 @@ async def fetch_project_event_rows(pid: str, after: int = 0):
         """SELECT * FROM (
              SELECT * FROM events
              WHERE project_id=?
-               AND type IN ('text','shell','lateral','status','thought','finding','log','finding_review')
+               AND type IN ('text','shell','lateral','status','thought','finding','log','finding_review','report_export')
              ORDER BY id DESC LIMIT 500
            ) t ORDER BY id ASC""",
         (pid,),

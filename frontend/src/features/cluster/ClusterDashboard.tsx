@@ -7,7 +7,7 @@ import { BatchSelectionBar } from "../../components/BatchSelectionBar";
 import { ImportProgressBar, isImportPaused, isImportRunning, type ImportProgress } from "../../components/ImportProgressBar";
 import { PaginationBar, pageItems, readPageSize } from "../../components/PaginationBar";
 import { colors } from "../../theme";
-import { huntFailedReason, listStatusOf } from "../../projectStatus";
+import { huntFailedReason, listStatusOf, hardStopLine } from "../../projectStatus";
 import { ReportExportControls } from "../report/ExportReport";
 
 const statusColor: Record<string, string> = {
@@ -289,6 +289,7 @@ export function ClusterDashboard({
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize) || 1);
   const curPage = Math.min(page, pageCount);
   const paged = pageItems(visible, curPage, pageSize);
+  const stopHint = hardStopLine(project);
   const selectedCount = selectedIds.length;
   const allSelected = paged.length > 0 && paged.every((s) => selectedIds.includes(s.id));
   const toggleSelected = (id: string) => {
@@ -367,6 +368,14 @@ export function ClusterDashboard({
               {queuedCount > 0 ? ` · 排队 ${queuedCount}` : ""}
             </span>
           </div>
+          {stopHint ? (
+            <div className="muted" style={{ fontSize: 12, marginTop: 6, lineHeight: 1.55 }} title={stopHint.title}>
+              <div>每个子猎 {stopHint.text}</div>
+              {stopHint.conditions.map((c) => (
+                <div key={c}>· {c}</div>
+              ))}
+            </div>
+          ) : null}
         </div>
         <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
           <ReportExportControls projectId={project.id} disabled={busy} />

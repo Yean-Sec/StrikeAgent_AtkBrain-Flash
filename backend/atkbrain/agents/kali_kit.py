@@ -24,6 +24,8 @@ KIT_SKILL_HINT = (
     "需要本机工具绝对路径、词表或可复制命令时，调用 skill `kali-kit`。"
     "禁止 which / command -v / type / ls /usr/share/wordlists / ls seclists / 猜包名。"
     "未在该 skill 列出的工具当不存在。"
+    "利用 payload 被 WAF 或 403/406 拦截页拦住时，调用 skill `waf-bypass-methodology`；"
+    "路径级 401/403 先走 kali-kit 的 bypass-403。"
 )
 
 KIT_RULES = """# 本机工具纪律
@@ -50,7 +52,7 @@ def kit_web(repo_root: str) -> str:
   - 中（最大）：`/usr/bin/ffuf -u http://<host>/FUZZ -w {WL_DIR_MED} -mc 200,204,301,302,307,401,403 -t 40`（87664）
 - Host 碰撞：`/usr/bin/gobuster vhost -u http://<ip> --append-domain -w {WL_DNS}`；或 `/usr/bin/ffuf -u http://<ip>/ -H 'Host: FUZZ.<domain>' -w {WL_DNS}`。
 - JS 接口：`python3 {jsfinder} -u <url> -ou js_urls.txt -os js_subs.txt`（仓库 tools/，禁止 which jsfinder）。
-- 40x 绕过：已确认 401/403 后 `bash {bypass} http://<host> <path>`（iamj0ker/bypass-403；禁止 which bypass-403）。
+- 40x 绕过：已确认 401/403 后 `bash {bypass} http://<host> <path>`（iamj0ker/bypass-403；禁止 which bypass-403）。Payload 被 WAF/拦截页拦住时读 skill `waf-bypass-methodology`。
 - 账号密码：`/usr/bin/hydra`（用户 `-L` 密码 `-P`）。一律禁止 `{WL_ROCKYOU}` 与 hashcat 全库。
   - 小：`-L {WL_USER_SMALL} -P {WL_PASS_SMALL}`；HTTP 默认对 `{WL_HTTP_DEFAULT}`
   - 中：`-P {WL_PASS_MED}`
@@ -117,7 +119,7 @@ def commander_kit(repo_root: str | None = None, *, objective: str | None = None)
 
 
 def skill_markdown(repo_root: str | None = None) -> str:
-    """仓库 / 猎面工作区 `.claude/skills/kali-kit/SKILL.md` 的完整内容。"""
+    """仓库 `skills/kali-kit/SKILL.md` / 猎面工作区 `.agents/skills/kali-kit/SKILL.md` 的完整内容。"""
     return SKILL_FRONTMATTER + "\n" + commander_kit(repo_root)
 
 

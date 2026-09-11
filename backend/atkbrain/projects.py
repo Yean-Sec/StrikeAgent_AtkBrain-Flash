@@ -213,11 +213,15 @@ def _backfill_track(kind: str, cfg: dict) -> dict:
 def _serialize(row: dict) -> dict:
     kind = row["kind"]
     cfg = _loads(row["config"]) or {}
+    cfg = _backfill_track(kind, cfg)
+    from .project_status import hunt_hard_stop_info
+    obj = (cfg or {}).get("objective") or (cfg or {}).get("track")
     return {
         "id": row["id"], "name": row["name"], "kind": kind, "target": row["target"],
         "ports": _loads(row["ports"]), "scope": _loads(row["scope"]) or {},
-        "config": _backfill_track(kind, cfg), "status": row["status"],
+        "config": cfg, "status": row["status"],
         "parent_id": row["parent_id"], "created_at": row["created_at"], "updated_at": row["updated_at"],
+        "hard_stop": hunt_hard_stop_info(obj),
     }
 
 
@@ -270,7 +274,7 @@ async def unstick_transient_resource_errors() -> int:
 
 
 async def reclassify_hunt_failures() -> int:
-    """图空转 / 时长硬停（及 SRC 轮次硬停）的存量项目从 idle/completed/stopped 改到 error（失败区）。"""
+    """图空转 / 时长硬停的存量项目从 idle/completed/stopped 改到 error（失败区）。"""
     from .project_status import HUNT_FAILED_REASONS
 
     rows = await db.fetchall(

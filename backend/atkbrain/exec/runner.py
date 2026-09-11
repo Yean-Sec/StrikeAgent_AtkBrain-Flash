@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass
 
@@ -26,6 +27,7 @@ async def run_shell(
     cwd: str,
     guard: Guard,
     timeout: int | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> CmdResult:
     decision: GuardDecision = guard.check_command(command)
     if not decision.allow:
@@ -41,12 +43,21 @@ async def run_shell(
         except (TypeError, ValueError):
             limit = int(getattr(settings, "cmd_timeout", 0) or 0)
     t0 = time.monotonic()
+    env = None
+    if extra_env:
+        from ..objective import objective_allows_flag
+        if objective_allows_flag(getattr(guard, "objective", None)):
+            extra_env = None
+    if extra_env:
+        env = os.environ.copy()
+        env.update(extra_env)
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         try:
             if limit <= 0:

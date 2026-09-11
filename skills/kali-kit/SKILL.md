@@ -30,7 +30,7 @@ description: >
   - 中（最大）：`/usr/bin/ffuf -u http://<host>/FUZZ -w /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt -mc 200,204,301,302,307,401,403 -t 40`（87664）
 - Host 碰撞：`/usr/bin/gobuster vhost -u http://<ip> --append-domain -w /usr/share/wordlists/dnsmap.txt`；或 `/usr/bin/ffuf -u http://<ip>/ -H 'Host: FUZZ.<domain>' -w /usr/share/wordlists/dnsmap.txt`。
 - JS 接口：`python3 <REPO>/tools/JSFinder/JSFinder.py -u <url> -ou js_urls.txt -os js_subs.txt`（仓库 tools/，禁止 which jsfinder）。
-- 40x 绕过：已确认 401/403 后 `bash <REPO>/tools/bypass-403/bypass-403.sh http://<host> <path>`（iamj0ker/bypass-403；禁止 which bypass-403）。
+- 40x 绕过：已确认 401/403 后 `bash <REPO>/tools/bypass-403/bypass-403.sh http://<host> <path>`（iamj0ker/bypass-403；禁止 which bypass-403）。Payload 被 WAF/拦截页拦住时读 skill `waf-bypass-methodology`。
 - 账号密码：`/usr/bin/hydra`（用户 `-L` 密码 `-P`）。一律禁止 `/usr/share/wordlists/rockyou.txt` 与 hashcat 全库。
   - 小：`-L /usr/share/metasploit-framework/data/wordlists/unix_users.txt -P /usr/share/metasploit-framework/data/wordlists/unix_passwords.txt`；HTTP 默认对 `/usr/share/wordlists/metasploit/http_default_userpass.txt`
   - 中：`-P /usr/share/john/password.lst`

@@ -38,6 +38,11 @@ function toMessages(events: RTEvent[]): Msg[] {
         push({ role: "sys", text: `🔎 本轮二次验证结束${n ? ` · ${n} 条` : ""}`, id });
       }
     }
+    else if (ev.type === "report_export") {
+      if (p.status === "running") push({ role: "sys", text: "📄 专职导出 Pi 正在撰写交付报告", id });
+      else if (p.status === "error") push({ role: "sys", text: `📄 专职导出 Pi 失败：${String(p.message || "").slice(0, 200)}`, id });
+      else if (p.status === "done") push({ role: "sys", text: "📄 专职导出 Pi 已写完交付报告", id });
+    }
     else if (ev.type === "log" && (p.level === "warn" || p.level === "error")) push({ role: "sys", text: String(p.message || "").slice(0, 400), id });
     else if (ev.type === "status" && ["goal_reached", "completed", "stopped", "error", "running"].includes(p.status) && p.turn === undefined) {
       push({ role: "sys", text: `● 状态：${p.status}`, id });

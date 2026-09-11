@@ -15,6 +15,7 @@ from .api.routes import router as api_router
 from .api.ws import ws_router
 from .config import REPO_ROOT, settings
 from .db import db, now
+from .app_version import local_version
 
 
 def _raise_nofile_limit() -> None:
@@ -124,6 +125,11 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     autopilot_task = asyncio.create_task(_benchmark_autopilot_loop())
+    try:
+        from .proxy.pool import pool as _proxy_pool
+        _proxy_pool.ensure_loop()
+    except Exception as e:
+        print(f"[startup] 代理池后台任务失败：{e}")
     yield
     autopilot_task.cancel()
     try:
@@ -140,7 +146,7 @@ async def lifespan(app: FastAPI):
     await db.close()
 
 
-app = FastAPI(title="StrikeAgent_AtkBrain-Flash", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="StrikeAgent_AtkBrain-Flash", version=local_version(), lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -158,7 +164,7 @@ async def api_token_middleware(request: Request, call_next):
     if not expected:
         return await call_next(request)
     path = request.url.path or ""
-    if path == "/api/health" or not path.startswith("/api"):
+    if path in ("/api/health", "/api/version") or not path.startswith("/api"):
         return await call_next(request)
     # WebSocket 升级由 ws 端点自行校验，避免中间件吞掉 upgrade
     if (request.headers.get("upgrade") or "").lower() == "websocket":

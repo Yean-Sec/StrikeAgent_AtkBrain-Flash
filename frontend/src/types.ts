@@ -126,6 +126,26 @@ export interface Graph {
   stats: Stats;
 }
 
+export interface AppVersion {
+  local: string;
+  latest?: string | null;
+  latest_tag?: string | null;
+  is_latest: boolean;
+  status: "latest" | "update_available" | "no_release" | "check_failed" | string;
+  html_url?: string;
+  notes?: string;
+  message?: string;
+  repo?: string;
+}
+
+export interface HardStop {
+  track?: string;
+  runtime_sec?: number;
+  max_turns?: number;
+  conditions?: string[];
+  label?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -144,6 +164,7 @@ export interface Project {
   queued?: boolean;
   graph?: Graph;
   run_id?: string;
+  hard_stop?: HardStop;
 }
 
 export interface RTEvent {

@@ -21,6 +21,8 @@ from ..scope import (
     unauthorized_private_host,
 )
 
+NO_DIRECT_MSG = "红队/SRC 出口代理池暂无存活节点，拒绝直连以免暴露真实 IP"
+
 
 @dataclass
 class AgentContext:
@@ -60,6 +62,7 @@ class AgentContext:
     _ssrf_gw_hosts: set = field(default_factory=set)
     _ssrf_gw_ts: float = 0.0
     bound_must_intents: frozenset = field(default_factory=frozenset)
+    wake_finding_review: object | None = None
 
     def host_of(self, url: str) -> str:
         try:
@@ -155,8 +158,24 @@ class AgentContext:
         self.cmd_inflight = int(getattr(self, "cmd_inflight", 0) or 0) + 1
         self.mark_activity()
         try:
+            extra_env = None
+            must = False
+            try:
+                from ..proxy.pool import pool as _proxy_pool
+                must = _proxy_pool.must_proxy(self.objective)
+                if must:
+                    px = await _proxy_pool.wait_pick(8.0)
+                    extra_env = _proxy_pool.proxy_env(px)
+            except Exception:
+                extra_env = None
+            if must and not extra_env:
+                return CmdResult(
+                    exit_code=-1, stdout="", stderr=NO_DIRECT_MSG,
+                    blocked=True, reason=NO_DIRECT_MSG, category="proxy",
+                )
             return await run_shell(
                 command, cwd=self.workspace_dir, guard=self.guard, timeout=timeout,
+                extra_env=extra_env,
             )
         finally:
             self.cmd_inflight = max(0, int(getattr(self, "cmd_inflight", 0) or 0) - 1)
@@ -170,6 +189,51 @@ class AgentContext:
                 verify=False,
             )
         return self._httpx_cli  # type: ignore[return-value]
+
+    def _proxy_url_for_http(self, url: str) -> str | None:
+        host = (self.host_of(url) or "").lower()
+        if host in ("127.0.0.1", "localhost", "::1"):
+            return None
+        try:
+            from ..proxy.pool import pool as _proxy_pool
+            if not _proxy_pool.must_proxy(self.objective):
+                return None
+            return _proxy_pool.pick()
+        except Exception:
+            return None
+
+    async def _request_http(self, method: str, url: str, *, headers: dict, content):
+        host = (self.host_of(url) or "").lower()
+        local = host in ("127.0.0.1", "localhost", "::1")
+        must = False
+        if not local:
+            try:
+                from ..proxy.pool import pool as _proxy_pool
+                must = _proxy_pool.must_proxy(self.objective)
+            except Exception:
+                must = False
+        if not must:
+            return await self._client().request(method, url, headers=headers, content=content)
+
+        from ..proxy.pool import pool as _proxy_pool
+        tried: set[str] = set()
+        last_err: Exception | None = None
+        for attempt in range(3):
+            px = await _proxy_pool.wait_pick(8.0 if attempt == 0 else 0.0)
+            if not px or px in tried:
+                px = _proxy_pool.pick()
+            if not px or px in tried:
+                break
+            tried.add(px)
+            try:
+                async with httpx.AsyncClient(
+                    follow_redirects=True, timeout=30.0, verify=False, proxy=px,
+                ) as cli:
+                    return await cli.request(method, url, headers=headers, content=content)
+            except Exception as e:
+                last_err = e
+                continue
+        raise RuntimeError(str(last_err) if last_err else NO_DIRECT_MSG)
 
     async def http(
         self,
@@ -200,7 +264,7 @@ class AgentContext:
             if cookie:
                 hdrs.setdefault("Cookie", cookie)
         try:
-            resp = await self._client().request(method.upper(), url, headers=hdrs, content=data)
+            resp = await self._request_http(method.upper(), url, headers=hdrs, content=data)
         except Exception as e:
             return {"error": str(e), "status": 0, "engine": "httpx"}
         for k, v in resp.cookies.items():

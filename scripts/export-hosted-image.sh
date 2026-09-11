@@ -57,7 +57,7 @@ if [ -d /opt/atkbrain/.cursor ] || [ -d /root/.cursor ]; then
   echo "[!] 镜像里出现编辑器对话目录" >&2
   exit 1
 fi
-if [ ! -f /opt/atkbrain/.claude/skills/recon-fanout/SKILL.md ]; then
+if [ ! -f /opt/atkbrain/skills/recon-fanout/SKILL.md ]; then
   echo "[!] 镜像缺少 CTF skill recon-fanout" >&2
   exit 1
 fi

@@ -20,13 +20,13 @@
 
 ## 架构
 
-控制台调度猎面；攻击图驱动自循环；监督只在轮次边界出方案；收工把可迁移手法蒸馏进记忆库，回灌下一局。
+控制台调度猎面；攻击图驱动自循环。从者整轮（含角色工人）打完再问御主，卡住或到周期才开口；对话框里的人工指令立刻打断本轮并强制改向。收工把可迁移手法蒸馏进记忆库，回灌下一局。猎面运行时是 Pi（`deepseek-flash`），不是 Claude Code。
 
 ![StrikeAgent_AtkBrain-Flash 架构](docs/assets/architecture.png)
 
 ## 产品页面展示
 
-新建项目：单目标 / 集群，红队（getshell）或 CTF。
+新建项目：单目标 / 集群；三条赛道——红队（getshell）、CTF（flag）、SRC（厂商清单挖洞）。
 
 ![新建项目](docs/assets/ScreenShot_2026-09-07_213431_146.png)
 
@@ -69,10 +69,10 @@ Cybench 官方认证榜单第 3 名（`deepseek-v4-flash`，84.13 / 100）。
 把下面整段连同源代码交给任意能跑本机命令的 AI。它应按原文部署，不要改 skill 绑定方式、不要把路径写死成别人的机器。
 
 ```
-你要在本机把 StrikeAgent_AtkBrain-Flash 从当前源代码部署到可打开控制台。目标系统是 Kali Linux（Debian 系、systemd、能 sudo）。不要用 Docker 当主路径。不要把仓库里的猎面 skill 装进 ~/.claude。不要把任何路径写死成 /home/kali/桌面/... 或其它克隆者机器上的目录。
+你要在本机把 StrikeAgent_AtkBrain-Flash 从当前源代码部署到可打开控制台。目标系统是 Kali Linux（Debian 系、systemd、能 sudo）。不要用 Docker 当主路径。不要把仓库里的猎面 skill 装进 ~/.claude 或 ~/.pi。不要把任何路径写死成 /home/kali/桌面/... 或其它克隆者机器上的目录。
 
 一、目录与进程纪律
-- 仓库根记为 REPO（含 backend/、frontend/、scripts/、.claude/、tools/）。
+- 仓库根记为 REPO（含 backend/、frontend/、scripts/、skills/、tools/、pi/）。
 - 后端 :5003，前端 :5001。不要在临时 shell 里再起 python3 -m atkbrain.main 或 npm run dev，会和 systemd 抢端口。
 - 后端解释器必须是 /usr/bin/python3（3.12+），包装到系统 Python，不要只装进 venv 却让 unit 跑系统 python。
 - 数据、库、工作区、密钥只写 backend/data/（已 gitignore）。不要提交 .env、*.db、workspaces、loot、atkbrain-claude.env。
@@ -86,19 +86,20 @@ Cybench 官方认证榜单第 3 名（`deepseek-v4-flash`，84.13 / 100）。
 - 把当前 shell 里的 DEEPSEEK_* / ANTHROPIC_* / ATKBRAIN_* / PI_* 准备好后再 sudo scripts/atkbrain-up.sh。脚本会把密钥快照到 backend/data/atkbrain-claude.env（权限 600）。systemd 的 PATH 里要有 pi。
 
 三、Skill / 工具路径（最容易部署错）
-猎面 Pi 的 cwd 是 backend/data/workspaces/<项目id>/，不是仓库根。Skill 和本仓库绑定，不是用户全局环境。
-- 源文件：REPO/.claude/skills/kali-kit、recon-fanout、recon-spiral。只进 git，不要复制到 ~/.pi，不要改 Pi 用户级 settings 来装 skill。
-- 运行时：会话启动会把本赛道 skill 拷到该猎工作区 backend/data/workspaces/<pid>/.agents/skills/。Pi 从 cwd 向上发现。
-- kali-kit 不能用手写死本机路径。仓库里的 .claude/skills/kali-kit/SKILL.md 用占位符 <REPO>。真正给从者看的那份由 backend/atkbrain/agents/kali_kit.py 的 skill_markdown() 按 REPO_ROOT 生成（REPO_ROOT = backend 的上一级）。project_skills.install_into_workspace 会在拷贝后覆盖工作区里的 kali-kit/SKILL.md。部署时不要把 SKILL.md 改成某台机器的绝对路径。
+猎面 Pi 的 cwd 是 backend/data/workspaces/<项目id>/，不是仓库根。Skill 和本仓库绑定，不是用户全局环境。图工具走 REPO/pi/extensions/atkbrain-tools.ts（本机 HTTP），不要再装 Claude Agent SDK / MCP。
+- 源文件：REPO/skills/kali-kit、recon-fanout、recon-spiral、src-hunt-playbook、waf-bypass-methodology。只进 git，不要复制到 ~/.claude 或 ~/.pi，不要改 Pi 用户级 settings 来装 skill。
+- 运行时：会话启动会把本赛道 skill 拷到该猎工作区 backend/data/workspaces/<pid>/.agents/skills/。Pi 用 --skill 精确加载。
+- 调度按御主方案并发拉起角色工人（Python 拉 Pi 进程），不要用 Claude Code 的 Task/Agent。工人禁止再开子进程。
+- kali-kit 不能用手写死本机路径。仓库里的 skills/kali-kit/SKILL.md 用占位符 <REPO>。真正给从者看的那份由 backend/atkbrain/agents/kali_kit.py 的 skill_markdown() 按 REPO_ROOT 生成（REPO_ROOT = backend 的上一级）。project_skills.install_into_workspace 会在拷贝后覆盖工作区里的 kali-kit/SKILL.md。部署时不要把 SKILL.md 改成某台机器的绝对路径。
 - Kali 没有、仓库自带的脚本必须用仓库绝对路径调用（工作区 cwd 找不到相对路径）：
   python3 $REPO/tools/JSFinder/JSFinder.py -u <url> -ou js_urls.txt -os js_subs.txt
   bash $REPO/tools/bypass-403/bypass-403.sh http://<host> <path>
   禁止 which jsfinder / which bypass-403，也不要把这两份脚本复制进 /usr/bin。
 - nmap / ffuf / nuclei 等用系统绝对路径（/usr/bin/...），清单在 kali-kit，禁止 which / ls /usr/share/wordlists。
-- 不要把 kali-kit 全文塞进系统提示；从者需要路径时调用 skill kali-kit。CTF 开局读 recon-fanout，红队开局读 recon-spiral。
+- 不要把 kali-kit 全文塞进系统提示；从者需要路径时调用 skill kali-kit。CTF 开局读 recon-fanout，红队开局读 recon-spiral，SRC 开局读 src-hunt-playbook。利用 payload 被 WAF/403/406 拦住时再读 waf-bypass-methodology；路径级 401/403 仍走 kali-kit 的 bypass-403。
 
 四、验收
-curl -sS http://127.0.0.1:5003/api/health   期望 ok: true，claude_sdk.label 为「Pi 就绪」
+curl -sS http://127.0.0.1:5003/api/health   期望 ok: true，claude_sdk.label 为「Pi 就绪」（字段名仍是 claude_sdk，含义是 Pi）
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/   期望 200
 浏览器打开 http://127.0.0.1:5001/
 失败先看 backend/data/logs/backend.err.log 与 frontend.err.log：缺包、端口占用、pi 不在 unit 的 PATH、或没快照密钥。
@@ -188,7 +189,7 @@ sudo scripts/atkbrain-up.sh
 
 ```bash
 curl -sS http://127.0.0.1:5003/api/health
-# 期望含 "ok": true，以及 claude_sdk 状态
+# 期望含 "ok": true，以及 claude_sdk.label 为「Pi 就绪」
 
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/
 # 期望 200
@@ -196,7 +197,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/
 
 日志：`backend/data/logs/backend.log`、`backend.err.log`、`frontend.log`、`frontend.err.log`。数据在 `backend/data/`，已进 `.gitignore`。
 
-红队默认 5 个项目、CTF 默认 3 个，两道互不占槽，都可调到 20。项目内 Pi 工人不设上限。设置页和顶栏能看到当前占用。
+红队 / SRC 默认 5 个项目槽、CTF 默认 3 个，两道互不占槽，都可调到 20。项目内 Pi 工人不设上限。顶栏看槽位、Pi 就绪和出口代理；设置页只管自建代理池。
+
+红队墙钟 12 小时硬停（拿到 shell 提前收工）；SRC 6 小时硬停、不限轮次、已验证高危/严重不停工；CTF 按遍次墙钟。红队 / SRC 打目标必须走顶栏出口代理，无存活节点则拒绝出网，不会回落真实 IP。CTF 始终直连。侧栏版本对照 GitHub Release 只提示，不自动升级。
 
 ### 常见问题
 
@@ -208,6 +211,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/
 
 **控制台显示 Pi 未就绪**  
 本机 `pi` 不在 PATH，或 `atkbrain-claude.env` 里没有密钥。在已配好密钥的 shell 里再执行一次 `sudo scripts/atkbrain-backend.sh restart`（会重新快照环境变量）。
+
+**红队 / SRC 打目标报拒绝直连**  
+顶栏出口代理开着，但还没有存活节点。到设置页保存自建池，或等探活转圈出节点后再打。CTF 始终直连，不受影响。
 
 **5001 / 5003 被占**  
 `ss -tlnp | grep -E '5001|5003'`，停掉旧进程后再 `atkbrain-up.sh`。
@@ -228,7 +234,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/
 
 当前 AI+安全领域百花齐放，各种工具层出不穷。在 AI 的加持下，想法到落地可以以极快的方式进行，但很多工具缺乏大量测试，只有其形没有其神。我们在写项目的同时，也对 AI+安全方向的众多工具（包括商业化闭源工具）进行了测试。
 
-测试后发现，同质化问题相当严重；也拿到过一些竞赛排名靠前的项目，发现不少问题。比如竞赛通常有时间和并发限制，大概率没有 WAF，并且题目肯定有解；而红队则不限时间，是否会有 RCE 或者数据库权限等，都是未知数，并且大概率有 WAF。再比如大资产的测试时间分配、是否容易打偏、什么叫目标资产（比如 JS 中有很多资产，如何精准区分旁站和毫不相关的资产）、Agent 的调用、沙箱、上下文、召回率，skill 的数量、嵌套深度和最佳平衡点到底是多少，是否采用 Skill 和 MCP，等等一系列问题，都需要大量测试和反复验证。
+测试后发现，同质化问题相当严重；也拿到过一些竞赛排名靠前的项目，发现不少问题。比如竞赛通常有时间和并发限制，大概率没有 WAF，并且题目肯定有解；而红队则不限时间，是否会有 RCE 或者数据库权限等，都是未知数，并且大概率有 WAF。再比如大资产的测试时间分配、是否容易打偏、什么叫目标资产（比如 JS 中有很多资产，如何精准区分旁站和毫不相关的资产）、Agent 的调用、沙箱、上下文、召回率，skill 的数量、嵌套深度和最佳平衡点到底是多少，图工具走本机扩展还是 MCP，等等一系列问题，都需要大量测试和反复验证。Flash 版猎面已从 Claude Code 换成 Pi，角色工人由调度并发拉起，不再走 Task/Agent。
 
 现在这个 AI 盛行的时代，代码不是重点，重要的是思想、观点和想法，而不是千篇一律地二开个项目、加几句话，然后导入一大坨资产，发现能搞点东西——这种量变无法引起质变。当然，也看到社区里有非常优秀的产品和非常先进的理念。比如杭州那个前辈团队的 Cairn 理念就很有意思：它摒弃了 Skill、MCP、RAG，完全由底座模型和 Agent，再加上一些编排自行决定，这颠覆了以往传统的“Skill+RAG 引导调用 MCP 工具”的理念，这种思想的提出也极具参考意义。还有社区“教红队的 Des”的产品融合，感觉做得很有意义，在增效方面有巨大提升，等等。许多极其优秀的前辈/作品都值得学习。
 

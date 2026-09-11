@@ -469,7 +469,7 @@ def note_graph_idle_plans(
 
 
 _WS_SKIP_DIR = frozenset({
-    "__pycache__", ".git", ".claude", "agent-transcripts", ".pycache",
+    "__pycache__", ".git", ".claude", ".agents", "skills", "agent-transcripts", ".pycache",
 })
 _WS_SKIP_NAME = frozenset({
     "shells.json",

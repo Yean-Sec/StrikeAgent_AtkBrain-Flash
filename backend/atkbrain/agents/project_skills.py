@@ -1,6 +1,6 @@
 """本仓库猎面专用 skills。
 
-源文件在仓库根 `.claude/skills/`（进 git）。会话启动时按赛道拷进该猎工作区
+源文件在仓库根 `skills/`（进 git）。会话启动时按赛道拷进该猎工作区
 `backend/data/workspaces/<pid>/.agents/skills/`，猎面 Pi 用 `--no-skills` + `--skill` 精确加载。不写 `~/.pi`。
 """
 from __future__ import annotations
@@ -11,8 +11,10 @@ from pathlib import Path
 from ..config import REPO_ROOT
 from ..objective import objective_allows_flag, objective_is_src
 
-SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
-SHARED_SKILLS = ("kali-kit",)
+SKILLS_ROOT = REPO_ROOT / "skills"
+if not (SKILLS_ROOT / "kali-kit").is_dir():
+    SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
+SHARED_SKILLS = ("kali-kit", "waf-bypass-methodology")
 CTF_SKILLS = ("recon-fanout",)
 REDTEAM_SKILLS = ("recon-spiral",)
 SRC_SKILLS = ("src-hunt-playbook",)

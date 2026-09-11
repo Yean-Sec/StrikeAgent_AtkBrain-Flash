@@ -26,6 +26,8 @@ from ..projects import build_scope, get_project, update_config, update_status
 from ..project_status import (
     ctf_pass_index,
     final_project_status,
+    format_duration_zh,
+    hunt_hard_stop_info,
     hunt_max_turns,
     hunt_runtime_hard_stop_sec,
     uses_ctf_hunt_clocks,
@@ -571,16 +573,27 @@ async def _refresh_entry_identity(
         return
     host = str(target or project.get("target") or "").split(":")[0]
     port = _entry_port(project)
+    obj = None
+    try:
+        obj = (project.get("config") or {}).get("objective") or (project.get("config") or {}).get("track")
+    except Exception:
+        obj = None
     peers: list[str] = []
     try:
         peers = await running_peers_same_entry(project_id, host)
     except Exception:
         peers = []
     live: dict = {}
-    tcp_ok = bool(host and await _tcp_alive(host, port, timeout=2.0))
+    must_px = False
+    try:
+        from ..proxy.pool import pool as _proxy_pool
+        must_px = _proxy_pool.must_proxy(obj)
+    except Exception:
+        must_px = False
+    tcp_ok = True if must_px else bool(host and await _tcp_alive(host, port, timeout=2.0))
     if tcp_ok:
         try:
-            live = await probe_entry_http(host, port) or {}
+            live = await probe_entry_http(host, port, objective=obj) or {}
         except Exception:
             live = {}
     result = classify_entry_identity(brief=brief or "", graph=graph, live=live)
@@ -1469,7 +1482,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
         entry_rebind_sec = int(getattr(settings, "benchmark_entry_down_rebind_sec", 90) or 0)
         entry_yield_sec = int(getattr(settings, "benchmark_entry_down_yield_sec", 480) or 0)
         redteam_yield_sec = int(
-            getattr(settings, "redteam_entry_down_yield_sec", 8 * 60)
+            getattr(settings, "redteam_entry_down_yield_sec", 0)
             or getattr(settings, "entry_unreachable_yield_sec", 0)
             or 0
         )
@@ -1484,28 +1497,24 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 ended_att = 0
         pass_n = ctf_pass_index(ended_real_attempts=ended_att)
         runtime_hard = hunt_runtime_hard_stop_sec(objective, pass_n=pass_n)
+        cap_txt = format_duration_zh(runtime_hard)
         if ctf_clocks:
             await emit(
                 project_id, "log",
                 {"level": "info",
                  "message": (
-                     f"本猎第 {pass_n} 遍，墙钟硬停 {max(0, runtime_hard) // 60} 分钟"
+                     f"本猎第 {pass_n} 遍，墙钟硬停 {cap_txt}"
                      f"（图空转看连续 {graph_idle_plans_limit} 个御主方案）。"
                  )},
                 run_id=rid,
             )
         else:
-            from ..objective import objective_is_src
-            if objective_is_src(objective):
-                await emit(
-                    project_id, "log",
-                    {"level": "info",
-                     "message": (
-                         f"SRC 本猎最多 {hunt_max_turns(objective, is_benchmark=is_benchmark)} 轮，"
-                         f"墙钟硬停 {max(0, runtime_hard) // 60} 分钟；高危不停工，满轮/满时记失败。"
-                     )},
-                    run_id=rid,
-                )
+            info = hunt_hard_stop_info(objective, pass_n=pass_n)
+            await emit(
+                project_id, "log",
+                {"level": "info", "message": info.get("label") or f"墙钟硬停 {cap_txt}。"},
+                run_id=rid,
+            )
         _fc = int(((project.get("config") or {}).get("flag_count")) or 1)
         _base = int(settings.benchmark_run_budget_sec or 0)
         _cap = int(settings.benchmark_run_budget_cap or 0)
@@ -1531,9 +1540,8 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
 
         elapsed0 = _time.monotonic() - t_start
         if runtime_hard > 0 and elapsed0 >= runtime_hard:
-            mins = int(elapsed0 // 60)
             summary = (
-                f"本猎已运行约 {mins} 分钟（≥{runtime_hard // 60} 分钟硬上限），强制停止，记失败。"
+                f"本猎已运行约 {format_duration_zh(elapsed0)}（≥{cap_txt} 硬上限），强制停止，记失败。"
             )
             pause_reason = "runtime_cap"
             await emit(project_id, "log", {"level": "info", "message": summary}, run_id=rid)
@@ -1559,9 +1567,8 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                            run_id=rid)
                 break
             if runtime_hard > 0 and elapsed >= runtime_hard:
-                mins = int(elapsed // 60)
                 summary = (
-                    f"本猎已运行约 {mins} 分钟（≥{runtime_hard // 60} 分钟硬上限），强制停止，记失败。"
+                    f"本猎已运行约 {format_duration_zh(elapsed)}（≥{cap_txt} 硬上限），强制停止，记失败。"
                 )
                 pause_reason = "runtime_cap"
                 await emit(
@@ -2651,7 +2658,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             )
             await emit(project_id, "log", {"level": "info", "message": summary}, run_id=rid)
 
-        # goal → completed；图空转/时长硬停（及 SRC 轮次硬停）→ error；入口不可达等 → idle
+        # goal → completed；图空转/时长硬停 → error；入口不可达等 → idle
         proj_status = final_project_status(
             goal=goal, exhausted=exhausted, pause_reason=pause_reason,
         )

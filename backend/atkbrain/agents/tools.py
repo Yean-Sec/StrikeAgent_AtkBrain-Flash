@@ -1000,7 +1000,11 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         "以及漏洞页五段 report_summary/report_impact/report_rating/report_repro/report_fix"
         "（简介、对本项目的危害、红队评级、实际走过的复现、针对本条的修复；禁止模板套话）。"
         "只做其中一项会拒绝。"
-        "禁止因类别名高估，也禁止因「只读」低估任意文件读。"
+        "同一 CVE 或同一利用接口已有条目则回写（带 finding_id 或沿用原 node_key），"
+        "禁止换标题/node_key 再造一条。"
+        "redteam_rating 按四级表（严重/高危/中危/低危）对号入座，禁止抬级或压级。"
+        "category=rce 仅当证据含命令执行回显；版本命中或仅白名单文件写不能报 rce/critical。"
+        "任意文件读写默认中危，不要压成低危；一般 SQLi/存储 XSS/越权进后台不要抬成高危。"
         "红队完成条件是 getshell（report_shell）。finding 不单独收工。",
         {
             "type": "object",
@@ -1021,7 +1025,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                 "redteam_rating": {
                     "type": "string",
                     "enum": ["critical", "high", "medium", "low", "info"],
-                    "description": "红队侧可利用评级，必须与 secondary_verified 一起给",
+                    "description": "红队侧可利用评级，必须与 secondary_verified 一起给。按四级表：critical严重 / high高危 / medium中危 / low低危，禁止跳级或压级",
                 },
                 "redteam_rating_rationale": {
                     "type": "string",
@@ -1105,6 +1109,13 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             report_fix=args.get("report_fix"),
         )
         row = await gstore.add_finding(ctx.project_id, f, run_id=ctx.run_id)
+        if isinstance(row, dict) and not row.get("secondary_verified"):
+            wake = getattr(ctx, "wake_finding_review", None)
+            if callable(wake):
+                try:
+                    wake()
+                except Exception:
+                    pass
         if isinstance(row, dict) and row.get("secondary_verified"):
             try:
                 from ..projects import get_project as _gp_page
@@ -1155,6 +1166,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         extra.append("已二次验证" if sec else "未二次验证")
         if rt:
             extra.append(f"红队评级 {rt}")
+        if isinstance(row, dict) and row.get("merged"):
+            extra.append("已并入已有条目，未重复造条")
         tail = "；".join(extra)
         rt_note = ""
         if obj == REDTEAM:

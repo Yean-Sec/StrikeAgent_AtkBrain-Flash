@@ -736,15 +736,33 @@ async def _http_get(url: str) -> dict | None:
     try:
         fd, body_path = tempfile.mkstemp(prefix="rtprobe_", suffix=".body")
         os.close(fd)
-        proc = await asyncio.create_subprocess_exec(
+        curl_args = [
             "curl", "-4", "-sS", "-k", "-L",
             "--max-time", str(int(PROBE_TIMEOUT)),
             "--connect-timeout", "8",
             "-A", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
             "-o", body_path,
-            "-D", "-",  # 响应头到 stdout
+            "-D", "-",
             "-w", "\n__RT_STATUS__%{http_code}\n__RT_IP__%{remote_ip}\n",
-            url,
+        ]
+        try:
+            from .proxy.pool import pool as _proxy_pool
+            if _proxy_pool.enabled:
+                px = _proxy_pool.pick()
+                if px:
+                    curl_args[1:1] = ["-x", px]
+                else:
+                    return await _http_get_httpx_v4(url)
+        except Exception:
+            try:
+                from .proxy.pool import pool as _proxy_pool
+                if _proxy_pool.enabled:
+                    return await _http_get_httpx_v4(url)
+            except Exception:
+                return await _http_get_httpx_v4(url)
+        curl_args.append(url)
+        proc = await asyncio.create_subprocess_exec(
+            *curl_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -797,6 +815,18 @@ async def _http_get_httpx_v4(url: str) -> dict | None:
         from urllib.parse import urlunparse
     except Exception:
         return None
+    proxy = None
+    must = False
+    try:
+        from .proxy.pool import pool as _proxy_pool
+        must = bool(_proxy_pool.enabled)
+        if must:
+            proxy = _proxy_pool.pick()
+            if not proxy:
+                return None
+    except Exception:
+        if must:
+            return None
     u = urlparse(url)
     host = u.hostname or ""
     if not host:
@@ -810,7 +840,10 @@ async def _http_get_httpx_v4(url: str) -> dict | None:
         fetch = urlunparse((u.scheme, netloc, u.path or "/", u.params, u.query, u.fragment))
         headers["Host"] = host if not port or port in (80, 443) else f"{host}:{port}"
     try:
-        async with httpx.AsyncClient(verify=False, timeout=PROBE_TIMEOUT, follow_redirects=True) as cli:
+        async with httpx.AsyncClient(
+            verify=False, timeout=PROBE_TIMEOUT, follow_redirects=True,
+            **({"proxy": proxy} if proxy else {}),
+        ) as cli:
             # HTTPS 连 IP 时用 extensions 设 SNI（httpx/httpcore 支持）
             ext = None
             if u.scheme == "https" and ip:

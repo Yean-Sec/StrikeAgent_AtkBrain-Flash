@@ -36,4 +36,4 @@ backend/tests
 Dockerfile
 scripts/export-hosted-image.sh
 # 技能说明必须进镜像；其它 md 仍排除
-!/.claude/skills/**/*.md
+!/skills/**/*.md

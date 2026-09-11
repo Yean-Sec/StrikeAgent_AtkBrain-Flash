@@ -55,7 +55,7 @@ Pi 用内置 `read` 加载本文件；之后作业只用扩展工具 `run_cmd` /
 
 ### 建议同时开
 
-4. **HTTP 指纹 + WAF**：whatweb、wafw00f
+4. **HTTP 指纹 + WAF**：whatweb、wafw00f。利用 payload 被 403/406 拦截页拦住时读 skill `waf-bypass-methodology`。
 5. **DNS 记录**：`dig` A/AAAA/MX/TXT。用 **系统解析器**，不要钉死 `8.8.8.8`
 6. **TLS / 证书 SAN**：`httpx`
 7. **虚拟主机**（本题 Host 头，不是旁站/邻题）

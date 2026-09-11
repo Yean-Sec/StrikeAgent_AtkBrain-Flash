@@ -56,8 +56,8 @@ class Settings(BaseSettings):
     claude_add_repo_dir: bool = False
 
     loop_max_turns: int = 0           # CTF 不限轮次（含评测）；停猎看墙钟 / 图空转
-    loop_max_turns_src: int = 30      # SRC：第 30 轮必须停，记失败
-    src_runtime_hard_stop_sec: int = 3 * 60 * 60  # SRC：180 分钟墙钟硬停
+    loop_max_turns_src: int = 0       # SRC：不限轮次；停猎看 6 小时墙钟 / 入口不可达 / 空转暂停
+    src_runtime_hard_stop_sec: int = 6 * 60 * 60  # SRC：6 小时墙钟硬停
     loop_max_turns_benchmark: int = 0  # 已弃用：评测 CTF 不走轮次硬停
     loop_stall_limit: int = 10
     loop_stall_limit_flag: int = 0     # CTF：不走「连续 N 轮无进展」暂停，改看 6 个空方案
@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     runtime_hard_stop_pass2_sec: int = 120 * 60      # CTF 第 2 遍（回头啃未出/未齐 flag）
     runtime_hard_stop_pass3_sec: int = 180 * 60      # CTF 第 3 遍
     runtime_hard_stop_pass_step_sec: int = 60 * 60   # 第 4 遍起每次再加 60 分钟
-    redteam_runtime_hard_stop_sec: int = 4 * 60 * 60 # 红队：4 小时强制停止
+    redteam_runtime_hard_stop_sec: int = 12 * 60 * 60 # 红队：12 小时强制停止
     entry_unreachable_yield_sec: int = 0
 
     claude_model: str = "deepseek-flash"
@@ -121,6 +121,8 @@ class Settings(BaseSettings):
 
     default_objective: str = "getshell"
     api_token: str = ""
+    github_repo: str = "Yean-Sec/StrikeAgent_AtkBrain-Flash"
+    github_token: str = ""
 
     benchmark_base_url: str = ""
     benchmark_token: str = ""
@@ -152,7 +154,7 @@ class Settings(BaseSettings):
     lab_src_rotate_sec: int = 60 * 60
     benchmark_entry_down_rebind_sec: int = 90
     benchmark_entry_down_yield_sec: int = 8 * 60
-    redteam_entry_down_yield_sec: int = 8 * 60
+    redteam_entry_down_yield_sec: int = 0          # 红队/SRC：入口连不上不暂停；0=关闭
     benchmark_autopilot_second_pass: bool = True
     benchmark_max_attempts: int = 8
     benchmark_multiflag_threshold: int = 3

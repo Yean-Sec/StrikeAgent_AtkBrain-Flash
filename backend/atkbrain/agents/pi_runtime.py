@@ -168,6 +168,11 @@ def _child_env(*, project_id: str | None, tools: bool) -> dict[str, str]:
     token = (getattr(settings, "api_token", None) or "").strip()
     if token:
         env["ATKBRAIN_API_TOKEN"] = token
+    for k in (
+        "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+        "ALL_PROXY", "all_proxy",
+    ):
+        env.pop(k, None)
     return env
 
 
@@ -520,6 +525,7 @@ async def query_text(
     model: str | None = None,
     role: str = "oneshot",
     project_id: str = "",
+    emit: EmitFn | None = None,
 ) -> str:
     """一次性无工具（默认）Pi 查询，返回纯文本。role 区分御主/蒸馏/漏洞页/导出，不混用进程。"""
     work = cwd or str(settings.data_dir)
@@ -531,6 +537,7 @@ async def query_text(
         role=(role or "oneshot").strip() or "oneshot",
         model=(model or "").strip(),
         project_id=project_id or "",
+        emit=emit,
     )
     t0 = time.monotonic()
     try:

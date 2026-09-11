@@ -13,6 +13,12 @@ import networkx as nx
 from ..db import db, new_id, now, _dumps, _loads
 from ..events import emit
 from ..objective import DATA_ACCESS_CATEGORIES, KEY_LEAK_CATEGORIES, finding_row_visible, listed_finding_rows, normalize_objective, objective_is_src, sort_findings_by_severity, src_impact_proven
+from .finding_claim import (
+    coerce_unproven_rce_claim,
+    collapse_duplicate_findings,
+    finding_dedup_keys,
+    finding_dedup_keys_from_row,
+)
 from .model import (
     CRITICAL_CATEGORIES,
     SEVERITY_ORDER,
@@ -27,9 +33,9 @@ from .model import (
     infer_node_type_from_key,
     is_critical,
     is_placeholder_node,
+    node_is_landed_shell,
     placeholder_node_spec,
     normalize_redteam_rating,
-    normalize_severity,
     scrub_candidate_rce_label,
 )
 
@@ -1803,9 +1809,22 @@ async def add_edge(project_id: str, edge: EdgeIn, run_id: str | None = None) -> 
 
 
 async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = None) -> dict:
-    from .verify import VerifyResult, verify_finding
+    from .verify import VerifyResult, accept_secondary_review, verify_finding
 
-    sev = normalize_severity(finding.category, finding.severity)
+    cat, sev, rating = coerce_unproven_rce_claim(
+        category=finding.category,
+        severity=finding.severity,
+        redteam_rating=getattr(finding, "redteam_rating", None),
+        title=finding.title or "",
+        description=finding.description or "",
+        evidence=finding.evidence or "",
+        poc_curl=finding.poc_curl or "",
+        poc_python=finding.poc_python or "",
+    )
+    finding.category = cat
+    finding.severity = sev  # type: ignore[assignment]
+    if rating is not None:
+        finding.redteam_rating = rating
     vr = await verify_finding(finding, project_id=project_id)
     try:
         from ..projects import get_project as _gp_find
@@ -1823,10 +1842,7 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
             )
     except Exception:
         pass
-    ts = now()
-    verified_at = ts if vr.status == "verified" else None
-    stored_detail = vr.proof_detail
-    rating = normalize_redteam_rating(getattr(finding, "redteam_rating", None))
+    rating = normalize_redteam_rating(getattr(finding, "redteam_rating", None)) or rating
     rating_why = (getattr(finding, "redteam_rating_rationale", None) or "").strip() or None
     secondary = 1 if getattr(finding, "secondary_verified", False) else 0
     from ..report.pi_finding_page import pi_report_from
@@ -1854,13 +1870,19 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
                ORDER BY created_at DESC LIMIT 1""",
             (project_id, finding.title),
         )
+    if existing is None:
+        existing = await _find_duplicate_finding(project_id, finding)
 
+    merged = bool(existing)
     if existing:
         # 同节点再次上报：补强证据与 PoC，不重复造 finding；可升为已验证 / 二次验证
         fid = existing["id"]
         prev_sec = int(existing.get("secondary_verified") or 0)
         prev_st = str(existing.get("verification_status") or "")
         prev_vat = existing.get("verified_at")
+        vr = accept_secondary_review(vr, bool(secondary or prev_sec))
+        ts = now()
+        stored_detail = vr.proof_detail
         if vr.status == "verified":
             new_st = "verified"
             verified_at = ts if prev_st != "verified" else prev_vat
@@ -1879,14 +1901,19 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
                    report_impact=COALESCE(?, report_impact),
                    report_rating=COALESCE(?, report_rating),
                    report_repro=COALESCE(?, report_repro),
-                   report_fix=COALESCE(?, report_fix)
+                   report_fix=COALESCE(?, report_fix),
+                   category=?, severity=?
                WHERE id=?""",
             (finding.evidence, finding.poc_curl, finding.poc_python,
              vr.proof_type, vr.proof_canary, vr.proof_url, stored_detail,
              new_st, verified_at, 1 if (secondary or prev_sec) else 0,
-             rating, rating_why, *page_vals, fid),
+             rating, rating_why, *page_vals, cat, sev, fid),
         )
     else:
+        vr = accept_secondary_review(vr, bool(secondary))
+        ts = now()
+        stored_detail = vr.proof_detail
+        verified_at = ts if vr.status == "verified" else None
         fid = new_id("f_")
         await db.execute(
             """INSERT INTO findings(id, project_id, node_key, severity, category, title,
@@ -1906,8 +1933,9 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
     data = _serialize_finding(row)
     data["critical"] = is_critical(sev, finding.category)
     data["verify_reason"] = vr.reason
+    data["merged"] = merged
     await emit(project_id, "finding", data, run_id=run_id)
-    if finding.node_key:
+    if finding.node_key and not merged:
         nrow = await db.fetchone(
             "SELECT * FROM nodes WHERE project_id=? AND key=?", (project_id, finding.node_key)
         )
@@ -1919,6 +1947,24 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
             )
             await derive_intents_for_finding(project_id, finding, nrow, run_id=run_id)
     return data
+
+
+async def _find_duplicate_finding(project_id: str, finding: FindingIn) -> dict | None:
+    """同一 CVE 或同一利用接口已有条目则并入，不因换 node_key/标题再造一条。"""
+    keys = finding_dedup_keys(
+        finding.title, finding.category, finding.node_key,
+        finding.description, finding.evidence, finding.poc_curl, finding.poc_python,
+    )
+    if not keys:
+        return None
+    rows = await db.fetchall(
+        "SELECT * FROM findings WHERE project_id=? ORDER BY created_at",
+        (project_id,),
+    )
+    for row in rows:
+        if finding_dedup_keys_from_row(row) & keys:
+            return row
+    return None
 
 
 async def findings_pending_secondary(project_id: str) -> list[dict]:
@@ -1937,11 +1983,19 @@ async def findings_pending_secondary(project_id: str) -> list[dict]:
     except Exception:
         obj = None
     out: list[dict] = []
+    reviewed_keys: set[str] = set()
+    pending_rows: list[tuple[dict, set[str]]] = []
     for row in rows:
         if not finding_row_visible(obj, row) or not is_visible_finding(row):
             continue
         data = _serialize_finding(row)
+        keys = finding_dedup_keys_from_row(row)
         if data.get("secondary_verified") and normalize_redteam_rating(data.get("redteam_rating")):
+            reviewed_keys |= keys
+            continue
+        pending_rows.append((data, keys))
+    for data, keys in pending_rows:
+        if keys and keys & reviewed_keys:
             continue
         out.append(data)
     return out
@@ -2825,15 +2879,23 @@ async def get_stats_batch(project_ids: list[str]) -> dict[str, dict]:
         s["nodes"] += 1
         if n["type"] == "service":
             s["services"] += 1
-        # has_shell 由 verified findings / goal 节点判定，vuln 节点 alone 不点亮。
+        ntags = _loads(n["tags"]) or []
+        # has_shell：只认已落地 shell（report_shell 写入的 foothold/goal）。
+        # 猎人把普通洞误标成 category=rce 的 finding 不能点亮 GETSHELL。
+        if node_is_landed_shell(
+            str(n["type"] or ""),
+            str(n.get("key") or ""),
+            ntags,
+            bool(n["is_rce"]),
+        ):
+            s["has_shell"] = True
         if n["type"] == "foothold" or (
             n["type"] == "goal" and str(n.get("key") or "").startswith("goal:shell")
         ):
-            h = _host_of_node(str(n.get("key") or ""), _loads(n["tags"]) or [])
+            h = _host_of_node(str(n.get("key") or ""), ntags)
             if h:
                 hosts_by_pid[n["project_id"]].add(h)
-        ntags = {str(t).lower() for t in (_loads(n["tags"]) or [])}
-        if ntags & _MASS_LEAK_TAGS:
+        if {str(t).lower() for t in ntags} & _MASS_LEAK_TAGS:
             s["mass_data_leak"] = True
 
     erows = await db.fetchall(
@@ -2878,18 +2940,8 @@ async def get_stats_batch(project_ids: list[str]) -> dict[str, dict]:
         cat = str(f["category"] or "").lower()
         if cat in _MASS_LEAK_CATS:
             s["mass_data_leak"] = True
-        try:
-            nkey = str(f["node_key"] or "")
-        except (KeyError, IndexError):
-            nkey = ""
-        st = str(f["verification_status"] or "verified")
-        if st in ("verified", "flaky") and (
-            cat in ("rce", "command_injection", "deserialization")
-            or nkey.startswith(("goal:shell", "foothold:shell"))
-        ):
-            s["has_shell"] = True
     for pid, rows in f_by_pid.items():
-        listed = listed_finding_rows(rows)
+        listed = listed_finding_rows(collapse_duplicate_findings(rows))
         s = out[pid]
         s["findings"] = len(listed)
         # 列表统计必须严格按严重度展示：high 不能被“可报告/关键类别”再归入 critical。
@@ -3000,7 +3052,7 @@ async def get_graph(project_id: str, *, heal: bool = False) -> dict:
         f for f in findings_all
         if finding_row_visible(obj, f) and is_visible_finding(f)
     ]
-    findings = sort_findings_by_severity(findings)
+    findings = sort_findings_by_severity(collapse_duplicate_findings(findings))
     def _sev(row) -> str:
         try:
             return str(row["severity"] or "").lower()
@@ -3013,11 +3065,12 @@ async def get_graph(project_id: str, *, heal: bool = False) -> dict:
     fstats = await frontier_stats(project_id)
     # has_shell：只有已控 shell/GETSHELL；未落地 foothold 和漏洞节点不算
     verified_shell = any(
-        (n["type"] in ("foothold", "goal") and (
-            bool(n["is_rce"])
-            or "getshell" in (_loads(n["tags"]) or [])
-            or str(n["key"] or "").startswith("goal:shell")
-        ))
+        node_is_landed_shell(
+            str(n["type"] or ""),
+            str(n["key"] or ""),
+            _loads(n["tags"]) or [],
+            bool(n["is_rce"]),
+        )
         for n in nodes
     )
     out = {

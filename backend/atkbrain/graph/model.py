@@ -80,6 +80,28 @@ def is_achieved_shell_goal(key: str, tags: list | None = None) -> bool:
     return key.startswith("goal:shell") or bool(tags_l & _GOAL_SHELL_TAGS)
 
 
+def node_is_landed_shell(
+    ntype: str,
+    key: str = "",
+    tags: list | None = None,
+    is_rce: bool = False,
+) -> bool:
+    """已落地的命令执行立足点 / GETSHELL。
+
+    只有 foothold/goal 上的已控 shell 才算；漏洞节点、未落地立足点、
+    以及猎人把普通洞误标成 category=rce 的 finding 都不算。
+    """
+    if str(ntype or "") not in ("foothold", "goal"):
+        return False
+    k = str(key or "")
+    tags_l = {str(t).lower() for t in (tags or [])}
+    return bool(
+        is_rce
+        or bool(tags_l & _GOAL_SHELL_TAGS)
+        or k.startswith(("goal:shell", "foothold:shell"))
+    )
+
+
 def is_achieved_flag_goal(key: str, tags: list | None = None) -> bool:
     key = str(key or "")
     tags_l = {str(t).lower() for t in (tags or [])}

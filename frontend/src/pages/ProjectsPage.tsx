@@ -109,7 +109,12 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [importKick, setImportKick] = useState(0);
+  const [hardStops, setHardStops] = useState<Record<string, { label?: string; conditions?: string[] }>>({});
   const importPoll = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    api.settings().then((s) => setHardStops(s?.defaults?.hard_stop || {})).catch(() => {});
+  }, []);
 
   const enterProject = (id: string) => {
     if (importPoll.current) clearTimeout(importPoll.current);
@@ -210,10 +215,20 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
           <button type="button" className={`btn btn-sm ${track === "ctf" ? "btn-primary" : "btn-secondary"}`} onClick={() => setTrack("ctf")}>CTF（flag）</button>
           <button type="button" className={`btn btn-sm ${track === "src" ? "btn-primary" : "btn-secondary"}`} onClick={() => setTrack("src")}>SRC（厂商清单挖洞）</button>
         </div>
-        <span style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, display: "block" }}>
+        <span style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, display: "block", lineHeight: 1.55 }}>
           {track === "redteam" && "红队：拿到服务器 shell 即完成本项目。"}
           {track === "ctf" && (kind === "cluster" ? "集群 CTF = 靶场评测：填 base_url + token，拉题按题自建 flag 子项目并跑分。" : "单目标 CTF：夺齐 flag（及分数，若有）即满分收工。")}
-          {track === "src" && (kind === "cluster" ? "集群 SRC：贴厂商资产列表挖已验证高危/严重；单条高危不停工，30 轮或 180 分钟硬停。不夺旗、不以 getshell 收工。" : "SRC：按厂商清单挖已验证高危/严重，不停在第一条；30 轮或 180 分钟硬停记失败。不夺旗、不以 getshell 收工。")}
+          {track === "src" && (kind === "cluster"
+            ? "集群 SRC：贴厂商资产列表挖已验证高危/严重。不夺旗、不以 getshell 收工。"
+            : "SRC：按厂商清单挖已验证高危/严重，不停在第一条。不夺旗、不以 getshell 收工。")}
+          {" "}
+          {(track === "ctf" ? hardStops.flag : hardStops[track])?.label
+            || (track === "src" ? "硬停：墙钟满 6 小时，记失败。已验证高危/严重不停工。不限轮次。"
+              : track === "redteam" ? "硬停：墙钟满 12 小时，记失败。拿到 shell 提前收工。不限轮次。"
+              : "")}
+          {((track === "ctf" ? hardStops.flag : hardStops[track])?.conditions || []).map((c) => (
+            <div key={c}>· {c}</div>
+          ))}
         </span>
       </div>
 

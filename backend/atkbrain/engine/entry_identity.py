@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Any
 
@@ -134,8 +133,10 @@ def parse_http_identity(raw: bytes, headers: dict[str, str], status: int | None)
     }
 
 
-async def probe_entry_http(host: str, port: int, timeout: float = 4.0) -> dict[str, Any]:
-    """只打授权入口首页，用于栈指纹。失败返回空 dict。"""
+async def probe_entry_http(
+    host: str, port: int, timeout: float = 4.0, *, objective: str | None = None,
+) -> dict[str, Any]:
+    """只打授权入口首页，用于栈指纹。失败返回空 dict。红队/SRC 经代理，禁止直连。"""
     if not host:
         return {}
     try:
@@ -145,32 +146,36 @@ async def probe_entry_http(host: str, port: int, timeout: float = 4.0) -> dict[s
     scheme = "https" if port_i == 443 else "http"
     url = f"{scheme}://{host}:{port_i}/"
 
-    def _get() -> dict[str, Any]:
-        import urllib.error
-        import urllib.request
-        req = urllib.request.Request(
-            url,
-            method="GET",
-            headers={"User-Agent": "StrikeAgent-AtkBrain-Flash-identity/1", "Accept": "text/html,*/*"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read(8000)
-                hdrs = dict(resp.headers.items()) if resp.headers else {}
-                return parse_http_identity(raw, hdrs, int(getattr(resp, "status", 200) or 200))
-        except urllib.error.HTTPError as e:
-            raw = b""
-            try:
-                raw = e.read(8000)
-            except Exception:
-                pass
-            hdrs = dict(e.headers.items()) if e.headers else {}
-            return parse_http_identity(raw, hdrs, int(e.code or 0))
-        except Exception:
+    proxy = None
+    must = False
+    try:
+        from ..proxy.pool import pool
+        must = pool.must_proxy(objective)
+        if must:
+            proxy = await pool.wait_pick(8.0)
+            if not proxy:
+                return {}
+    except Exception:
+        if must:
             return {}
 
     try:
-        return await asyncio.wait_for(asyncio.to_thread(_get), timeout=timeout + 1.0)
+        import httpx
+        kw: dict[str, Any] = {
+            "timeout": timeout, "follow_redirects": True, "verify": False,
+        }
+        if proxy:
+            kw["proxy"] = proxy
+        elif must:
+            return {}
+        async with httpx.AsyncClient(**kw) as cli:
+            r = await cli.get(
+                url,
+                headers={"User-Agent": "StrikeAgent-AtkBrain-Flash-identity/1", "Accept": "text/html,*/*"},
+            )
+            raw = (r.content or b"")[:8000]
+            hdrs = dict(r.headers.items()) if r.headers else {}
+            return parse_http_identity(raw, hdrs, int(r.status_code or 0))
     except Exception:
         return {}
 

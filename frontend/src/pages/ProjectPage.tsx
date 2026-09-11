@@ -15,7 +15,7 @@ import { ClusterDashboard } from "../features/cluster/ClusterDashboard";
 import { BenchmarkDashboard } from "../features/benchmark/BenchmarkDashboard";
 import { ReportExportControls } from "../features/report/ExportReport";
 import { colors, displayFindingSeverity } from "../theme";
-import { huntFailedReason } from "../projectStatus";
+import { huntFailedReason, hardStopLine } from "../projectStatus";
 import { animate } from "animejs";
 import { countUp } from "../anim";
 
@@ -117,7 +117,7 @@ function applyGraphEvent(g: Graph, ev: RTEvent): Graph {
   return g;
 }
 const MAX_EVENTS = 2000;
-const PINNED_EVENT_TYPES = new Set(["steer", "drift_alert", "supervisor", "finding_review"]);
+const PINNED_EVENT_TYPES = new Set(["steer", "drift_alert", "supervisor", "finding_review", "report_export"]);
 
 /** 工具洪水下仍保留纠偏指令；其余只留最近 MAX_EVENTS。 */
 function capEvents(evs: RTEvent[]): RTEvent[] {
@@ -351,6 +351,7 @@ export function ProjectPage() {
     ? `${flagsCorrect}/${needed}${totalScore ? ` · ${totalScore}` : ""}`
     : "";
   const stopReason = !running ? project.config?.completion_reason : "";
+  const stopHint = hardStopLine(project);
 
   return (
     <div className="container" style={{ paddingTop: 24, paddingBottom: 40 }}>
@@ -413,6 +414,14 @@ export function ProjectPage() {
                 RCE 概率 ≈ <b style={{ color: colors.primary }}>{graph.rce_path?.likelihood ?? 0}</b>
               </span>
             </div>
+            {stopHint ? (
+              <div className="muted" style={{ fontSize: 12, marginTop: 6, lineHeight: 1.55 }} title={stopHint.title}>
+                <div>{stopHint.text}</div>
+                {stopHint.conditions.map((c) => (
+                  <div key={c}>· {c}</div>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="project-head-metrics">
             <div className="project-head-stats">

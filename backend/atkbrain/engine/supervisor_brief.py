@@ -1248,7 +1248,13 @@ async def assemble_supervisor_brief(
         f"# 监督简报 · 第 {turn} 轮之后",
         f"目标：{_goal_line(objective)}",
         f"作业对象：{hosts}",
-        f"当前入口：{facts.current_entry or entry or '（未填）'}。邻题入口见局面摘要，禁止当本题主线；本题入口端口不通则 rebind，不要改打邻题端口。",
+        (
+            f"当前入口：{facts.current_entry or entry or '（未填）'}。"
+            "邻题入口见局面摘要，禁止当本题主线；本题入口端口不通则 rebind，不要改打邻题端口。"
+            if facts.peer_entries else
+            f"当前入口：{facts.current_entry or entry or '（未填）'}。"
+            "其它子项目资产不在本作业范围内。"
+        ),
         "",
         "## 题目要点",
         _clip((brief or "").strip(), brief_clip) or "（无）",

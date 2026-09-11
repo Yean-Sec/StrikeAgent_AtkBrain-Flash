@@ -12,7 +12,10 @@ pydantic-settings>=2.3
 networkx>=3.3
 
 # HTTP
-httpx>=0.27
+httpx[socks]>=0.27
+
+# 红队/SRC 免费代理源
+pyfreeproxy>=0.5.1
 
 # 报告
 jinja2>=3.1

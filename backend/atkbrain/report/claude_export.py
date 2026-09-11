@@ -64,6 +64,45 @@ EXPORT_SYSTEM = f"""你是 StrikeAgent_AtkBrain-Flash 的专职交付报告撰�
 _jobs: dict[str, dict] = {}
 
 
+def _job_dir() -> Path:
+    d = Path(settings.reports_dir) / "export-jobs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _job_file(job_id: str) -> Path:
+    return _job_dir() / f"{job_id}.json"
+
+
+def _persist_job(job: dict) -> None:
+    jid = str(job.get("id") or "")
+    if not jid:
+        return
+    try:
+        safe = {
+            k: job.get(k)
+            for k in (
+                "id", "project_id", "format", "status", "percent", "message",
+                "error", "filename", "cached", "claude", "claude_error",
+                "pi_role", "force", "html_path", "pdf_path",
+            )
+        }
+        _job_file(jid).write_text(json.dumps(safe, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _load_job(job_id: str) -> dict | None:
+    p = _job_file(job_id)
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) and data.get("id") == job_id else None
+
+
 def _job_public(job: dict) -> dict:
     return {
         "id": job["id"],
@@ -82,16 +121,34 @@ def _job_public(job: dict) -> dict:
 
 
 
-def get_export_job(project_id: str, job_id: str) -> dict | None:
+def _resolve_job(project_id: str, job_id: str) -> dict | None:
     job = _jobs.get(job_id)
+    restored = False
+    if not job:
+        job = _load_job(job_id)
+        restored = bool(job)
     if not job or job.get("project_id") != project_id:
+        return None
+    if restored:
+        if job.get("status") == "running":
+            job["status"] = "error"
+            job["error"] = "专职导出 Pi 已中断（后端重启），请重新导出"
+            job["message"] = job["error"]
+            _persist_job(job)
+        _jobs[job_id] = job
+    return job
+
+
+def get_export_job(project_id: str, job_id: str) -> dict | None:
+    job = _resolve_job(project_id, job_id)
+    if not job:
         return None
     return _job_public(job)
 
 
 def export_file_path(job_id: str, project_id: str) -> Path | None:
-    job = _jobs.get(job_id)
-    if not job or job.get("project_id") != project_id:
+    job = _resolve_job(project_id, job_id)
+    if not job:
         return None
     fmt = job.get("format") or "html"
     if fmt == "pdf":
@@ -105,6 +162,7 @@ def _set_job(job: dict, percent: int, message: str, status: str = "running") -> 
     job["percent"] = max(0, min(100, int(percent)))
     job["message"] = message
     job["status"] = status
+    _persist_job(job)
 
 
 def _enrich_usable(enrich: dict | None) -> bool:
@@ -179,6 +237,19 @@ async def _export_enrich(facts: dict, *, project_id: str = "") -> dict:
     wait = max(60.0, float(getattr(settings, "report_timeout_sec", 90) or 90) * 2)
     wait = min(wait, 240.0)
     last_err = ""
+    if project_id:
+        try:
+            from ..events import emit as emit_event
+            await emit_event(
+                project_id, "report_export",
+                {
+                    "status": "running",
+                    "role": EXPORT_ROLE,
+                    "message": "专职导出 Pi 正在撰写交付报告槽位",
+                },
+            )
+        except Exception:
+            pass
     for attempt in (1, 2):
         try:
             blob = await query_text(
@@ -210,6 +281,19 @@ def _safe_name(pid: str, p: dict) -> str:
     raw = str(p.get("name") or pid)
     raw = re.sub(r"[\\/:*?\"<>|]+", "_", raw).strip() or pid
     return raw[:80]
+
+
+async def _notify_export(pid: str, status: str, message: str) -> None:
+    if not pid:
+        return
+    try:
+        from ..events import emit as emit_event
+        await emit_event(
+            pid, "report_export",
+            {"status": status, "role": EXPORT_ROLE, "message": message},
+        )
+    except Exception:
+        pass
 
 
 async def run_export_job(job: dict) -> None:
@@ -250,6 +334,7 @@ async def run_export_job(job: dict) -> None:
                 job["claude_error"] = claude_err
                 job["error"] = claude_err
                 _set_job(job, 58, f"专职导出 Pi 撰写失败：{claude_err[:160]}", status="error")
+                await _notify_export(pid, "error", claude_err[:200])
                 return
             job["claude"] = True
             job["claude_error"] = None
@@ -276,9 +361,11 @@ async def run_export_job(job: dict) -> None:
         else:
             done_msg = "报告已生成"
         _set_job(job, 100, done_msg, status="done")
+        await _notify_export(pid, "done", done_msg)
     except Exception as e:
         job["error"] = str(e)
         _set_job(job, int(job.get("percent") or 0), f"失败：{e}", status="error")
+        await _notify_export(pid, "error", str(e)[:200])
 
 
 async def start_export_job(project_id: str, fmt: str, *, force: bool = True) -> dict:
@@ -304,6 +391,7 @@ async def start_export_job(project_id: str, fmt: str, *, force: bool = True) -> 
         "force": bool(force),
     }
     _jobs[job_id] = job
+    _persist_job(job)
     asyncio.create_task(run_export_job(job))
     return _job_public(job)
 

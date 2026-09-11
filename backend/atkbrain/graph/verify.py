@@ -50,10 +50,26 @@ def infer_canary(finding: FindingIn) -> str | None:
     return raw or None
 
 
+def accept_secondary_review(vr: VerifyResult, secondary: bool) -> VerifyResult:
+    """专职复核 Pi 收口后，二次验证本身就是真实性结论；不再维持 pending。"""
+    if not secondary:
+        return vr
+    if vr.status == "verified":
+        return vr
+    return VerifyResult(
+        status="verified",
+        reason="secondary_review",
+        proof_type=vr.proof_type,
+        proof_canary=vr.proof_canary,
+        proof_url=vr.proof_url,
+        proof_detail=vr.proof_detail,
+    )
+
+
 async def verify_finding(
     finding: FindingIn, project_id: str | None = None,
 ) -> VerifyResult:
-    """核真实性：无证据/PoC 不得标已验证。二次验证与红队评级不在此决定。"""
+    """核真实性：无证据/PoC 不得标已验证。专职二次验证收口后另见 accept_secondary_review。"""
     _ = project_id
     detail = (finding.proof_detail or "").strip()
     canary = infer_canary(finding)

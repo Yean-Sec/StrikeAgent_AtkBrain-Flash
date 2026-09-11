@@ -1,6 +1,7 @@
 """系统提示、每轮指令、角色工人：攻击图工作记忆 + Pi 自循环。"""
 from __future__ import annotations
 
+from ..graph.rating_rubric import RATING_RUBRIC
 from ..objective import SRC_POLICY_BRIEF, normalize_objective, objective_allows_flag, objective_is_src
 from ..scope import Scope
 from .kali_kit import KIT_SKILL_HINT
@@ -285,7 +286,8 @@ _GOAL_BLOCKS = {
     "redteam": (
         "红队最高指令是拿到服务器 shell（RCE / webshell / 反弹等）后 `report_shell`，即完成本项目。\n"
         "工作循环：测试 → 验证 → `report_finding`（高危/严重）→ 推向命令执行；尚未 GETSHELL 则对下一活体面再来一圈。\n"
-        "高危/严重发现是推进手段，不单独收工；不要因为已有一条已验证洞就停测其它活体面。"
+        "高危/严重发现是推进手段，不单独收工；不要因为已有一条已验证洞就停测其它活体面。\n"
+        "满 12 小时墙钟硬停，记失败。拿到 shell 提前收工。不限轮次。"
     ),
     "src": (
         "SRC / 漏洞赏金：目的是发现尽可能多的独立高危/严重，不是打穿一条 GETSHELL 链。"
@@ -314,7 +316,9 @@ _GOAL_TOOL_HINTS = {
         "- `request_hint`：实在卡住才拉评测提示（每次扣分）。开局禁止。已拉取过返回缓存不再扣。"
     ),
     "src": (
-        "- `report_finding`：低/中/高危/严重都要报进漏洞页。业务报错（角色不存在/参数不完整/空 data）不能评高危，但仍要报；须打出非空业务数据或真实领取/兑换/拖库/RCE 才能评高危。\n"
+        "- `report_finding`：低/中/高危/严重都要报进漏洞页，评级按四级表对号入座。"
+        "业务报错（角色不存在/参数不完整/空 data）不能评高危或严重，但仍要报；"
+        "须打出非空业务数据或真实领取/兑换/拖库/RCE 才能评高危/严重。\n"
         "- `report_shell`：命令执行只写无害 txt canary 证明，不要转后渗收工。"
     ),
 }
@@ -439,9 +443,19 @@ def build_system_prompt(
         ip_hint = f"，解析 IP {sorted(scope.ips)}" if scope.ips else ""
         sub = ("，其子域名一律在范围内" if scope.allow_subdomains
                else "，同 IP 子域名并入本项目，不同 IP 另算设备")
+        if objective_allows_flag(objective):
+            entry_note = (
+                "主入口是当前目标的 host:port；本题其它入口同样在范围内；"
+                "邻题入口（其它 unique_code 的 IP/端口）越界。"
+            )
+        else:
+            entry_note = (
+                "主入口是当前目标的 host:port。集群里其它子项目的资产不在本作业范围内，"
+                "不要把兄弟站点/兄弟 IP 当本题线索。"
+            )
         scope_desc = (
             f"- 作业对象：{tdesc}{ip_hint}{sub}。"
-            f"主入口是当前目标的 host:port；本题其它入口同样在范围内；邻题入口（其它 unique_code 的 IP/端口）越界。"
+            f"{entry_note}"
         )
     else:
         scope_desc = "- 作业对象：见本轮指令。"
@@ -491,16 +505,22 @@ _FINDING_REVIEW_SYSTEM = (
     "你是本项目专职的漏洞二次验证、红队评级与漏洞页撰稿员，不是猎洞工人。"
     "不要扫目录、不要开新意图、不要 report_shell / report_flag、不要再开子进程。"
     "只处理清单里未二次验证或缺红队评级的已入库漏洞。"
+    "禁止新建漏洞条目：report_finding 必须带清单里的 finding_id 和原来的 node_key；"
+    "禁止换 node_key/标题把同一 CVE 或同一上传接口再报一条。"
     "对每一条先独立再打一遍（换观测通道 / 重放 PoC / 对照预期回显），不能只把首次 evidence 再贴一遍；"
     "打完同一轮 report_finding：必须带原来的 finding_id（有则必填）和 node_key，"
     "secondary_verified=true、redteam_rating（critical|high|medium|low|info）、"
-    "redteam_rating_rationale（至少 40 字，写清怎么打、看到什么、为何是这个级），"
+    "redteam_rating_rationale（至少 40 字，写清怎么打、看到什么、为何按四级表是这个级），"
     "并同时写漏洞页五段（都要针对本条、本项目，禁止 Burp/CIA/类别模板套话）："
     "report_summary 漏洞简介；report_impact 对本项目已证明的危害；"
     "report_rating 红队评级正文；report_repro 你刚才实际走过的手动复现；"
     "report_fix 针对本条根因的修复。"
     "二次打不出同样危害也要收口：仍标 secondary_verified=true，评级降为 info 或 low，五段写清失败过程。"
+    "版本命中或仅白名单文件写不是 RCE：未打成命令执行则不要评 high/critical，也不要报 rce。"
+    "任意文件读写默认中危，不要压成低危；不要把一般 SQLi/存储 XSS/越权进后台抬成高危。"
+    "四级表不是白名单：对不上条目的已入库洞也要复核并评级，就近中危或低危，不要标 info 丢掉。"
     "命令用 run_cmd，Web 用 http_request。"
+    "\n" + RATING_RUBRIC
 )
 
 
@@ -516,7 +536,9 @@ def finding_review_system_prompt(workspace_dir: str, objective: str = "getshell"
 def build_finding_review_instruction(findings: list[dict]) -> str:
     lines = [
         "本回合只二次验证下列已入库漏洞（未二次验证或缺红队评级）。",
-        "逐条动手后用 report_finding 回写同一条，不要新建标题。",
+        "逐条动手后用 report_finding 回写同一条：必须带下面的 finding_id，不要新建标题或换 node_key。",
+        "同一 CVE / 同一上传接口禁止再报一条。红队评级按四级表对号入座，禁止抬级或压级。",
+        "未打成命令执行不要把 RCE 评严重/高危，也不要标 rce；任意文件操作默认中危。",
         "回写时必须带齐二次验证、红队评级，以及漏洞页五段（简介/危害/评级/复现/修复），",
         "内容来自你这一轮实际打到的结果，不要套模板。",
         "",
@@ -960,7 +982,7 @@ def build_subagents(objective: str = "getshell") -> dict[str, dict]:
             "prompt": (
                 "你按 skill `src-hunt-playbook` 挖厂商类型（XSS/注入/RCE/文件/越权/逻辑/泄露/后门/N-day）。"
                 "按当前入口形态选类型，不要把 11 类全打一遍。"
-                "低/中/高危/严重都要 report_finding 进漏洞页，附最小 PoC。业务报错不能评高危，但仍要报。"
+                "低/中/高危/严重都要 report_finding 进漏洞页，附最小 PoC。评级按四级表对号入座，禁止抬级或压级。业务报错不能评高危或严重，但仍要报。"
                 "不要 report_flag，不要转后渗/横向，不要停在第一条。"
                 + common_tail + kit_hint
             ),

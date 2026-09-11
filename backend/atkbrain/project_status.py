@@ -4,7 +4,11 @@ CTF（含评测子题）：不限轮次、不做御主运行时审查。
 墙钟硬停按遍次：第 1 遍 40 分钟，第 2 遍 120 分钟，第 3 遍 180 分钟，之后每次 +60。
 图空转：连续 6 个御主方案仍无新节点、无交旗、也无本地长计算 → 失败。
 评测覆盖期按第 1 遍墙钟让槽，全部开过一轮后再回头啃未出/未齐 flag。
-红队：4 小时墙钟硬停；不走轮次 / 图空转。人工暂停、入口不可达仍是 idle。
+SRC：6 小时墙钟硬停，记失败；不限轮次；已验证高危/严重不停工。
+连续 10 轮无高质量进展 → 暂停可再开（不算失败）。入口连不上不暂停。
+红队：12 小时墙钟硬停，记失败；拿到 shell 提前收工。不走轮次 / 图空转。
+红队升到第 3 圈后才允许空转暂停。
+人工暂停、入口不可达仍是 idle。
 """
 from __future__ import annotations
 
@@ -61,32 +65,117 @@ def ctf_pass_index(*, ended_real_attempts: int = 0) -> int:
 
 
 def hunt_runtime_hard_stop_sec(objective: str | None = None, *, pass_n: int | None = None) -> int:
-    """本猎墙钟硬上限（秒）。CTF 按遍次；SRC 180 分钟；红队 4 小时；0 表示不限。"""
+    """本猎墙钟硬上限（秒）。CTF 按遍次；SRC 6 小时；红队 12 小时；0 表示不限。"""
     from .config import settings
     from .objective import objective_is_src
     if uses_ctf_hunt_clocks(objective):
         return ctf_pass_hard_stop_sec(pass_n)
     if objective_is_src(objective):
         try:
-            return max(0, int(getattr(settings, "src_runtime_hard_stop_sec", 3 * 60 * 60) or 0))
+            return max(0, int(getattr(settings, "src_runtime_hard_stop_sec", 6 * 60 * 60) or 0))
         except (TypeError, ValueError):
-            return 3 * 60 * 60
+            return 6 * 60 * 60
     try:
-        return max(0, int(getattr(settings, "redteam_runtime_hard_stop_sec", 4 * 60 * 60) or 0))
+        return max(0, int(getattr(settings, "redteam_runtime_hard_stop_sec", 12 * 60 * 60) or 0))
     except (TypeError, ValueError):
-        return 4 * 60 * 60
+        return 12 * 60 * 60
+
+
+def format_duration_zh(sec: int | float | None) -> str:
+    try:
+        n = max(0, int(sec or 0))
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return "不限"
+    if n % 3600 == 0:
+        return f"{n // 3600} 小时"
+    if n % 60 == 0:
+        return f"{n // 60} 分钟"
+    return f"{n} 秒"
+
+
+def _setting_int(name: str, default: int) -> int:
+    from .config import settings
+    try:
+        return max(0, int(getattr(settings, name, default) or 0))
+    except (TypeError, ValueError):
+        return max(0, int(default or 0))
+
+
+def hunt_hard_stop_info(objective: str | None = None, *, pass_n: int | None = None) -> dict:
+    """给 UI / 开猎日志的停猎条件：硬停记失败、暂停可再开、本 run 故障自动重试。"""
+    from .objective import FLAG, SRC, normalize_objective
+
+    runtime = hunt_runtime_hard_stop_sec(objective, pass_n=pass_n)
+    turns = hunt_max_turns(objective)
+    cap = format_duration_zh(runtime)
+    hang = format_duration_zh(_setting_int("turn_hang_sec", 8 * 60))
+    entry_sec = _setting_int("redteam_entry_down_yield_sec", 0)
+    ctf_entry_sec = _setting_int("benchmark_entry_down_yield_sec", 8 * 60)
+    stall_n = _setting_int("loop_stall_limit", 10)
+    o = normalize_objective(objective)
+    retry = (
+        f"回合内 {hang}无思考/工具/命令 → 打断本回合；"
+        "连续 2 次卡死或连续 5 个空回合 → 结束本 run 并自动重开新会话（项目不记失败）"
+    )
+    if o == SRC:
+        conditions = [
+            f"墙钟满 {cap} → 记失败",
+            f"连续 {stall_n} 轮无高质量进展 → 暂停，可再开",
+            retry,
+        ]
+        if entry_sec > 0:
+            conditions.insert(1, (
+                f"入口连续 {format_duration_zh(entry_sec)} TCP 不可达"
+                "（探 80/443/登记端口，超时/拒绝/DNS）→ 暂停，站点恢复后可再开"
+            ))
+        if turns > 0:
+            conditions.insert(1, f"满 {turns} 轮 → 记失败")
+            label = f"硬停：满 {turns} 轮或墙钟满 {cap}，记失败。已验证高危/严重不停工。"
+        else:
+            label = f"硬停：墙钟满 {cap}，记失败。已验证高危/严重不停工。不限轮次。"
+    elif o == FLAG:
+        idle_n = max(1, _setting_int("graph_idle_empty_plans", 6) or 6)
+        conditions = [
+            f"本遍墙钟满 {cap} → 记失败",
+            f"连续 {idle_n} 个御主方案无图增长（无新节点/交旗/本地长计算）→ 记失败",
+            retry,
+        ]
+        if ctf_entry_sec > 0:
+            conditions.insert(2, (
+                f"入口连续 {format_duration_zh(ctf_entry_sec)} 不可达且已尝试重绑 → 暂停让槽，可再开"
+            ))
+        conditions.insert(-1, "评测环境到期或平台不可达 → 停止（不把整场标失败）")
+        label = f"硬停：本遍墙钟 {cap}；连续 {idle_n} 个御主方案无增长记失败。不限轮次。"
+    else:
+        conditions = [
+            f"墙钟满 {cap} → 记失败",
+            f"已升到第 3 圈后，连续 {stall_n} 轮无高质量进展 → 暂停，可再开",
+            retry,
+        ]
+        if entry_sec > 0:
+            conditions.insert(1, (
+                f"入口连续 {format_duration_zh(entry_sec)} TCP 不可达"
+                "（探 80/443/登记端口，超时/拒绝/DNS）→ 暂停，站点恢复后可再开"
+            ))
+        label = f"硬停：墙钟满 {cap}，记失败。拿到 shell 提前收工。不限轮次。"
+    return {
+        "track": o,
+        "runtime_sec": runtime,
+        "max_turns": turns,
+        "conditions": conditions,
+        "label": label,
+    }
 
 
 def hunt_max_turns(objective: str | None = None, *, is_benchmark: bool = False) -> int:
-    """本猎最大编排轮次。0=不限。CTF（含评测）不限；SRC 30；红队不限。"""
+    """本猎最大编排轮次。0=不限。CTF / SRC / 红队默认都不限轮次。"""
     from .config import settings
     from .objective import objective_is_src
     del is_benchmark
     if objective_is_src(objective):
-        try:
-            return max(0, int(getattr(settings, "loop_max_turns_src", 30) or 30))
-        except (TypeError, ValueError):
-            return 30
+        return _setting_int("loop_max_turns_src", 0)
     if not uses_ctf_hunt_clocks(objective):
         return 0
     try:

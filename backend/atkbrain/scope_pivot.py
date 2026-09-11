@@ -91,6 +91,49 @@ def ssrf_gateway_hosts(graph: dict | None) -> set[str]:
     return hosts
 
 
+def _as_project_cfg(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        from .db import _loads
+        raw = _loads(raw) or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def cluster_uses_peer_challenge(*cfgs: dict | None) -> bool:
+    """邻题入口清单只用于评测（夺旗 / 带 unique_code 的 lab），不用于红队/SRC 资产集群。
+
+    资产集群里兄弟子项目是另一台机器或另一个站点，不该出现在本题提示词里，
+    也不该被当成「邻题」列出来。范围仍由本项目 Scope 卡住。
+    """
+    from .objective import cfg_is_lab_src, objective_allows_flag
+
+    for c in cfgs:
+        if not isinstance(c, dict):
+            continue
+        if objective_allows_flag(c.get("objective") or c.get("track")):
+            return True
+        if cfg_is_lab_src(c):
+            return True
+        bm = c.get("benchmark") if isinstance(c.get("benchmark"), dict) else {}
+        if bm.get("unique_code"):
+            return True
+    return False
+
+
+async def _peer_challenge_enabled(row) -> bool:
+    from .db import db as _db
+
+    own = _as_project_cfg(row["config"] if row else None)
+    parent_cfg = None
+    pid = row["parent_id"] if row else None
+    if pid:
+        prow = await _db.fetchone("SELECT config FROM projects WHERE id=?", (pid,))
+        if prow:
+            parent_cfg = _as_project_cfg(prow["config"])
+    return cluster_uses_peer_challenge(own, parent_cfg)
+
+
 def merge_scope_keep_pivots(
     old: Scope,
     new: Scope,
@@ -130,6 +173,8 @@ async def peer_challenge_entry_addrs(project_id: str) -> set[str]:
         return set()
     row = await _db.fetchone("SELECT parent_id, target, ports, config FROM projects WHERE id=?", (project_id,))
     if not row or not row["parent_id"]:
+        return set()
+    if not await _peer_challenge_enabled(row):
         return set()
     own_proj = {
         "target": row["target"],
@@ -193,6 +238,8 @@ async def peer_challenge_entry_hosts(project_id: str) -> set[str]:
         return set()
     row = await _db.fetchone("SELECT parent_id, target, ports, config FROM projects WHERE id=?", (project_id,))
     if not row or not row["parent_id"]:
+        return set()
+    if not await _peer_challenge_enabled(row):
         return set()
     own_proj = {
         "target": row["target"],

@@ -5,7 +5,7 @@ import { coalesceStreamEvents } from "./coalesce";
 
 const LABEL: Record<string, string> = {
   text: "分析", thought: "思考", tool: "工具", tool_result: "结果", finding: "发现",
-  shell: "GETSHELL", steer: "指令", status: "状态", log: "日志", intent: "新意图", turn: "轮次结束", node: "节点", edge: "连接", rce_path: "路径", lateral: "内网横向", drift_alert: "漂移告警", finding_review: "二次验证",
+  shell: "GETSHELL", steer: "指令", status: "状态", log: "日志", intent: "新意图", turn: "轮次结束", node: "节点", edge: "连接", rce_path: "路径", lateral: "内网横向", drift_alert: "漂移告警", finding_review: "二次验证", report_export: "交付报告",
 };
 
 function line(ev: RTEvent): string {
@@ -26,6 +26,11 @@ function line(ev: RTEvent): string {
       if (p.status === "running") return `🔎 专职 Pi 正在二次验证与红队评级 · ${n} 条`;
       return `🔎 本轮二次验证结束${n ? ` · ${n} 条` : ""}`;
     }
+    case "report_export": {
+      if (p.status === "running") return "📄 专职导出 Pi 正在撰写交付报告";
+      if (p.status === "error") return `📄 专职导出 Pi 失败：${String(p.message || "").slice(0, 160)}`;
+      return "📄 专职导出 Pi 已写完交付报告";
+    }
     case "drift_alert": return `⚠️ 疑似打偏[${p.category || ""}] ${(p.message || "").slice(0, 220)}`;
     case "steer": return `⚡ ${p.content}`;
     case "status": return `状态: ${p.status}${p.turn ? ` · 第 ${p.turn} 轮` : ""}`;
@@ -42,7 +47,7 @@ function labelOf(ev: RTEvent): string {
   return LABEL[ev.type] || ev.type;
 }
 
-const CLS: Record<string, string> = { finding: "t-finding", shell: "t-shell", lateral: "t-shell", tool: "t-tool", steer: "t-steer", log: "t-error", drift_alert: "t-error", finding_review: "t-steer" };
+const CLS: Record<string, string> = { finding: "t-finding", shell: "t-shell", lateral: "t-shell", tool: "t-tool", steer: "t-steer", log: "t-error", drift_alert: "t-error", finding_review: "t-steer", report_export: "t-steer" };
 const SKIP = new Set(["node", "edge", "rce_path", "supervisor"]);
 /** 时间线只渲染最近 N 条，避免长跑项目 DOM 上千节点卡死 */
 const MAX_SHOWN = 150;

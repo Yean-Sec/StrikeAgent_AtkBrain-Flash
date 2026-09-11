@@ -27,7 +27,7 @@ Pi 用内置 `read` 加载本文件；之后作业只用扩展工具 `run_cmd` /
 
 1. **端口**：`timeout 60 /usr/bin/nmap -sV -T4 -Pn --top-ports 100 --open <host>`（`run_cmd` `timeout=60`）
 2. **目录**：小档 ffuf，`/usr/share/wordlists/dirb/common.txt`，`timeout=90`
-3. **HTTP 指纹 + WAF**：whatweb、wafw00f。已识别产品/版本立刻 WebSearch 查 CVE/N-day，公告页用 `http_request` 拉取。
+3. **HTTP 指纹 + WAF**：whatweb、wafw00f。已识别产品/版本立刻 WebSearch 查 CVE/N-day，公告页用 `http_request` 拉取。利用 payload 被 403/406 拦截页拦住时读 skill `waf-bypass-methodology`。
 4. **HTTP 入口面**：https/http、robots、sitemap、security.txt
 5. **DNS 记录**：系统解析器，不要钉死 `8.8.8.8`
 6. **JS 接口**（已确认 HTTP）：调用 skill `kali-kit` 取 `JSFinder.py` 绝对路径

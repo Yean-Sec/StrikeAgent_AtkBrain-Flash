@@ -1,4 +1,4 @@
-import type { FindingDetail, Graph, Project, RTEvent } from "./types";
+import type { AppVersion, FindingDetail, Graph, Project, RTEvent } from "./types";
 
 export type AssetGroupPreview = {
   primary: string;
@@ -85,8 +85,16 @@ async function req<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> 
 export const api = {
   health: () => req<any>("/api/health"),
   settings: () => req<any>("/api/settings"),
+  version: (refresh = false) => req<AppVersion>(`/api/version${refresh ? "?refresh=true" : ""}`),
   setConcurrency: (value: number, track: "redteam" | "ctf" = "redteam") =>
     req<any>("/api/settings/concurrency", { method: "POST", headers: J, body: JSON.stringify({ value, track }) }),
+  proxyStatus: () => req<any>("/api/proxy/status"),
+  setProxyEnabled: (enabled: boolean) =>
+    req<any>("/api/proxy/enabled", { method: "POST", headers: J, body: JSON.stringify({ enabled }) }),
+  getProxyPool: () => req<any>("/api/proxy/pool"),
+  saveProxyPool: (custom_text: string) =>
+    req<any>("/api/proxy/pool", { method: "POST", headers: J, body: JSON.stringify({ custom_text }) }),
+  verifyProxy: () => req<any>("/api/proxy/verify", { method: "POST" }),
 
   listProjects: () => req<Project[]>("/api/projects"),
   getProject: (id: string) => req<Project>(`/api/projects/${id}`),

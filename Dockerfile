@@ -98,7 +98,7 @@ RUN set -eux; \
     pi --version || true
 
 COPY backend/atkbrain /opt/atkbrain/backend/atkbrain
-COPY .claude/skills /opt/atkbrain/.claude/skills
+COPY skills /opt/atkbrain/skills
 COPY pi/extensions /opt/atkbrain/pi/extensions
 COPY tools /opt/atkbrain/tools
 COPY scripts/docker-entrypoint.sh /opt/atkbrain/docker-entrypoint.sh

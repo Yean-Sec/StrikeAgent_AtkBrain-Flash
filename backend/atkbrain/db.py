@@ -270,6 +270,12 @@ class Database:
                WHERE verification_status='verified' AND verified_at IS NULL"""
         )
         await self._conn.execute(
+            """UPDATE findings SET verification_status='verified',
+                   verified_at=COALESCE(verified_at, created_at)
+               WHERE secondary_verified=1
+                 AND IFNULL(verification_status,'') IN ('pending','flaky','')"""
+        )
+        await self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_findings_verification "
             "ON findings(project_id, verification_status)"
         )

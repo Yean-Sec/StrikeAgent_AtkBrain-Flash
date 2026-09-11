@@ -79,25 +79,38 @@ export function ReportExportControls({
       format: fmt,
       status: "running",
       percent: 1,
-      message: fmt === "pdf" ? "专职导出 Pi 排队中…" : "专职导出 Pi 排队中…",
+      message: "专职导出 Pi 排队中…",
     });
     try {
       const j = await api.startReportExport(projectId, fmt);
       setJob(j);
       stopPoll();
+      let misses = 0;
       const tick = async (): Promise<boolean> => {
         try {
           const s = await api.reportExportStatus(projectId, j.id);
-          setJob(s);
+          misses = 0;
+          setErr("");
           if (s.status === "done" || s.status === "error") {
+            setJob(s);
             stopPoll();
             return false;
           }
+          setJob(s);
           return true;
         } catch (e: any) {
-          setErr(String(e?.message || e));
-          stopPoll();
-          return false;
+          const msg = String(e?.message || e);
+          if (/导出任务不存在/.test(msg)) {
+            setErr("专职导出 Pi 任务已中断，请重新导出");
+            setJob((prev) => (prev ? { ...prev, status: "error", message: "专职导出 Pi 任务已中断，请重新导出" } : prev));
+            stopPoll();
+            return false;
+          }
+          misses += 1;
+          if (misses >= 8) {
+            setErr("正在等待专职导出 Pi…网络闪断会自动重试，请勿关闭");
+          }
+          return true;
         }
       };
       if (await tick()) {
