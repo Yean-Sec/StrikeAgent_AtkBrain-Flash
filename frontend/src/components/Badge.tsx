@@ -32,10 +32,15 @@ const RT_RATING_LABEL: Record<string, string> = {
   info: "红队·信息",
 };
 
-export function SecondaryVerifyBadge({ done }: { done?: boolean }) {
+export function SecondaryVerifyBadge({ done, reviewing }: { done?: boolean; reviewing?: boolean }) {
   if (done) {
     return (
       <span className="kbd" style={{ fontSize: 11, color: "var(--ok, #2a7)" }}>已二次验证</span>
+    );
+  }
+  if (reviewing) {
+    return (
+      <span className="kbd" style={{ fontSize: 11, color: "var(--warning, #d4a017)" }}>二次验证中</span>
     );
   }
   return (
@@ -43,10 +48,15 @@ export function SecondaryVerifyBadge({ done }: { done?: boolean }) {
   );
 }
 
-export function RedteamRatingBadge({ rating }: { rating?: string }) {
+export function RedteamRatingBadge({ rating, reviewing }: { rating?: string; reviewing?: boolean }) {
   const s = (rating || "").toLowerCase();
   const label = RT_RATING_LABEL[s];
   if (!label) {
+    if (reviewing) {
+      return (
+        <span className="kbd" style={{ fontSize: 11, color: "var(--warning, #d4a017)" }}>红队评级中</span>
+      );
+    }
     return (
       <span className="kbd" style={{ fontSize: 11, color: "var(--muted)" }}>红队未评级</span>
     );

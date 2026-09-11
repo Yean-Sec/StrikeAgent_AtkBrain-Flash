@@ -43,13 +43,13 @@ class Settings(BaseSettings):
     max_ctf_concurrency_cap: int = 20
     max_project_concurrency: int = 5           # 旧名，等同红队默认
     max_project_concurrency_cap: int = 20
-    max_concurrency: int = 16                  # 默认展示：红队 5 + CTF 3，每项目 2 路编排
-    max_concurrency_cap: int = 80              # (红队 cap 20 + CTF cap 20) × 2
+    max_concurrency: int = 8                  # 默认展示：红队 5 + CTF 3 项目槽
+    max_concurrency_cap: int = 40             # 红队 cap 20 + CTF cap 20
 
-    # 从者 + 御主各一路编排会话；从者派出的 Task 子智能体不占这道闸、不设上限。
-    claude_per_project: int = 2
-    claude_per_project_cap: int = 2
-    claude_spawn_max_concurrent: int = 20
+    # 项目内 Pi 工人不设上限；保留字段以免旧环境变量报未知。0=不封顶。
+    claude_per_project: int = 0
+    claude_per_project_cap: int = 0
+    claude_spawn_max_concurrent: int = 0
     claude_spawn_jitter_max_sec: float = 0.0
     claude_spawn_settle_ms: int = 0
     claude_connect_retries: int = 4
@@ -66,32 +66,32 @@ class Settings(BaseSettings):
     # 与红队/SRC 同一套门闩；CTF 只换赛道目标和时长。暂停本猎看 loop_stall_limit。
     loop_supervise_soft_turns: int = 3
     loop_supervise_hard_turns: int = 10
-    # 旧开口闸：现改为每轮必问御主。保留以免外部配置报未知项。
+    # 尚无方案时，前 N 轮从者打完允许开口。有方案后改看 hold / 周期。
     advisor_first_turns: int = 2
-    # 旧周期闸，开口不再按轮次取模；保留以免外部配置报未知项。
+    # 距上次下令满这么多轮、且无进展或方法空转，才再问御主。
     advisor_min_turn_interval: int = 3
-    # 御主注入非 noop 指令后，运行时审查仍用此窗口判断验证是否做完。
+    # 御主注入非 noop 指令后，这么多轮内不换方向、不问御主。
     # 硬空转（no_progress≥loop_supervise_hard_turns 且 method/chain）才允许提前打断。赛道无关。
     advisor_hold_turns: int = 3
     # 未验证路线包连续未执行这么多次 → 作废旧绑定，御主按全局重开多路线。收成走廊不刷新。
     advisor_bind_refresh_misses: int = 3
-    supervisor_model: str = ""
-    # 御主一次性 Claude Code 总等待（冷启动 CLI + 生成 + 重试）。到点从者自走。
+    supervisor_model: str = "deepseek-flash"
+    # 御主一次性 Pi 总等待（冷启动 CLI + 生成 + 重试）。到点从者自走。
     supervisor_timeout_sec: int = 360
-    # 御主问 Claude Code：0=在总墙钟内一直重试；>0 时次数与墙钟谁先到谁停。
+    # 御主问模型：0=在总墙钟内一直重试；>0 时次数与墙钟谁先到谁停。
     supervisor_consult_max_attempts: int = 0
     supervisor_consult_retry_base_sec: float = 4.0
     supervisor_cooldown_sec: float = 8.0
     supervisor_fail_cooldown_sec: float = 0.0
-    # 一份监督方案至少经过这么多「有工具」的御主回合（旧 dwell；主门闩已改 advisor_hold_turns）。
+    # 一份监督方案至少经过这么多「有工具」回合才允许换方案。
     supervisor_plan_dwell_turns: int = 2
-    # 连续这么多回合无有效进展才再问顾问（旧闸；主门闩已改 stall_class + advisor_min_turn_interval）。
+    # 连续这么多回合无有效进展才再问顾问（与 quality 门闩一起用）。
     supervisor_consult_stall_turns: int = 2
     evolve_ai: bool = True
-    evolve_model: str = ""
+    evolve_model: str = "deepseek-flash"
     evolve_timeout_sec: int = 90
     report_ai: bool = True
-    report_model: str = ""
+    report_model: str = "deepseek-flash"
     report_timeout_sec: int = 90
     turn_max_agent_turns: int = 60
     turn_max_seconds: int = 0          # 0=单轮不限时（整场墙钟仍生效）
@@ -112,9 +112,12 @@ class Settings(BaseSettings):
     redteam_runtime_hard_stop_sec: int = 4 * 60 * 60 # 红队：4 小时强制停止
     entry_unreachable_yield_sec: int = 0
 
-    claude_model: str = "sonnet"
-    claude_fallback_model: str = "haiku"
-    claude_bin: str = os.environ.get("ATKBRAIN_CLAUDE_BIN", "claude")
+    claude_model: str = "deepseek-flash"
+    claude_fallback_model: str = "deepseek-flash"
+    claude_bin: str = os.environ.get("ATKBRAIN_PI_BIN", os.environ.get("ATKBRAIN_CLAUDE_BIN", "pi"))
+    pi_bin: str = os.environ.get("ATKBRAIN_PI_BIN", "pi")
+    pi_provider: str = os.environ.get("ATKBRAIN_PI_PROVIDER", "deepseek")
+    pi_model: str = os.environ.get("ATKBRAIN_PI_MODEL", "deepseek-flash")
 
     default_objective: str = "getshell"
     api_token: str = ""

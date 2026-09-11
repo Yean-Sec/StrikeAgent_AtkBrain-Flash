@@ -1,8 +1,8 @@
-"""御主下令调度：每轮从者开打前先问御主。
+"""御主下令调度：从者整轮打完再问御主。
 
 这是自循环层的基本门闩，**不看赛道**：红队 / SRC / CTF（含评测）走同一套。
-每轮编排器先让御主下达本轮任务，从者等待；超时后从者按自己的思路打。
-本模块决定「这一轮要不要问御主 / 空转是否该暂停」。
+编排器先让从者（含工人）把本轮打完，再按卡住 / 周期决定要不要问御主；
+超时后下一轮从者按自己的思路打。本模块决定「这一轮要不要问御主 / 空转是否该暂停」。
 """
 from __future__ import annotations
 
@@ -47,12 +47,11 @@ def unfinished_verification(
     in_flight: bool,
     hard_turns: int,
 ) -> str | None:
-    """当前验证是否还没结束（运行时审查的 directives 用：未结束则只裁 continue）。
+    """当前验证是否还没结束。未结束则不应换方向、也不应再问御主。
 
     返回 hold_course / in_flight；None 表示可以换方向。
     硬空转（method/chain 且 no_progress≥hard_turns）视为验证已结束。
     不接受 objective：红队/SRC/CTF 不得各写一套。
-    开口本身每轮都问御主；本函数不挡咨询。
     """
     sc = (stall_class or "none").strip().lower()
     need_pivot = sc in ("method", "chain")
@@ -90,16 +89,56 @@ def should_review_advisor(
     pivots: int = 0,
     first_turns: int = 2,
 ) -> tuple[bool, str]:
-    """每轮从者开打前都让御主开口。赛道无关（无 objective 参数）。
+    """从者本轮打完后，卡住或到了周期才问御主。赛道无关。
 
-    in_flight / 空转计数不挡咨询；御主可用 JSON hold 表示继续当前路线包。
-    first_turns / interval 保留签名以免旧调用方报错，不再作为开口条件。
+    尚无方案：问一次。刚下过令 / Intent 仍在飞：hold，不问。
+    硬空转（method/chain 且 no_progress≥hard_turns）强制开口。
+    first_turns：尚无 last_steer_turn 时，前 N 轮允许开口（通常首轮打完即问）。
     """
-    _ = (
-        turn, interval, stall_class, no_progress, last_steer_turn,
-        hold_turns, in_flight, hard_turns, pivots, first_turns,
+    turn = max(0, int(turn or 0))
+    interval = max(1, int(interval or 3))
+    first = max(0, int(first_turns or 0))
+    hold_turns = max(0, int(hold_turns or 0))
+    hard_turns = max(1, int(hard_turns or 10))
+    no_progress = max(0, int(no_progress or 0))
+    pivots_n = max(0, int(pivots or 0))
+    sc = (stall_class or "none").strip().lower()
+    need_pivot = sc in ("method", "chain")
+    hard_stuck = need_pivot and no_progress >= hard_turns
+
+    if last_steer_turn is None and (pivots_n <= 0 or (first > 0 and turn <= first)):
+        return True, "turn"
+
+    if hard_stuck:
+        return True, "turn"
+
+    blocked = unfinished_verification(
+        turn=turn,
+        stall_class=stall_class,
+        no_progress=no_progress,
+        last_steer_turn=last_steer_turn,
+        hold_turns=hold_turns,
+        in_flight=in_flight,
+        hard_turns=hard_turns,
     )
-    return True, "turn"
+    if blocked:
+        return False, blocked
+
+    if last_steer_turn is None:
+        return True, "turn"
+
+    try:
+        elapsed = turn - int(last_steer_turn)
+    except (TypeError, ValueError):
+        elapsed = interval
+
+    if elapsed < interval and not need_pivot:
+        return False, "let_commander"
+
+    if need_pivot or no_progress >= 1:
+        return True, "turn"
+
+    return False, "progress"
 
 
 def stall_pause_due(no_progress: int, limit: int) -> bool:

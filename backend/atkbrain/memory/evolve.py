@@ -1,4 +1,4 @@
-"""自进化：高危/严重洞或 flag 才用 Claude Code 蒸馏成跨局剧本。
+"""自进化：高危/严重洞或 flag 才用一次性 Pi 蒸馏成跨局剧本。
 
 CTF 与红队共用同一份 lesson（project_id 为空）。不写机械路线，不蒸失败局。
 """
@@ -251,7 +251,7 @@ async def upsert_lesson(draft: dict, *, episode_id: str | None = None) -> dict |
 
 
 async def evolve_from_episode_id(episode_id: str) -> dict | None:
-    """把合格 episode 收成跨目标剧本。优先 Claude；未开或失败时只留手法/线索/类型链。"""
+    """把合格 episode 收成跨目标剧本。优先模型蒸馏；未开或失败时只留手法/线索/类型链。"""
     if not episode_id:
         return None
     row = await db.fetchone("SELECT * FROM memory WHERE id=?", (episode_id,))
@@ -602,14 +602,10 @@ async def _retire_lesson(spec: dict) -> None:
 
 
 async def ai_refine_playbook(*, recent_episodes: list[dict], playbook: list[dict]) -> list[dict]:
-    """用 Claude Code 蒸馏合格 episode。失败返回空，不回退机械映射。"""
+    """用一次性 Pi 蒸馏合格 episode。失败返回空，不回退机械映射。"""
     if not bool(getattr(settings, "evolve_ai", True)):
         return []
-    import asyncio
-
-    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
-
-    from ..agents.session import _get_spawn_sem
+    from ..agents.pi_runtime import query_text
 
     ep_lines = []
     for e in recent_episodes[:4]:
@@ -661,35 +657,17 @@ async def ai_refine_playbook(*, recent_episodes: list[dict], playbook: list[dict
         (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
     )
     wait = float(getattr(settings, "evolve_timeout_sec", 90) or 90)
-    opts = ClaudeAgentOptions(
-        tools=[],
-        allowed_tools=[],
-        disallowed_tools=["Bash", "WebFetch", "Read", "Write", "Edit", "Grep", "Glob", "WebSearch", "TodoWrite", "Task"],
-        system_prompt=EVOLVE_SYSTEM,
-        model=model,
-        fallback_model=settings.claude_fallback_model,
-        max_turns=1,
-        permission_mode="dontAsk",
-        setting_sources=[],
-        skills=[],
-        plugins=[],
-        cwd=str(settings.data_dir),
-        max_buffer_size=8 * 1024 * 1024,
-    )
-    texts: list[str] = []
-
-    async def _run() -> None:
-        async for msg in query(prompt=prompt, options=opts):
-            if isinstance(msg, AssistantMessage):
-                for b in getattr(msg, "content", []) or []:
-                    if isinstance(b, TextBlock) and (b.text or "").strip():
-                        texts.append(b.text)
-
     applied: list[dict] = []
-    sem = _get_spawn_sem()
-    async with sem:
-        await asyncio.wait_for(_run(), timeout=max(15.0, wait))
-    for spec in parse_evolve_lessons("\n".join(texts)):
+    blob = await query_text(
+        system_prompt=EVOLVE_SYSTEM,
+        user_prompt=prompt,
+        cwd=str(settings.data_dir),
+        timeout=max(15.0, wait),
+        tools=False,
+        model=model,
+        role="evolve",
+    )
+    for spec in parse_evolve_lessons(blob):
         if spec.get("action") == "retire":
             await _retire_lesson(spec)
             applied.append(spec)

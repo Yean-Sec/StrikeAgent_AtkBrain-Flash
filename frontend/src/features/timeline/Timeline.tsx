@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { RTEvent } from "../../types";
 import { displayFindingSeverity } from "../../theme";
+import { coalesceStreamEvents } from "./coalesce";
 
 const LABEL: Record<string, string> = {
   text: "分析", thought: "思考", tool: "工具", tool_result: "结果", finding: "发现",
-  shell: "GETSHELL", steer: "指令", status: "状态", log: "日志", intent: "新意图", turn: "轮次结束", node: "节点", edge: "连接", rce_path: "路径", lateral: "内网横向", drift_alert: "漂移告警",
+  shell: "GETSHELL", steer: "指令", status: "状态", log: "日志", intent: "新意图", turn: "轮次结束", node: "节点", edge: "连接", rce_path: "路径", lateral: "内网横向", drift_alert: "漂移告警", finding_review: "二次验证",
 };
 
 function line(ev: RTEvent): string {
   const p = ev.payload || {};
   switch (ev.type) {
     case "text": return p.text?.slice(0, 300) || "";
-    case "thought": return "💭 " + (p.message?.slice(0, 240) || "");
+    case "thought": return "💭 " + (p.message?.slice(0, 800) || "");
     case "tool": return `▶ ${p.tool}` + (p.command ? `: ${p.command}` : p.url ? `: ${p.method || ""} ${p.url}` : p.input ? `: ${p.input}` : "");
     case "tool_result": return p.tool === "run_cmd" ? `exit=${p.exit_code}${p.blocked ? " [已拦截]" : ""} ${(p.stdout_preview || p.reason || "").slice(0, 200)}` : `${p.status ?? ""} ${(p.preview || p.error || "").slice(0, 200)}`;
     case "finding": {
@@ -20,6 +21,11 @@ function line(ev: RTEvent): string {
     }
     case "shell": return `🎯 GETSHELL! ${p.access || ""} ${(p.evidence || "").slice(0, 120)}`;
     case "lateral": return `🌐 内网横向已开始${p.hosts_footed ? ` · ${p.hosts_footed} 台主机` : ""}${p.pivot_edges ? ` · ${p.pivot_edges} 条跳板` : ""}`;
+    case "finding_review": {
+      const n = Number(p.count || (p.titles || []).length || 0);
+      if (p.status === "running") return `🔎 专职 Pi 正在二次验证与红队评级 · ${n} 条`;
+      return `🔎 本轮二次验证结束${n ? ` · ${n} 条` : ""}`;
+    }
     case "drift_alert": return `⚠️ 疑似打偏[${p.category || ""}] ${(p.message || "").slice(0, 220)}`;
     case "steer": return `⚡ ${p.content}`;
     case "status": return `状态: ${p.status}${p.turn ? ` · 第 ${p.turn} 轮` : ""}`;
@@ -36,7 +42,7 @@ function labelOf(ev: RTEvent): string {
   return LABEL[ev.type] || ev.type;
 }
 
-const CLS: Record<string, string> = { finding: "t-finding", shell: "t-shell", lateral: "t-shell", tool: "t-tool", steer: "t-steer", log: "t-error", drift_alert: "t-error" };
+const CLS: Record<string, string> = { finding: "t-finding", shell: "t-shell", lateral: "t-shell", tool: "t-tool", steer: "t-steer", log: "t-error", drift_alert: "t-error", finding_review: "t-steer" };
 const SKIP = new Set(["node", "edge", "rce_path", "supervisor"]);
 /** 时间线只渲染最近 N 条，避免长跑项目 DOM 上千节点卡死 */
 const MAX_SHOWN = 150;
@@ -44,7 +50,7 @@ const MAX_SHOWN = 150;
 export function Timeline({ events }: { events: RTEvent[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const shown = useMemo(() => {
-    const filtered = events.filter((e) => !SKIP.has(e.type) && LABEL[e.type]);
+    const filtered = coalesceStreamEvents(events).filter((e) => !SKIP.has(e.type) && LABEL[e.type]);
     return filtered.length > MAX_SHOWN ? filtered.slice(-MAX_SHOWN) : filtered;
   }, [events]);
 

@@ -1,8 +1,8 @@
 # StrikeAgent_AtkBrain-Flash — TSecBench 托管镜像
-# 基础：Debian Bookworm + Python 3.12 + Node 22（Claude Code 要求 ≥22）
+# 基础：Debian Bookworm + Python 3.12 + Node 22（Pi 要求 Node 较新）。
 # 体积远小于 Kali 全量，仍预装常见 Web/Pwn/Crypto 工具。
 # 启动后自行拉题开打。密钥不要写进镜像，在平台「运行时环境变量」填写：
-#   ANTHROPIC_AUTH_TOKEN   大模型 Key（必填）
+#   DEEPSEEK_API_KEY       大模型 Key（必填；也可填 ANTHROPIC_AUTH_TOKEN）
 #   BENCHMARK_TOKEN        平台自动注入
 #   BENCHMARK_BASE_URL     平台自动注入
 ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim-bookworm
@@ -21,18 +21,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     ATKBRAIN_LLM_GATEWAY=1 \
     ATKBRAIN_HOST=0.0.0.0 \
     ATKBRAIN_PORT=5003 \
-    ATKBRAIN_CLAUDE_BIN=claude \
-    ATKBRAIN_CLAUDE_MODEL=sonnet \
-    ATKBRAIN_CLAUDE_FALLBACK_MODEL=haiku \
-    ANTHROPIC_BASE_URL=http://api.deepseek.com.tsecbench.gw/anthropic \
-    ANTHROPIC_MODEL=deepseek-v4-flash \
-    ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash \
-    ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-flash \
-    ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-flash \
-    CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash \
-    CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432 \
-    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 \
-    CLAUDE_CODE_EFFORT_LEVEL=max \
+    ATKBRAIN_PI_BIN=pi \
+    ATKBRAIN_PI_PROVIDER=deepseek \
+    ATKBRAIN_PI_MODEL=deepseek-flash \
+    ATKBRAIN_CLAUDE_MODEL=deepseek-flash \
+    ATKBRAIN_CLAUDE_FALLBACK_MODEL=deepseek-flash \
+    ATKBRAIN_SUPERVISOR_MODEL=deepseek-flash \
+    ATKBRAIN_EVOLVE_MODEL=deepseek-flash \
+    ATKBRAIN_REPORT_MODEL=deepseek-flash \
+    PI_TELEMETRY=0 \
+    PI_SKIP_VERSION_CHECK=1 \
+    PI_OFFLINE=1 \
     HOME=/root \
     PATH=/opt/atkbrain/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -88,18 +87,19 @@ RUN set -eux; \
     grep -v -i weasyprint /opt/atkbrain/backend/requirements.txt > /tmp/req.txt; \
     /opt/atkbrain/venv/bin/pip install --no-cache-dir -r /tmp/req.txt; \
     /opt/atkbrain/venv/bin/pip install --no-cache-dir pwntools pycryptodome gmpy2 z3-solver ropper; \
-    npm install -g @anthropic-ai/claude-code; \
+    npm install -g @earendil-works/pi-coding-agent; \
     npm cache clean --force; \
     rm -rf /root/.npm /tmp/req.txt; \
     mkdir -p /opt/atkbrain/backend/data/workspaces \
              /opt/atkbrain/backend/data/loot \
              /opt/atkbrain/backend/data/reports \
              /opt/atkbrain/backend/data/logs; \
-    command -v claude >/dev/null; \
-    claude --version || true
+    command -v pi >/dev/null; \
+    pi --version || true
 
 COPY backend/atkbrain /opt/atkbrain/backend/atkbrain
 COPY .claude/skills /opt/atkbrain/.claude/skills
+COPY pi/extensions /opt/atkbrain/pi/extensions
 COPY tools /opt/atkbrain/tools
 COPY scripts/docker-entrypoint.sh /opt/atkbrain/docker-entrypoint.sh
 

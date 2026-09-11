@@ -211,6 +211,6 @@ def format_src_surface_brief(graph: dict | None) -> str:
         lines.append("建议测：先铺开入口，再按面选；不要预开 11 路。")
     if advice.skipped:
         bits = [p.label for p in advice.skipped]
-        lines.append("暂缓：" + "、".join(bits) + "（没有对应面就不要硬派 Task）。")
+        lines.append("暂缓：" + "、".join(bits) + "（没有对应面就不要硬派工人）。")
     lines.append("有版本指纹才 WebSearch 查 N-day；纯私有 OSS 不要假装有 SQLi/XSS。")
     return "\n".join(lines)

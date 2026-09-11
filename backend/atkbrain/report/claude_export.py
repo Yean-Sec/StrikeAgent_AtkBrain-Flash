@@ -1,4 +1,7 @@
-"""交付报告导出任务：母版填槽 + 可选 Claude 撰写槽位内容 + 同源 PDF。"""
+"""交付报告导出：专职 report-export Pi 撰写槽位，再套母版出 HTML/PDF。
+
+与猎洞工人、漏洞复核 Pi、自进化蒸馏 Pi 不是同一条会话。
+"""
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +22,11 @@ from .slots import (
 )
 from .writeup import real_poc_text
 
-CLAUDE_SYSTEM = f"""你为授权渗透测试交付报告填写内容槽位，不输出完整 HTML 文档，不写 <style>，不改版式。
-提示词版本 {PROMPT_REV}。母版已固定：封面 tag/h1/meta、执行摘要 sum-grid、8 张 KPI、条形图+验证环、path-board（pn/parrow）、资产卡片、清单表、vf 卡片（①简介/技术成因 ②利用方式 ③修复 now/root）。你只填文字。
+EXPORT_ROLE = "report-export"
+
+EXPORT_SYSTEM = f"""你是 StrikeAgent_AtkBrain-Flash 的专职交付报告撰稿 Pi（role={EXPORT_ROLE}）。
+不是猎洞工人，不是漏洞二次验证员，不是自进化蒸馏员。只把已经确认的事实写成交付报告槽位。
+提示词版本 {PROMPT_REV}。母版已固定：封面 tag/h1/meta、执行摘要 sum-grid、8 张 KPI、条形图+验证环、path-board（pn/parrow）、资产卡片、清单表、vf 卡片（①简介/技术成因 ②利用方式 ③修复 now/root）。你只填文字，不输出完整 HTML，不写 <style>，不改版式。
 
 只输出 JSON：
 {{
@@ -49,6 +55,7 @@ CLAUDE_SYSTEM = f"""你为授权渗透测试交付报告填写内容槽位，不
 
 硬约束
 - 只使用事实包。没有的写「未采集」。禁止编造 URL / payload / CVE。
+- 每条漏洞优先改写事实包里的 report_summary / report_impact / report_rating / report_repro / report_fix（专职复核 Pi 已写的五段），不要另编一套；没有这五段才根据 evidence 写，并在 intro 标明尚未二次验证。
 - 禁止出现内部引擎字段、时间线、附录、产品内部名称。
 - 严重/高危必须写透简介、利用、修复。
 - findings 的键用事实包里的 slot_id（vuln-01 …）。
@@ -70,7 +77,9 @@ def _job_public(job: dict) -> dict:
         "cached": bool(job.get("cached")),
         "claude": bool(job.get("claude")),
         "claude_error": job.get("claude_error") or None,
+        "pi_role": job.get("pi_role") or EXPORT_ROLE,
     }
+
 
 
 def get_export_job(project_id: str, job_id: str) -> dict | None:
@@ -120,11 +129,14 @@ def _compact_findings(findings: list[dict], *, limit: int = 24) -> list[dict]:
             "severity": f.get("severity"),
             "category": f.get("category"),
             "verification": f.get("verification_status"),
+            "secondary_verified": bool(f.get("secondary_verified")),
+            "redteam_rating": f.get("redteam_rating"),
             "description": (f.get("description") or "")[:2500],
-            "root_cause": (f.get("root_cause") or "")[:3500],
-            "mechanism": (f.get("mechanism") or "")[:2000],
-            "impact_detail": (f.get("impact_detail") or "")[:2500],
-            "manual_steps": (f.get("manual_steps") or [])[:18],
+            "report_summary": (f.get("report_summary") or "")[:2500],
+            "report_impact": (f.get("report_impact") or f.get("impact_detail") or "")[:2500],
+            "report_rating": (f.get("report_rating") or f.get("redteam_rating_rationale") or "")[:2500],
+            "report_repro": (f.get("report_repro") or f.get("manual_repro") or "")[:3500],
+            "report_fix": (f.get("report_fix") or f.get("remediation") or "")[:2500],
             "evidence": (f.get("evidence") or "")[:4000],
             "poc_curl": real_poc_text(poc.get("curl") or f.get("poc_curl"))[:2500],
             "proof_url": f.get("proof_url"),
@@ -153,45 +165,45 @@ def _facts_payload(data: dict) -> dict:
     }
 
 
-async def _claude_enrich(facts: dict) -> dict:
-    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
+async def _export_enrich(facts: dict, *, project_id: str = "") -> dict:
+    """专职导出 Pi：无工具一次性会话，role=report-export。"""
+    from ..agents.pi_runtime import query_text
 
-    from ..agents.session import _get_spawn_sem
-
-    prompt = "# 渗透测试事实包（只填槽，禁止整页 HTML）\n" + json.dumps(facts, ensure_ascii=False, indent=2)[:100000]
+    prompt = (
+        "# 渗透测试事实包（专职导出 Pi 只填槽，禁止整页 HTML）\n"
+        + json.dumps(facts, ensure_ascii=False, indent=2)[:100000]
+    )
     model = (getattr(settings, "report_model", None) or "").strip() or (
         (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
     )
     wait = max(60.0, float(getattr(settings, "report_timeout_sec", 90) or 90) * 2)
     wait = min(wait, 240.0)
-    opts = ClaudeAgentOptions(
-        tools=[],
-        allowed_tools=[],
-        disallowed_tools=["Bash", "WebFetch", "Read", "Write", "Edit", "Grep", "Glob", "WebSearch", "TodoWrite", "Task"],
-        system_prompt=CLAUDE_SYSTEM,
-        model=model,
-        fallback_model=settings.claude_fallback_model,
-        max_turns=1,
-        permission_mode="dontAsk",
-        setting_sources=[],
-        skills=[],
-        plugins=[],
-        cwd=str(settings.data_dir),
-        max_buffer_size=8 * 1024 * 1024,
-    )
-    texts: list[str] = []
+    last_err = ""
+    for attempt in (1, 2):
+        try:
+            blob = await query_text(
+                system_prompt=EXPORT_SYSTEM,
+                user_prompt=prompt,
+                cwd=str(settings.data_dir),
+                timeout=wait,
+                tools=False,
+                model=model,
+                role=EXPORT_ROLE,
+                project_id=project_id,
+            )
+        except Exception as e:
+            last_err = str(e)[:400]
+            continue
+        parsed = parse_claude_enrich(blob)
+        if _enrich_usable(parsed):
+            return parsed
+        last_err = "专职导出 Pi 未返回可用槽位 JSON"
+    raise RuntimeError(last_err or "专职导出 Pi 撰写失败")
 
-    async def _run() -> None:
-        async for msg in query(prompt=prompt, options=opts):
-            if isinstance(msg, AssistantMessage):
-                for b in getattr(msg, "content", []) or []:
-                    if isinstance(b, TextBlock) and (b.text or "").strip():
-                        texts.append(b.text)
 
-    sem = _get_spawn_sem()
-    async with sem:
-        await asyncio.wait_for(_run(), timeout=wait)
-    return parse_claude_enrich("\n".join(texts))
+async def _claude_enrich(facts: dict) -> dict:
+    """兼容旧名。"""
+    return await _export_enrich(facts)
 
 
 def _safe_name(pid: str, p: dict) -> str:
@@ -204,7 +216,7 @@ async def run_export_job(job: dict) -> None:
     pid = job["project_id"]
     fmt = job["format"]
     try:
-        _set_job(job, 8, "装配母版…")
+        _set_job(job, 8, "收集项目事实与漏洞页…")
         data = await report_gen.build_report_data(pid, enrich_ai=False)
         digest = facts_digest(data)
         out_dir = Path(settings.reports_dir)
@@ -217,37 +229,33 @@ async def run_export_job(job: dict) -> None:
         force = bool(job.get("force", True))
         cached = (not force) and html_path.exists() and html_path.stat().st_size > 200
         if cached:
-            _set_job(job, 72, "命中缓存，跳过 Claude 填槽…")
+            _set_job(job, 72, "命中缓存，跳过专职导出 Pi…")
             html_doc = html_path.read_text(encoding="utf-8")
             job["cached"] = True
             job["claude"] = False
         else:
-            _set_job(job, 22, "Claude 正在撰写槽位…")
+            _set_job(job, 22, "专职导出 Pi 正在撰写封面与漏洞卡片…")
             enrich: dict = {}
             claude_err = ""
             try:
-                _set_job(job, 40, "Claude 正在撰写槽位…")
-                enrich = await _claude_enrich(_facts_payload(data)) or {}
+                _set_job(job, 40, "专职导出 Pi 正在撰写槽位…")
+                enrich = await _export_enrich(_facts_payload(data), project_id=pid) or {}
             except Exception as e:
                 claude_err = str(e)[:400]
                 enrich = {}
             if not _enrich_usable(enrich):
                 if not claude_err:
-                    claude_err = "Claude 未返回可用槽位 JSON"
+                    claude_err = "专职导出 Pi 未返回可用槽位 JSON"
                 job["claude"] = False
                 job["claude_error"] = claude_err
-                _set_job(job, 58, f"Claude 填槽未成功，套入本地骨架（{claude_err[:160]}）")
-                enrich = {}
-            else:
-                job["claude"] = True
-                job["claude_error"] = None
-                _set_job(job, 62, "套入母版槽位…")
-            try:
-                html_doc = assemble_deliverable(data, enrich=enrich or None)
-            except Exception:
-                _set_job(job, 70, "校验未过，回退本地模板…")
-                html_doc = assemble_deliverable(data, enrich=None)
-                job["claude"] = False
+                job["error"] = claude_err
+                _set_job(job, 58, f"专职导出 Pi 撰写失败：{claude_err[:160]}", status="error")
+                return
+            job["claude"] = True
+            job["claude_error"] = None
+            job["pi_role"] = EXPORT_ROLE
+            _set_job(job, 62, "套入母版槽位…")
+            html_doc = assemble_deliverable(data, enrich=enrich)
             _set_job(job, 82, "写入报告…")
             html_path.write_text(html_doc, encoding="utf-8")
             job["cached"] = False
@@ -262,9 +270,7 @@ async def run_export_job(job: dict) -> None:
         else:
             job["filename"] = f"{fname_base}.html"
         if job.get("claude"):
-            done_msg = "报告已生成（Claude 已填槽）"
-        elif job.get("claude_error"):
-            done_msg = f"报告已生成（未走 Claude：{str(job.get('claude_error') or '')[:120]}）"
+            done_msg = "报告已生成（专职导出 Pi 已撰写）"
         elif job.get("cached"):
             done_msg = "报告已生成（命中缓存）"
         else:
@@ -288,12 +294,13 @@ async def start_export_job(project_id: str, fmt: str, *, force: bool = True) -> 
         "format": fmt,
         "status": "running",
         "percent": 1,
-        "message": "已排队，准备调用 Claude 填槽…",
+        "message": "专职导出 Pi 排队中…",
         "error": None,
         "filename": None,
         "cached": False,
         "claude": False,
         "claude_error": None,
+        "pi_role": EXPORT_ROLE,
         "force": bool(force),
     }
     _jobs[job_id] = job

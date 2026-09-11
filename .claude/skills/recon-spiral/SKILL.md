@@ -1,15 +1,17 @@
 ---
 name: recon-spiral
 description: >
-  Red-team spiral recon. 从者 fans out parallel recon Tasks in three rings
+  Red-team spiral recon. 调度并发拉起 recon 工人，三圈
   小/中/大 (top-100 + common.txt, then top-1000 + medium dir, then -p- and
   recursive/extension fuzz). Expand after 6 empty 御主方案 with no quality
-  growth. Nested Task forbidden. Not for CTF. Goal is getshell.
+  growth. Nested workers forbidden. Not for CTF. Goal is getshell.
 ---
 
 # 信息收集：红队螺旋（从者并行派出）
 
-子智能体 **不设上限**。同一助手回合并行提交多个 `Task`（`subagent_type: recon`，`run_in_background: true`）。每个 Task 只做一面。子智能体 **禁止再 Task**。
+Pi 用内置 `read` 加载本文件；之后作业只用扩展工具 `run_cmd` / `http_request`。
+
+子智能体 **不设上限**。调度并发拉起多个 `recon` 角色会话。每个工人只做一面。**禁止再开子进程**。
 
 升圈看简报 **允许圈**：连续 **6** 个御主方案无高质量增长（已验证洞 / 凭证 / 立足点 / 能力边）才进下一圈。`info` / `service` / `danger` 不算增长。入口挂了（infra）不计数。有增长则留在当前圈。
 
@@ -32,7 +34,7 @@ description: >
 
 禁止第 1 圈：中档目录、top-1000、`-p-`、gobuster vhost 当攻击、扫兄弟站、hydra/sqlmap。
 
-入口已确认时 `web-exploit` 与第 1 圈 recon **同一回合 Agent/Task 并行** 开（必须带 `subagent_type`）。禁止先写完一圈 info 再打洞，禁止省略类型的通用 Agent。新端口/路径至少测→证一轮。静态 SPA / 同源 API=0 不是无攻击面。
+入口已确认时 `web-exploit` 与第 1 圈 recon **同一回合并行** 开。禁止先写完一圈 info 再打洞。新端口/路径至少测→证一轮。静态 SPA / 同源 API=0 不是无攻击面。
 
 ## 第 2 圈（中 · 允许圈=2 后做满）
 

@@ -247,9 +247,15 @@ class FindingIn(BaseModel):
     proof_url: str | None = None
     proof_detail: str | None = None
     verification_status: VerificationStatus | str | None = None
+    finding_id: str | None = None
     secondary_verified: bool = False
     redteam_rating: str | None = None
     redteam_rating_rationale: str | None = None
+    report_summary: str | None = None
+    report_impact: str | None = None
+    report_rating: str | None = None
+    report_repro: str | None = None
+    report_fix: str | None = None
 
     @field_validator("title")
     @classmethod

@@ -7,7 +7,7 @@ import { AttackGraph } from "../features/graph/AttackGraph";
 import { NodeDetail } from "../features/graph/NodeDetail";
 import { Timeline } from "../features/timeline/Timeline";
 import { SupervisorPanel, countSupervisorRecords } from "../features/timeline/SupervisorPanel";
-import { FindingsPanel, collectVulns, filterVisibleFindings } from "../features/findings/FindingsPanel";
+import { FindingsPanel, collectVulns, filterVisibleFindings, latestFindingReview, FindingReviewBanner } from "../features/findings/FindingsPanel";
 import { ServicesPanel } from "../features/services/ServicesPanel";
 import { MemoryPanel } from "../features/memory/MemoryPanel";
 import { ChatDock } from "../features/chat/ChatDock";
@@ -117,7 +117,7 @@ function applyGraphEvent(g: Graph, ev: RTEvent): Graph {
   return g;
 }
 const MAX_EVENTS = 2000;
-const PINNED_EVENT_TYPES = new Set(["steer", "drift_alert", "supervisor"]);
+const PINNED_EVENT_TYPES = new Set(["steer", "drift_alert", "supervisor", "finding_review"]);
 
 /** 工具洪水下仍保留纠偏指令；其余只留最近 MAX_EVENTS。 */
 function capEvents(evs: RTEvent[]): RTEvent[] {
@@ -324,6 +324,8 @@ export function ProjectPage() {
   const isFlag = project.config?.objective === "flag" || project.config?.track === "ctf";
   const isSrc = project.config?.objective === "src" || project.config?.track === "src";
   const visibleFindings = collectVulns(graph.findings, graph.nodes, { src: isSrc });
+  const reviewState = latestFindingReview(events);
+  const reviewLive = { ...reviewState, running: reviewState.running && running };
   const visibleHigh = visibleFindings.filter(
     (f) => displayFindingSeverity(f) === "high",
   ).length;
@@ -443,6 +445,7 @@ export function ProjectPage() {
             ))}
           </div>
           <div className="project-side-body">
+            {tab !== "findings" && <FindingReviewBanner review={reviewLive} />}
             {selected && (
               <div className="project-node-detail">
                 <NodeDetail node={graph.nodes.find((n) => n.key === selected.key) || selected} graph={graph} />
@@ -456,6 +459,7 @@ export function ProjectPage() {
                 nodes={graph.nodes}
                 onSelectNode={onSelect}
                 src={isSrc}
+                review={reviewLive}
               />
             )}
             {tab === "services" && <ServicesPanel graph={graph} onSelect={onSelect} />}

@@ -887,31 +887,38 @@ async def _persist_hunt_clock(project_id: str, rid: str, hunt: dict) -> None:
 
 async def _run_turn_guarded(
     agent, instruction: str, timeout: float, *, hang_sec: float = 0,
+    project_id: str = "",
 ):
     """跑一轮；timeout<=0 时不限墙钟。hang_sec>0 时，无思考/工具且无命令才当卡死。
 
     不能用裸 asyncio.wait_for：Py3.11+ 在子协程不响应 CancelledError 时会一直等取消完成，
     导致“回合卡死保护”失效、整题假死。这里用 wait+cancel，超时后最多再等几秒即放弃僵尸任务。
+    人工强制指令会打断本轮，尽快把控制权还给 loop。
     """
     task = asyncio.create_task(agent.run_turn(instruction))
     wait_timeout = None if float(timeout or 0) <= 0 else float(timeout)
     hang = float(hang_sec or 0)
     t0 = time.monotonic()
     t0_wall = time.time()
-    poll = 15.0
-    pid = str(getattr(agent, "project_id", "") or "")
+    poll = 2.0
+    pid = str(project_id or getattr(agent, "project_id", "") or "")
+    human_cut = False
     while True:
         remaining = None
         if wait_timeout is not None:
             remaining = wait_timeout - (time.monotonic() - t0)
             if remaining <= 0:
                 break
-        slice_wait = poll if hang > 0 else None
+        slice_wait = poll if hang > 0 else 2.0
         if remaining is not None:
             slice_wait = min(float(slice_wait or remaining), max(0.05, remaining))
         done, _ = await asyncio.wait({task}, timeout=slice_wait)
         if task in done:
             return task.result()
+        from .scheduler import manager as _mgr
+        if pid and _mgr.has_pending_human(pid):
+            human_cut = True
+            break
         if hang > 0:
             ctx = getattr(agent, "ctx", None)
             inflight = int(getattr(ctx, "cmd_inflight", 0) or 0)
@@ -931,14 +938,22 @@ async def _run_turn_guarded(
             )
             if session_hang_due(idle_for=idle, hang_sec=hang, cmd_inflight=inflight):
                 break
-        if slice_wait is None:
-            break
+        if wait_timeout is None and hang <= 0 and not human_cut:
+            # 不限墙钟也不看 hang 时仍要能被人工打断：上面 slice_wait=2s 已轮询。
+            continue
     try:
         await agent.interrupt()
     except Exception:
         pass
     task.cancel()
     await asyncio.wait({task}, timeout=5)
+    if human_cut:
+        return {
+            "text": "",
+            "tool_uses": 0,
+            "task_subagents": list(getattr(getattr(agent, "ctx", None), "task_subagents", None) or []),
+            "human_interrupt": True,
+        }
     # 若仍未结束：留下后台僵尸任务，但必须把控制权还给 loop 继续下一轮
     raise asyncio.TimeoutError()
 
@@ -982,7 +997,7 @@ async def _record_memory(project: dict, project_id: str, goal: bool, turn: int, 
                     {"level": "info",
                      "message": (
                          "自进化："
-                         + ("Claude 已蒸馏路线/方法/思想 " if evo.get("distilled") else "")
+                         + ("模型已蒸馏路线/方法/思想 " if evo.get("distilled") else "")
                          + (f"强化 {evo.get('reinforced')} 条 " if evo.get("reinforced") else "")
                          + (f"修订 {evo.get('ai_revised')} 条" if evo.get("ai_revised") else "")
                      ).strip()},
@@ -1266,7 +1281,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             except (TypeError, ValueError):
                 min_hunt_sec = 0.0
         result: dict = {}
-        # AI 御主：每轮从者开打前先下令。
+        # AI 御主：从者整轮打完再下令；本轮先沿用上一份方案开打。
         supervisor = LoopSupervisor(
             project_id=project_id, run_id=rid, objective=objective,
         )
@@ -1754,45 +1769,59 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 )
             except Exception:
                 pass
-            try:
-                consult_open = await gstore.list_open_intents(project_id)
-            except Exception:
-                consult_open = []
-            await _evaluate_supervisor(
-                supervisor=supervisor, project_id=project_id, rid=rid, turn=turn,
-                graph=graph, flags=last_flags, project=project, brief=brief,
-                summary=summary if isinstance(summary, str) else "",
-                result=result or {}, target=target, scope=scope,
-                assigned=assigned, open_intents=consult_open,
-                record_progress=False,
-            )
-            # 有绑定时每轮钉住局面段；参考假说可丢。对话框真人输入仍排在前面并覆盖。
+            # 人工强制与御主分通道：有真人输入时不把御主方案钉进同一条指令。
             # 同一份方案再钉进下一轮只给从者看，不往协同窗口重复刷一条 🧭。
-            sup_steer = supervisor.drain_steer()
             pinned_advisor = None
-            if sup_steer:
-                last_emitted = str(getattr(supervisor, "last_emitted_steer", None) or "")
-                if last_emitted.strip() and last_emitted.strip() == str(sup_steer).strip():
-                    pinned_advisor = sup_steer
-                    steering_msgs = steering_msgs + [sup_steer]
+            sup_steer = None
+            if human_steers:
+                supervisor.human_override = True
+                try:
+                    hold = max(0, int(getattr(settings, "advisor_hold_turns", 3) or 0))
+                except (TypeError, ValueError):
+                    hold = 3
+                supervisor.last_steer_turn = int(turn or 0)
+                supervisor.human_hold_until = int(turn or 0) + hold
+                for m in human_steers:
+                    await emit(
+                        project_id, "steer",
+                        {"content": m, "applied": True, "source": "human", "force": True},
+                        run_id=rid,
+                    )
+                await emit(
+                    project_id, "log",
+                    {"level": "info",
+                     "message": "本轮执行人工强制指令（覆盖御主方案，不守御主禁令）。"},
+                    run_id=rid,
+                )
+            else:
+                in_human_hold = int(turn or 0) <= int(getattr(supervisor, "human_hold_until", 0) or 0)
+                if in_human_hold:
+                    pinned_advisor = None
                 else:
-                    steering_msgs = steering_msgs + [sup_steer]
-                    supervisor.last_emitted_steer = str(sup_steer)
-            elif getattr(supervisor, "binding", None) and supervisor.active_steer:
-                pinned_advisor = supervisor.active_steer
-                steering_msgs = steering_msgs + [pinned_advisor]
-            # 每轮从者都是全新 Claude Code；换方向只改本轮简报，不续接旧对话。
+                    sup_steer = supervisor.drain_steer()
+                    if sup_steer:
+                        last_emitted = str(getattr(supervisor, "last_emitted_steer", None) or "")
+                        if last_emitted.strip() and last_emitted.strip() == str(sup_steer).strip():
+                            pinned_advisor = sup_steer
+                            steering_msgs = steering_msgs + [sup_steer]
+                        else:
+                            steering_msgs = steering_msgs + [sup_steer]
+                            supervisor.last_emitted_steer = str(sup_steer)
+                    elif getattr(supervisor, "binding", None) and supervisor.active_steer:
+                        pinned_advisor = supervisor.active_steer
+                        steering_msgs = steering_msgs + [pinned_advisor]
+                    for m in steering_msgs:
+                        if pinned_advisor is not None and m is pinned_advisor:
+                            continue
+                        source = "supervisor" if m is sup_steer else "human"
+                        await emit(project_id, "steer",
+                                   {"content": m, "applied": True, "source": source}, run_id=rid)
+            steering = "\n".join(f"- {m}" for m in steering_msgs)
+            # 每轮从者都是全新 Pi；换方向只改本轮简报，不续接旧对话。
             if supervisor.drain_reset():
                 await emit(project_id, "log",
                            {"level": "info", "message": "御主：换攻击思路（新开会话，局面只走攻击图）。"},
                            run_id=rid)
-            for m in steering_msgs:
-                if pinned_advisor is not None and m is pinned_advisor:
-                    continue
-                source = "supervisor" if m is sup_steer else "human"
-                await emit(project_id, "steer",
-                           {"content": m, "applied": True, "source": source}, run_id=rid)
-            steering = "\n".join(f"- {m}" for m in steering_msgs)
 
             lessons: list[dict] = []
             evo_text = ""
@@ -1981,20 +2010,28 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 supervisor.binding = updated
                 supervisor.assigned_intent_ids = list(updated.must_intents[:3])
                 bind = updated
-                if old_block and new_block and old_block in steering:
-                    steering = steering.replace(old_block, new_block)
-                elif new_block:
-                    steering = (steering + "\n- " + new_block) if steering else new_block
+                if not human_steers:
+                    if old_block and new_block and old_block in steering:
+                        steering = steering.replace(old_block, new_block)
+                    elif new_block:
+                        steering = (steering + "\n- " + new_block) if steering else new_block
             if reserve:
                 supervisor.banned_strategies = [
                     b for b in (supervisor.banned_strategies or []) if b not in reserve
                 ]
                 exclude -= set(reserve)
-            want_ids = supervisor.drain_assigned_intents()
-            try:
-                agent.ctx.bound_must_intents = situation_protected_intent_ids(bind, oi)
-            except Exception:
-                agent.ctx.bound_must_intents = frozenset()
+            if human_steers:
+                want_ids = []
+                try:
+                    agent.ctx.bound_must_intents = frozenset()
+                except Exception:
+                    pass
+            else:
+                want_ids = supervisor.drain_assigned_intents()
+                try:
+                    agent.ctx.bound_must_intents = situation_protected_intent_ids(bind, oi)
+                except Exception:
+                    agent.ctx.bound_must_intents = frozenset()
             bind_prefer = set((bind.prefer_tactics if bind else None) or ()) | set(lesson_do or ())
             bind_deny = set((bind.deny_tactics if bind else None) or ())
             bind_deny -= set(reserve)
@@ -2002,7 +2039,10 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 bind_deny |= set(avoid_tacs or ())
                 exclude |= set(avoid_tacs or ())
             extra: list[dict] = []
-            if not claim_unverified:
+            if human_steers:
+                assigned = []
+                want_ids = []
+            elif not claim_unverified:
                 extra = await gstore.list_frontier_intents(
                     project_id, limit=8 if peer_entries else 3,
                     exclude_strategies=exclude,
@@ -2010,17 +2050,18 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 )
                 if peer_entries:
                     extra = [i for i in extra if not _intent_cites_peer(i, peer_entries)]
-            assigned = pick_bound_assigned(
-                open_intents=oi,
-                want_ids=want_ids,
-                extras=extra,
-                prefer=set(),
-                deny=bind_deny,
-                lock=False,
-                reserve=reserve,
-                exclusive=bool(reserve) and not bind_flags.get("has_foothold")
-                and not bind_flags.get("has_verified_asset"),
-            )
+            if not human_steers:
+                assigned = pick_bound_assigned(
+                    open_intents=oi,
+                    want_ids=want_ids,
+                    extras=extra,
+                    prefer=set(),
+                    deny=bind_deny,
+                    lock=False,
+                    reserve=reserve,
+                    exclusive=bool(reserve) and not bind_flags.get("has_foothold")
+                    and not bind_flags.get("has_verified_asset"),
+                )
             if assigned:
                 await gstore.claim_intents(project_id, [i["id"] for i in assigned if i.get("id")], run_id=rid)
                 await emit(
@@ -2051,7 +2092,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
             hang_sec = 0.0
             try:
                 # 单回合墙钟：0 表示不限；评测预算开启时仍用剩余预算卡住。
-                # 不中途打断从者；御主令在本轮开打前已问过。
+                # 不中途打断从者；本轮先打完（含工人），打完再问御主。
                 turn_timeout = float(getattr(settings, "turn_max_seconds", 0) or 0)
                 from .advisor_bind import intent_tactic
                 from .advisor_schedule import should_yield_turn_to_advisor
@@ -2074,9 +2115,38 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                         break
                     turn_timeout = remaining if turn_timeout <= 0 else min(remaining, turn_timeout)
                 hang_sec = float(getattr(settings, "turn_hang_sec", 0) or 0)
+                try:
+                    from ..agents.prompts import default_fanout_roles
+                    if human_steers:
+                        subs = default_fanout_roles(objective)
+                    else:
+                        subs = [
+                            str(x).strip()
+                            for x in ((bind.subagents if bind else None) or [])
+                            if str(x).strip()
+                        ]
+                        if not subs:
+                            subs = default_fanout_roles(objective)
+                    agent.ctx.fanout_roles = subs
+                except Exception:
+                    pass
                 result = await _run_turn_guarded(
                     agent, instruction, turn_timeout, hang_sec=hang_sec,
+                    project_id=project_id,
                 )
+                cut_for_human = bool(result.get("human_interrupt")) or manager.take_human_interrupt(project_id)
+                if cut_for_human:
+                    empty_streak = 0
+                    hang = 0
+                    completed_turn = turn
+                    await _save_hunt(completed_turn)
+                    await emit(
+                        project_id, "log",
+                        {"level": "info",
+                         "message": "已打断本轮从者，下一轮执行人工强制指令。"},
+                        run_id=rid,
+                    )
+                    continue
                 summary = result.get("text", "")[:4000] or summary
                 hang = 0  # 本回合正常返回，清零卡死计数
                 # DeepSeek 未配密钥：秒回短文且无工具调用。禁止把「登录失败」规划文当密钥坏了。
@@ -2131,7 +2201,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     empty_streak += 1
                     await emit(project_id, "log",
                                {"level": "warn",
-                                "message": f"本回合无任何工具/有效输出（连续空回合 {empty_streak}），疑似会话已死，开全新 Claude Code。"},
+                                "message": f"本回合无任何工具/有效输出（连续空回合 {empty_streak}），疑似会话已死，开全新 Pi。"},
                                run_id=rid)
                     try:
                         await agent.begin_fresh_session()
@@ -2229,7 +2299,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                     hang += 1
                     hang_note = (
                         "【上回合卡死】未产生思考或工具。本轮第一动作必须调用工具"
-                        "（http_request / run_cmd / Task），禁止只规划。"
+                        "（http_request / run_cmd），禁止只规划。"
                     )
                     shown = turn_timeout if float(turn_timeout or 0) > 0 else hang_sec
                     await emit(project_id, "log",
@@ -2355,7 +2425,7 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                             await emit(
                                 project_id, "log",
                                 {"level": "info",
-                                 "message": "会话故障后已开全新 Claude Code（不续接旧对话）。"},
+                                 "message": "会话故障后已开全新 Pi（不续接旧对话）。"},
                                 run_id=rid,
                             )
                             await asyncio.sleep(1.5)
@@ -2468,6 +2538,14 @@ async def run_project_loop(manager: RunManager, project_id: str) -> None:
                 if sig != last_sig:
                     progressed = True
             last_sig = sig
+            await _evaluate_supervisor(
+                supervisor=supervisor, project_id=project_id, rid=rid, turn=turn,
+                graph=g2, flags=last_flags, project=project, brief=brief,
+                summary=summary if isinstance(summary, str) else "",
+                result=result or {}, target=target, scope=scope,
+                assigned=assigned, open_intents=open_now,
+                record_progress=False,
+            )
             try:
                 await supervisor.record_graph_progress(graph=g2, flags=last_flags)
             except Exception:

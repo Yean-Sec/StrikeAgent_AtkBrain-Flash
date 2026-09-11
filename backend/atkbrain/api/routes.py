@@ -34,6 +34,7 @@ from ..report.finding_report import (
 from ..report.poc import poc_for_finding
 from .. import cluster as cluster_mod
 from .. import benchmark as bmk
+from ..agents.mcp_http import router as mcp_router
 
 
 def _project_http_target(p: dict | None) -> str:
@@ -83,6 +84,7 @@ async def _load_reportable_finding(pid: str, fid: str) -> tuple[dict, dict | Non
     return finding, p, related
 
 router = APIRouter(prefix="/api")
+router.include_router(mcp_router)
 
 
 class CreateProjectReq(BaseModel):
@@ -151,12 +153,21 @@ async def _set_benchmark_autopilot(pid: str, enabled: bool) -> None:
 
 @router.get("/health")
 async def health():
-    # 不将“SDK 可导入”伪装成已认证；UI 据此显示就绪/不可用，并结合活动会话展示连接态。
+    import shutil
+    import subprocess
+
+    from ..agents.pi_runtime import pi_bin
+
+    bin_path = shutil.which(pi_bin()) or shutil.which("pi")
     try:
-        import claude_agent_sdk  # noqa: F401
-        claude_sdk = {"state": "ready", "label": "Claude Code 就绪"}
+        if not bin_path:
+            raise FileNotFoundError("pi not found in PATH")
+        ver = subprocess.check_output(
+            [bin_path, "--version"], timeout=8, text=True, stderr=subprocess.STDOUT,
+        ).strip()
+        claude_sdk = {"state": "ready", "label": "Pi 就绪", "version": ver[:80], "bin": bin_path}
     except Exception as exc:
-        claude_sdk = {"state": "unavailable", "label": "Claude Code 不可用", "error": str(exc)[:160]}
+        claude_sdk = {"state": "unavailable", "label": "Pi 不可用", "error": str(exc)[:160]}
     return {"ok": True, "version": "0.1.0", "claude_sdk": claude_sdk, **manager.snapshot()}
 
 
@@ -175,7 +186,7 @@ async def get_settings():
 
 @router.post("/settings/concurrency")
 async def set_concurrency(req: ConcurrencyReq):
-    """按赛道设置项目并发；Claude Code 展示为两道合计。"""
+    """按赛道设置项目并发；顶栏只闸项目槽。"""
     val = await manager.set_concurrency(req.value, track=req.track or "redteam")
     snap = manager.snapshot()
     return {
@@ -488,7 +499,7 @@ async def api_graph(pid: str):
     return await gstore.get_graph(pid)
 
 
-_PINNED_EVENT_TYPES = ("steer", "drift_alert", "supervisor")
+_PINNED_EVENT_TYPES = ("steer", "drift_alert", "supervisor", "finding_review")
 
 
 async def fetch_project_event_rows(pid: str, after: int = 0):
@@ -508,7 +519,7 @@ async def fetch_project_event_rows(pid: str, after: int = 0):
         """SELECT * FROM (
              SELECT * FROM events
              WHERE project_id=?
-               AND type IN ('text','shell','lateral','status','thought','finding','log')
+               AND type IN ('text','shell','lateral','status','thought','finding','log','finding_review')
              ORDER BY id DESC LIMIT 500
            ) t ORDER BY id ASC""",
         (pid,),
@@ -879,6 +890,11 @@ async def api_memory(limit: int = Query(100)):
 async def api_finding_detail(pid: str, fid: str):
     """单漏洞全量详情（不截断），供漏洞弹层。非 rejected 均可查看。"""
     finding, p, _related = await _load_reportable_finding(pid, fid)
+    if finding.get("secondary_verified"):
+        from ..report.pi_finding_page import ensure_pi_page, has_pi_page
+        if not has_pi_page(finding):
+            finding = await ensure_pi_page(pid, finding, project=p)
+            finding, p, _related = await _load_reportable_finding(pid, fid)
     target = _project_http_target(p)
     poc = poc_for_finding(finding, target)
     finding = prepare_finding_report(finding, poc=poc)
@@ -892,6 +908,11 @@ async def api_finding_report(pid: str, fid: str, format: str = Query("md")):
     if format != "md":
         raise HTTPException(400, "format 仅支持 md")
     finding, p, _related = await _load_reportable_finding(pid, fid)
+    if finding.get("secondary_verified"):
+        from ..report.pi_finding_page import ensure_pi_page, has_pi_page
+        if not has_pi_page(finding):
+            finding = await ensure_pi_page(pid, finding, project=p)
+            finding, p, _related = await _load_reportable_finding(pid, fid)
     target = _project_http_target(p)
     poc = poc_for_finding(finding, target)
     body = render_finding_markdown(p, finding, poc=poc)

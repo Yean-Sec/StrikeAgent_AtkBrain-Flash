@@ -77,6 +77,12 @@ export interface Finding {
   secondary_verified?: boolean;
   redteam_rating?: string;
   redteam_rating_rationale?: string;
+  report_summary?: string;
+  report_impact?: string;
+  report_rating?: string;
+  report_repro?: string;
+  report_fix?: string;
+  report_pending?: boolean;
 }
 
 /** 弹层用的全量详情（含手动步骤与 PoC） */
@@ -106,6 +112,8 @@ export interface FindingDetail extends Finding {
   cvss_explanation?: string;
   secondary_review?: string;
   node_detail_unique?: string;
+  manual_repro?: string;
+  report_pending?: boolean;
 }
 
 export interface Graph {

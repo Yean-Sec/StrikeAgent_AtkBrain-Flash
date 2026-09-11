@@ -1,6 +1,6 @@
 """本机 Kali 渗透工具清单（绝对路径）。
 
-清单本身是 Claude Code skill `kali-kit`，由从者/子智能体在需要路径时调用。
+清单本身是 skill `kali-kit`，由从者/角色工人在需要路径时调用。
 不要把本模块的目录全文注入系统提示。
 """
 from __future__ import annotations
@@ -27,9 +27,10 @@ KIT_SKILL_HINT = (
 )
 
 KIT_RULES = """# 本机工具纪律
+- Pi 用内置 `read` 加载本文件；之后作业只用扩展工具 `run_cmd` / `http_request`，不要用内置 bash。
 - 下列路径已存在。禁止 `which` / `command -v` / `type` 探工具；禁止 `ls /usr/share/wordlists`、ls seclists、猜 MCP 名。
 - 未列出的工具当不存在。不要编造系统包名去 which。
-- 命令一律 `mcp__atkbrain__run_cmd`；HTTP 优先 `mcp__atkbrain__http_request`。
+- 命令一律 `run_cmd`；HTTP 优先 `http_request`。
 - CTF 与红队一律禁止超过 10 万行的词表：端口全表、账号密码、子目录、子域名、host 碰撞、哈希碰撞都算。禁止 rockyou（~1400 万）与 dirbuster medium（220560）。目录最大用中档 87664；子域/host 只用 dnsmap（17576）；口令最大 metasploit password.lst（88406）。
 - 开局策略（CTF 先看入口 vs 红队三圈）见 skill `recon-fanout` / `recon-spiral`。本 skill 只给路径和可复制命令。
 """

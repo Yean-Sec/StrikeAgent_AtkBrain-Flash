@@ -9,14 +9,16 @@ description: >
 
 # 信息收集与挖洞：SRC 厂商清单（从者并行派出）
 
-子智能体 **不设上限**。同一助手回合并行提交多个 `Task`（`subagent_type: recon` / `web-exploit` / `src-hunt`，`run_in_background: true`）。每个 Task 只做一面或一类。子智能体 **禁止再 Task**。
+Pi 用内置 `read` 加载本文件；之后作业只用扩展工具 `run_cmd` / `http_request`。
+
+子智能体 **不设上限**。调度并发拉起多个角色会话（`recon` / `web-exploit` / `src-hunt`）。每个工人只做一面或一类。**禁止再开子进程**。
 
 **本 skill 仅 SRC（track=src）。** CTF 走 `recon-fanout`。红队走 `recon-spiral`（目标 getshell）。不要升圈、不要先看题交旗、不要为拿 shell 停工。
 
 产出 = 尽可能多的独立 `report_finding`（低/中/高危/严重都进漏洞页，各附最小可复现 PoC）。高危/严重必须二次验证且 evidence 含已证实危害。只打到「角色不存在 / 参数不完整 / 空 data」的未授权口仍要报，**不能评高危**。
 
 厂商 11 项是**类型菜单**不是穷尽洞单，也不是每轮必测清单。同一类型下所有变体都要挖，低/中/高危都报。
-按图上的入口形态选该派的类：有对应面才开 Task；没有证据就暂缓，不要为凑齐 11 路过代理。
+按图上的入口形态选该派的类：有对应面才派工人；没有证据就暂缓，不要为凑齐 11 路过代理。
 
 **禁止破坏业务**：不准 DROP/DELETE FROM/TRUNCATE，不准删业务文件/订单；SQLi 只读证明；删除类只动自己上传的测试文件。
 
@@ -69,7 +71,7 @@ description: >
 4. **JS 接口**：调用 skill `kali-kit` 取 `JSFinder.py` 绝对路径
 5. **DNS / 子域**：系统解析器 + dnsmap；不要钉死 `8.8.8.8`
 
-入口已确认时 `web-exploit` / `src-hunt` 与 recon **同一回合 Agent/Task 并行** 开（必须带 `subagent_type`）。禁止先写完 info 再打洞，禁止省略类型的通用 Agent。新端口/路径至少测→证一轮。静态 SPA 不是无攻击面。
+入口已确认时 `web-exploit` / `src-hunt` 与 recon **同一回合并行** 开。禁止先写完 info 再打洞。新端口/路径至少测→证一轮。静态 SPA 不是无攻击面。
 
 源站 nmap 只有 Web、没有 3306/6379/5432 → 疑似库在别的机器。下一刀泄配置/SQLi/未授权读/SSRF，不要为找库再扫库端口，不要把 jdbc/rds/*.internal 当新资产 nmap，不要 `report_pivot_capability`。
 

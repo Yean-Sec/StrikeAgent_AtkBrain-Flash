@@ -783,7 +783,7 @@ def _patch_finding_heads(html: str, by_sev: dict[str, list[str]]) -> str:
 
 
 def assemble_deliverable(data: dict, *, enrich: dict | None = None) -> str:
-    """复制母版后只改 SLOT。enrich 为 Claude JSON（可选）。"""
+    """复制母版后只改 SLOT。enrich 为模型 JSON（可选）。"""
     html = load_shell()
     p = data.get("project") or {}
     findings = list(data.get("findings") or [])

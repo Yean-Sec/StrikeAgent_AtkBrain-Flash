@@ -81,7 +81,12 @@ CREATE TABLE IF NOT EXISTS findings (
     proof_detail TEXT,
     secondary_verified INTEGER NOT NULL DEFAULT 0,
     redteam_rating TEXT,
-    redteam_rating_rationale TEXT
+    redteam_rating_rationale TEXT,
+    report_summary TEXT,
+    report_impact TEXT,
+    report_rating TEXT,
+    report_repro TEXT,
+    report_fix TEXT
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -251,6 +256,11 @@ class Database:
             "secondary_verified": "INTEGER NOT NULL DEFAULT 0",
             "redteam_rating": "TEXT",
             "redteam_rating_rationale": "TEXT",
+            "report_summary": "TEXT",
+            "report_impact": "TEXT",
+            "report_rating": "TEXT",
+            "report_repro": "TEXT",
+            "report_fix": "TEXT",
         }
         for name, definition in finding_adds.items():
             if name not in fcols:

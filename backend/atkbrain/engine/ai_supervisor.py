@@ -9,10 +9,11 @@ from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 
 from ..config import settings
-from ..agents.session import _get_spawn_sem, is_retryable_connect_error
+from ..agents.pi_runtime import query_text
+from ..agents.session import is_retryable_connect_error
 
 SUPERVISOR_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的御主，不是执行层。
-每轮从者开打前你先下令；根据简报里的全部信息判断局面，给出本轮可执行任务。
+从者打完一轮后你再下令；根据简报里的全部信息判断局面，给出下一轮可执行任务。
 
 职责
 - 只读简报里的攻击图（与控制台图例相同）：目标 / 服务 / 危险点 / 漏洞 / 凭证 / 立足点 / 信息；★GETSHELL 表示已拿到命令执行；RCE 最优路径是橙线；内网横向是紫线（shell→新目标）。再读开放 Intent、否证、flag、局面摘要、「已给过的方案」。不要向执行层要工具流水。
@@ -20,7 +21,7 @@ SUPERVISOR_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的御主，不是执�
 - 判断：进展是否真实、是否把「一种观测失败」写成「攻击面关闭」、入口是否挂了、是否该武器化/过门/提权/横向/夺旗。
 - 给出下一轮可执行方案：当前方案未跑满且有新观测时加深同一面；假钥匙意图、图停滞、已有凭证/活体表面还在入口枚举时必须换方向。
 - must_intents / next_plan 是参考假说：循环不会强制从者逐条执行。局面（未消费凭证、未关输入面、已验证洞、跳板/邻题）由循环按攻击图编译，从者必须守。不要把「先打另一个允许 POST 的路由」写成换通道。假说最多 3 条正交，供从者选用。违背局面（入口枚举、离开未关输入面）才会收紧禁令；从者改打正交假说不算违约。空字段由循环按图补全。
-- 每轮都开口。简报里本轮认领的 Intent 仍开放 → hold=true 表示继续当前局面（可并行子智能体），禁止另起同义散文或改打目录枚举。
+- 调度层不会每轮都问你：从者整轮打完、且当前方案卡住或到了周期才开口。被问到时，简报里本轮认领的 Intent 仍开放 → hold=true 表示继续当前局面（可并行子智能体），禁止另起同义散文或改打目录枚举。
 - CTF：唯一目标是正确 flag。题面给出的账号、路径、文件优先于自造字典；交旗优先于把题审完。本题必有解：禁止 rockyou / 超过 10 万行的词表 / hashcat 全库去撞哈希或登录；个位数默认口令失败不要升级字典，回到已验证通道抽数据。RCE / getshell / 橙线高亮都是手段。图上的边权乘积（常见自动补边 0.55）不是夺旗概率，禁止当进度或收工信号。评测 request_hint 会扣分：先打活体；实在卡住（活体、题面路径、一手利用都空转）才允许 next_plan 点名 request_hint；开局禁止。已看过不要再点。平台总分差不是漏旗。
 - 红队：最高指令是 GETSHELL（report_shell 即收工）。工作循环是测试→验证→高危/严重 finding→推向命令执行；尚未 GETSHELL 则对下一活体面再来一圈。finding 不单独收工。不要因为已有一条已验证洞就停测其它活体面。CTF 与红队一律禁止超过 10 万行的词表（目录/子域/host/口令/哈希/端口全表）。
 
@@ -105,7 +106,7 @@ _RT_GOAL_LINE = (
 )
 _SRC_GOAL_LINE = (
     "- SRC：最高指令是发现尽可能多的独立漏洞（report_finding，低/中/高危/严重都进漏洞页）。厂商 11 类是菜单：按入口形态选该测的类型，不要每轮全开。"
-    "有 HTML 才 XSS，有参数才 SQLi，有版本才 N-day（WebSearch 查 CVE）；没有对应面不要硬派 Task。不要停在第一条，不要为拿 shell 停工。"
+    "有 HTML 才 XSS，有参数才 SQLi，有版本才 N-day（WebSearch 查 CVE）；没有对应面不要硬派工人。不要停在第一条，不要为拿 shell 停工。"
     "已验证洞提危害后换仍有面、还没测的类型。禁止 GETSHELL/横向/夺旗收工。禁止超过 10 万行词表。"
 )
 _RT_TARGET_LINE = (
@@ -411,7 +412,7 @@ def format_ai_steer(plan: SupervisorPlan, *, pivots: int, extra_guide: str = "")
     if plan.must_intents:
         lines.append("建议 Intent：" + "、".join(f"`{x}`" for x in plan.must_intents))
     if plan.subagents:
-        lines.append("建议委派：" + "、".join(f"`{x}`" for x in plan.subagents))
+        lines.append("本回合并发角色：" + "、".join(f"`{x}`" for x in plan.subagents))
     if plan.prefer_tactics:
         lines.append("建议战术：" + "、".join(f"`{x}`" for x in plan.prefer_tactics))
     if plan.ban_repeats:
@@ -456,15 +457,10 @@ def plan_is_usable(plan: SupervisorPlan | None) -> bool:
 
 
 _ADVISOR_CWD: str | None = None
-_BUILTIN_BLOCK = (
-    "Bash", "BashOutput", "KillBash", "WebFetch", "Read", "Write", "Edit",
-    "Grep", "Glob", "WebSearch", "TodoWrite", "Task", "NotebookEdit",
-    "Skill", "SlashCommand",
-)
 
 
 def _advisor_cwd() -> str:
-    """空目录：不读 data_dir 里的 CLAUDE.md / .mcp.json。"""
+    """空目录：不读 data_dir 里的 CLAUDE.md / AGENTS.md。"""
     global _ADVISOR_CWD
     if not _ADVISOR_CWD:
         import tempfile
@@ -472,27 +468,11 @@ def _advisor_cwd() -> str:
     return _ADVISOR_CWD
 
 
-def _supervisor_disallowed_tools() -> list[str]:
-    from ..agents.tools import tool_names
-    return list(_BUILTIN_BLOCK) + list(tool_names(None))
-
-
-async def _on_supervisor_pre_tool_use(_input, _tool_use_id, _hook_context) -> dict:
-    return {
-        "continue_": True,
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": "御主禁止工具，只输出 JSON",
-        },
-    }
-
-
 _ONESHOT_CONFIG_ERR = "御主会话配置错误：一次性提问不能挂 can_use_tool，本轮不重试。"
 
 
 def is_oneshot_prompt_config_error(exc: BaseException | str) -> bool:
-    """SDK：can_use_tool 只能配流式 prompt；顾问用字符串一次性提问。"""
+    """旧 SDK 配置错误文案；Pi 路径不会再触发，保留给调用方识别。"""
     msg = str(exc or "")
     return (
         "can_use_tool callback requires streaming" in msg
@@ -500,83 +480,25 @@ def is_oneshot_prompt_config_error(exc: BaseException | str) -> bool:
     )
 
 
-def _assert_oneshot_query_options(opts) -> None:
-    """顾问 / 一次性 query(字符串) 禁止 can_use_tool，否则 SDK 根本不会去问模型。"""
-    if getattr(opts, "can_use_tool", None):
-        raise RuntimeError(_ONESHOT_CONFIG_ERR)
-
-
-def supervisor_query_options(*, system_prompt: str | None = None):
-    """顾问会话：无 MCP、无内置工具、不读用户/项目配置。
-
-    不能设 can_use_tool：SDK 会要求 prompt 改成 AsyncIterable，一次性 query(字符串) 会立刻失败。
-    """
-    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
-
-    model = (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
-    opts = ClaudeAgentOptions(
-        tools=[],
-        allowed_tools=[],
-        disallowed_tools=_supervisor_disallowed_tools(),
-        mcp_servers={},
-        strict_mcp_config=True,
-        plugins=[],
-        skills=[],
-        can_use_tool=None,
-        hooks={"PreToolUse": [HookMatcher(hooks=[_on_supervisor_pre_tool_use])]},
-        system_prompt=system_prompt or SUPERVISOR_SYSTEM,
-        model=model,
-        fallback_model=settings.claude_fallback_model,
-        max_turns=1,
-        permission_mode="plan",
-        setting_sources=[],
-        cwd=_advisor_cwd(),
-        max_buffer_size=8 * 1024 * 1024,
-        load_timeout_ms=30_000,
-    )
-    _assert_oneshot_query_options(opts)
-    return opts
-
-
-async def _query_text_guarded(prompt: str, opts, timeout: float, *, abandon_sec: float = 3.0) -> str:
-    """消费 query()；超时用 wait+cancel，不因子协程吞掉 CancelledError 而假死。"""
-    from claude_agent_sdk import AssistantMessage, TextBlock, query
-
-    _assert_oneshot_query_options(opts)
-    texts: list[str] = []
-
-    async def _run() -> None:
-        async for msg in query(prompt=prompt, options=opts):
-            if isinstance(msg, AssistantMessage):
-                for b in getattr(msg, "content", []) or []:
-                    if isinstance(b, TextBlock) and (b.text or "").strip():
-                        texts.append(b.text)
-
-    task = asyncio.create_task(_run())
-    done, _ = await asyncio.wait({task}, timeout=max(0.05, float(timeout)))
-    if task in done:
-        task.result()
-        return "\n".join(texts).strip()
-    task.cancel()
-    await asyncio.wait({task}, timeout=max(0.05, float(abandon_sec)))
-    raise TimeoutError(f"超过 {timeout:.0f}s 未返回")
-
-
 async def consult_supervisor(
     brief: str, *, timeout: float | None = None, system_prompt: str | None = None,
 ) -> SupervisorPlan:
-    """一次性、无工具的 Claude Code 查询。拉起 CLI 与从者共用 spawn 闸。
-
-    initialize / 空回复按从者同一套握手重试；单次生成超时抛给外层用原简报再问。
-    """
+    """一次性、无工具的 Pi 查询。空回复可按从者同一套握手重试。"""
     wait = float(timeout if timeout is not None else getattr(settings, "supervisor_timeout_sec", 360) or 360)
-    opts = supervisor_query_options(system_prompt=system_prompt)
+    model = (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
     retries = max(1, int(getattr(settings, "claude_connect_retries", 4) or 4))
     last_exc: BaseException | None = None
     for attempt in range(1, retries + 1):
         try:
-            async with _get_spawn_sem():
-                blob = await _query_text_guarded(brief, opts, max(0.05, wait))
+            blob = await query_text(
+                system_prompt=system_prompt or SUPERVISOR_SYSTEM,
+                user_prompt=brief,
+                cwd=_advisor_cwd(),
+                timeout=max(0.05, wait),
+                tools=False,
+                model=model,
+                role="supervisor",
+            )
             if blob:
                 return parse_supervisor_plan(blob)
             last_exc = TimeoutError("supervisor_empty_reply")
@@ -607,9 +529,9 @@ async def await_supervisor_plan(
     on_wait: Callable[[int, str, float], Awaitable[None]] | None = None,
     consult: Callable[..., Awaitable[SupervisorPlan]] | None = None,
 ) -> SupervisorPlan:
-    """问 Claude Code 给出可用方案。总墙钟内原简报再问，不压短。
+    """问御主模型给出可用方案。总墙钟内原简报再问，不压短。
 
-    御主是 Claude Code 一次性会话。timeout 是拉起 CLI + 生成 + 重试的总等待，
+    御主是 Pi 一次性会话。timeout 是拉起 CLI + 生成 + 重试的总等待，
     到点必须失败，从者按自己的思路继续。supervisor_consult_max_attempts=0
     时只受总墙钟约束。CancelledError 立即中断。
     """

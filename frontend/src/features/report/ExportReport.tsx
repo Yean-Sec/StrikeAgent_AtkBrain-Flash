@@ -14,6 +14,7 @@ export type ReportExportJob = {
   cached?: boolean;
   claude?: boolean;
   claude_error?: string | null;
+  pi_role?: string;
 };
 
 function DownloadIcon() {
@@ -78,7 +79,7 @@ export function ReportExportControls({
       format: fmt,
       status: "running",
       percent: 1,
-      message: fmt === "pdf" ? "装配母版…" : "装配母版…",
+      message: fmt === "pdf" ? "专职导出 Pi 排队中…" : "专职导出 Pi 排队中…",
     });
     try {
       const j = await api.startReportExport(projectId, fmt);
@@ -150,8 +151,8 @@ export function ReportExportControls({
         <Modal title="生成交付报告" onClose={() => { if (!running) { setOpen(false); stopPoll(); } }}>
           <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
             {isPdf
-              ? "每次导出都会调用 Claude 撰写槽位，再套入母版并渲染 PDF。请勿关闭。"
-              : "每次导出都会调用 Claude 撰写槽位，再套入母版后下载。请勿关闭。"}
+              ? "由专职导出 Pi 撰写封面、摘要与漏洞卡片，再套入母版并渲染 PDF。与猎洞、二次验证、自进化不是同一条会话。请勿关闭。"
+              : "由专职导出 Pi 撰写封面、摘要与漏洞卡片，再套入母版后下载。与猎洞、二次验证、自进化不是同一条会话。请勿关闭。"}
           </p>
           <div className={`import-progress${failed ? " is-error" : ""}`} role="status" aria-live="polite">
             <div className="import-progress-head">
@@ -166,8 +167,8 @@ export function ReportExportControls({
             </div>
             <div className="import-progress-meta muted">
               {err || job?.error || job?.message || "请稍候…"}
-              {done && job?.claude ? " · 已用 Claude 填槽" : ""}
-              {done && job?.claude_error ? ` · 未走 Claude：${job.claude_error}` : ""}
+              {done && job?.claude ? " · 专职导出 Pi 已撰写" : ""}
+              {done && job?.claude_error ? ` · 导出 Pi 未完成：${job.claude_error}` : ""}
             </div>
           </div>
           <div className="row" style={{ gap: 8, marginTop: 16 }}>

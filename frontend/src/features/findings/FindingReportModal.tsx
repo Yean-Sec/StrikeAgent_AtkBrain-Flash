@@ -5,6 +5,24 @@ import { Modal } from "../../components/Modal";
 import { SeverityBadge, VerifyBadge, SecondaryVerifyBadge } from "../../components/Badge";
 import { displayFindingSeverity, scrubCandidateRceLabel } from "../../theme";
 
+function SectionBody({ text, pending }: { text?: string; pending?: boolean }) {
+  const body = (text || "").trim();
+  if (!body) {
+    return (
+      <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+        {pending
+          ? "专职复核 Pi 完成二次验证与红队评级后撰写本段，不使用模板套话。"
+          : "未采集"}
+      </p>
+    );
+  }
+  return (
+    <p style={{ fontSize: 13, margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
+      {body}
+    </p>
+  );
+}
+
 export function FindingReportModal({
   projectId, finding, onClose,
 }: { projectId: string; finding: Finding; onClose: () => void }) {
@@ -30,6 +48,12 @@ export function FindingReportModal({
   const shownSev = displayFindingSeverity(d || finding);
   const title = `[${shownSev.toUpperCase()}] ${scrubCandidateRceLabel(finding.title) || finding.title}`;
   const curl = (poc?.curl || d?.poc_curl || "").trim();
+  const pending = !!(d?.report_pending ?? (!d && !finding.secondary_verified));
+  const summary = d?.report_summary || d?.description || finding.description || "";
+  const impact = d?.report_impact || d?.impact_detail || d?.impact || "";
+  const rating = d?.report_rating || d?.secondary_review || d?.redteam_rating_rationale || "";
+  const repro = d?.report_repro || d?.manual_repro || "";
+  const fix = d?.report_fix || d?.remediation || "";
 
   return (
     <Modal title={title} onClose={onClose} wide>
@@ -44,36 +68,37 @@ export function FindingReportModal({
         </div>
 
         {err && <p style={{ color: "var(--error)", fontSize: 13 }}>{err}</p>}
-        {!d && !err && <p className="muted" style={{ fontSize: 13 }}>加载完整报告…</p>}
+        {!d && !err && (
+          <p className="muted" style={{ fontSize: 13 }}>
+            {finding.secondary_verified
+              ? "专职 Pi 正在撰写漏洞页…"
+              : "加载完整报告…二次验证未完成时由专职复核 Pi 验证、评级后再撰写。"}
+          </p>
+        )}
 
         {d && (
           <>
-            <h3>漏洞简介</h3>
-            <p style={{ fontSize: 13, margin: 0, whiteSpace: "pre-wrap" }}>
-              {d.description || "未采集"}
-            </p>
-
-            <h3>危害</h3>
-            <p style={{ fontSize: 13, margin: 0, whiteSpace: "pre-wrap" }}>
-              {d.impact_detail || d.impact || "以证据为准。"}
-            </p>
-
-            <h3>手动复现</h3>
-            <ol>
-              {(d.manual_steps || []).map((s, i) => (
-                <li key={i}>{s.replace(/^\d+\.\s*/, "")}</li>
-              ))}
-            </ol>
-            {curl ? (
-              <pre style={{ maxHeight: 280 }}>{curl}</pre>
-            ) : (
-              !d.manual_steps?.length && <p className="muted" style={{ fontSize: 12 }}>未采集可复现步骤。</p>
+            {pending && (
+              <p className="muted" style={{ fontSize: 12, margin: "0 0 12px" }}>
+                本页由专职复核 Pi 在二次验证与红队评级之后撰写。尚未完成本条时不套用模板。
+              </p>
             )}
 
+            <h3>漏洞简介</h3>
+            <SectionBody text={summary} pending={pending && !summary} />
+
+            <h3>危害</h3>
+            <SectionBody text={impact} pending={pending} />
+
             <h3>红队评级</h3>
-            <p style={{ fontSize: 13, margin: 0, whiteSpace: "pre-wrap" }}>
-              {d.secondary_review || d.redteam_rating_rationale || "未评级。"}
-            </p>
+            <SectionBody text={rating} pending={pending} />
+
+            <h3>手动复现</h3>
+            <SectionBody text={repro} pending={pending} />
+            {curl ? <pre style={{ maxHeight: 280 }}>{curl}</pre> : null}
+
+            <h3>修复方式</h3>
+            <SectionBody text={fix} pending={pending} />
 
             <div className="row" style={{ gap: 8, marginTop: 20, borderTop: "1px solid var(--hair)", paddingTop: 14 }}>
               <button className="btn btn-primary" onClick={downloadMd}>下载本漏洞 Markdown 报告</button>

@@ -1829,13 +1829,30 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
     rating = normalize_redteam_rating(getattr(finding, "redteam_rating", None))
     rating_why = (getattr(finding, "redteam_rating_rationale", None) or "").strip() or None
     secondary = 1 if getattr(finding, "secondary_verified", False) else 0
+    from ..report.pi_finding_page import pi_report_from
+    page = pi_report_from(finding)
+    page_vals = tuple((page.get(k) or None) for k in (
+        "report_summary", "report_impact", "report_rating", "report_repro", "report_fix",
+    ))
 
     existing = None
-    if finding.node_key:
+    fid_hint = (getattr(finding, "finding_id", None) or "").strip()
+    if fid_hint:
+        existing = await db.fetchone(
+            "SELECT * FROM findings WHERE project_id=? AND id=?",
+            (project_id, fid_hint),
+        )
+    if existing is None and finding.node_key:
         existing = await db.fetchone(
             """SELECT * FROM findings WHERE project_id=? AND node_key=?
                ORDER BY created_at DESC LIMIT 1""",
             (project_id, finding.node_key),
+        )
+    if existing is None and (finding.title or "").strip():
+        existing = await db.fetchone(
+            """SELECT * FROM findings WHERE project_id=? AND title=?
+               ORDER BY created_at DESC LIMIT 1""",
+            (project_id, finding.title),
         )
 
     if existing:
@@ -1857,12 +1874,17 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
                    proof_url=COALESCE(?, proof_url), proof_detail=COALESCE(?, proof_detail),
                    verification_status=?, verified_at=COALESCE(?, verified_at),
                    secondary_verified=?, redteam_rating=COALESCE(?, redteam_rating),
-                   redteam_rating_rationale=COALESCE(?, redteam_rating_rationale)
+                   redteam_rating_rationale=COALESCE(?, redteam_rating_rationale),
+                   report_summary=COALESCE(?, report_summary),
+                   report_impact=COALESCE(?, report_impact),
+                   report_rating=COALESCE(?, report_rating),
+                   report_repro=COALESCE(?, report_repro),
+                   report_fix=COALESCE(?, report_fix)
                WHERE id=?""",
             (finding.evidence, finding.poc_curl, finding.poc_python,
              vr.proof_type, vr.proof_canary, vr.proof_url, stored_detail,
              new_st, verified_at, 1 if (secondary or prev_sec) else 0,
-             rating, rating_why, fid),
+             rating, rating_why, *page_vals, fid),
         )
     else:
         fid = new_id("f_")
@@ -1870,13 +1892,14 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
             """INSERT INTO findings(id, project_id, node_key, severity, category, title,
                    description, evidence, poc_curl, poc_python, cvss, created_at,
                    verification_status, verified_at, proof_type, proof_canary, proof_url, proof_detail,
-                   secondary_verified, redteam_rating, redteam_rating_rationale)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   secondary_verified, redteam_rating, redteam_rating_rationale,
+                   report_summary, report_impact, report_rating, report_repro, report_fix)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (fid, project_id, finding.node_key, sev, finding.category, finding.title,
              finding.description, finding.evidence, finding.poc_curl, finding.poc_python,
              finding.cvss, ts,
              vr.status, verified_at, vr.proof_type, vr.proof_canary, vr.proof_url, stored_detail,
-             secondary, rating, rating_why),
+             secondary, rating, rating_why, *page_vals),
         )
 
     row = await db.fetchone("SELECT * FROM findings WHERE id=?", (fid,))
@@ -1896,6 +1919,32 @@ async def add_finding(project_id: str, finding: FindingIn, run_id: str | None = 
             )
             await derive_intents_for_finding(project_id, finding, nrow, run_id=run_id)
     return data
+
+
+async def findings_pending_secondary(project_id: str) -> list[dict]:
+    """已入库但未完成二次验证+红队评级的可见漏洞（每个项目专职复核 Pi 用）。"""
+    from .verify import is_visible_finding
+
+    rows = await db.fetchall(
+        "SELECT * FROM findings WHERE project_id=? ORDER BY created_at DESC",
+        (project_id,),
+    )
+    obj = None
+    try:
+        from ..projects import get_project as _gp
+        cfg = ((await _gp(project_id)) or {}).get("config") or {}
+        obj = normalize_objective(cfg.get("objective") or cfg.get("track"))
+    except Exception:
+        obj = None
+    out: list[dict] = []
+    for row in rows:
+        if not finding_row_visible(obj, row) or not is_visible_finding(row):
+            continue
+        data = _serialize_finding(row)
+        if data.get("secondary_verified") and normalize_redteam_rating(data.get("redteam_rating")):
+            continue
+        out.append(data)
+    return out
 
 
 # ---- 意图 / 推理前沿 --------------------------------------------------------
@@ -2660,6 +2709,11 @@ def _serialize_finding(row: dict) -> dict:
         "secondary_verified": bool(_get("secondary_verified") or 0),
         "redteam_rating": _get("redteam_rating"),
         "redteam_rating_rationale": _clip(_get("redteam_rating_rationale"), 800),
+        "report_summary": _clip(_get("report_summary"), 1500),
+        "report_impact": _clip(_get("report_impact"), 1500),
+        "report_rating": _clip(_get("report_rating"), 1500),
+        "report_repro": _clip(_get("report_repro"), 1500),
+        "report_fix": _clip(_get("report_fix"), 1500),
     }
 
 

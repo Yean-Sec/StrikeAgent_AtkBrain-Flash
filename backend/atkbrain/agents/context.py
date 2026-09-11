@@ -54,6 +54,7 @@ class AgentContext:
     turn_activity_mono: float = 0.0
     cmd_inflight: int = 0
     task_subagents: list = field(default_factory=list)
+    fanout_roles: list = field(default_factory=list)
     _cookies: dict = field(default_factory=dict)
     _httpx_cli: object = None
     _ssrf_gw_hosts: set = field(default_factory=set)

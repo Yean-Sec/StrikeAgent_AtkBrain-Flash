@@ -63,9 +63,8 @@ _ENUM_FILL_TACTICS: frozenset[str] = frozenset({
     "fingerprint", "protocol_model", "content_enum", "auth_surface",
 })
 HUNT_TASK_NOTE = (
-    "局面：HTTP 活体本轮必须 Agent(subagent_type=web-exploit, run_in_background=true) "
-    "或 Task(subagent_type=web-exploit) 并行测→证；禁止省略 subagent_type 的通用 Agent，"
-    "禁止主会话 curl/http_request 代替。不限定必须是御主点名的那一条注入。"
+    "局面：HTTP 活体本轮必须并发拉起 `web-exploit` 工人测→证；"
+    "禁止从者 curl/http_request 代替。不限定必须是御主点名的那一条注入。"
     "静态 SPA、同源 API=0、只有 JS 外域名单，都不是无攻击面：打同入口参数/路由/Cookie/鉴权。"
     "info 节点不是战果。"
 )
@@ -1406,7 +1405,7 @@ _YIELD_TURN_RE = re.compile(r"让出给顾问|turn yield", re.I)
 
 
 def binding_requires_hunt_task(binding: AdvisorBinding | None) -> bool:
-    """路线包要求本轮派出 Task(web-exploit/src-hunt)，不能用 Agent/落 info 交差。"""
+    """路线包要求本轮派出 web-exploit/src-hunt 工人，不能只落 info 交差。"""
     if binding is None:
         return False
     if binding.cycle_hunt:
@@ -1637,7 +1636,7 @@ def format_binding_block(binding: AdvisorBinding | None) -> str:
     if binding.prefer_tactics:
         lines.append("建议战术：" + "、".join(f"`{x}`" for x in binding.prefer_tactics))
     if binding.subagents:
-        lines.append("建议委派：" + "、".join(f"`{x}`" for x in binding.subagents))
+        lines.append("本回合并发角色：" + "、".join(f"`{x}`" for x in binding.subagents))
     if binding.tightened:
         lines.append(f"上一步违背局面，已收紧禁令（miss={binding.misses}）。")
     return "\n".join(lines)

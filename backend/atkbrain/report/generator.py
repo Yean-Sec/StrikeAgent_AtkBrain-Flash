@@ -547,29 +547,32 @@ _HTML_TMPL = Template(r"""
     <b>{{ f.title }}</b>
     <span class="meta"> · {{ f.category or '未分类' }}{% if f.node_key %} · <code>{{ f.node_key }}</code>{% endif %} · {{ f.verification_status or 'verified' }}</span>
     <h4>漏洞简介</h4>
-    <div class="vuln-body">{{ f.description or '未采集' }}</div>
+    <div class="vuln-body">{{ f.report_summary or f.description or '专职 Pi 撰写中' }}</div>
     <h4>危害</h4>
-    <div class="vuln-body">{{ f.impact_detail or f.impact or '未采集' }}</div>
+    <div class="vuln-body">{{ f.impact_detail or f.impact or '专职 Pi 撰写中' }}</div>
+    <h4>红队评级</h4>
+    <div class="vuln-body">{{ f.secondary_review or f.report_rating or '未评级' }}</div>
     <h4>手动复现</h4>
-    {% if f.manual_steps %}
+    {% if f.manual_repro %}
+    <div class="vuln-body" style="white-space:pre-wrap">{{ f.manual_repro }}</div>
+    {% elif f.manual_steps %}
     <ol class="repro">
       {% for s in f.manual_steps %}<li>{{ s }}</li>{% endfor %}
     </ol>
     {% else %}
-    <p class="empty">未采集可复现步骤。</p>
+    <p class="empty">专职复核 Pi 完成二次验证后撰写复现步骤。</p>
     {% endif %}
     {% set curl = (f.poc.curl if f.poc else none) or f.poc_curl %}
     {% set pyp = (f.poc.python if f.poc else none) or f.poc_python %}
     {% if curl %}<pre>{{ curl }}</pre>{% endif %}
     {% if pyp %}<pre>{{ pyp }}</pre>{% endif %}
-    {% if not curl and not pyp and not f.manual_steps %}<p class="empty">未采集可执行 PoC。</p>{% endif %}
-    <h4>红队评级</h4>
-    <div class="vuln-body">{{ f.secondary_review or '未评级' }}</div>
+    <h4>修复方式</h4>
+    <div class="vuln-body">{{ f.remediation or f.report_fix or '专职 Pi 撰写中' }}</div>
   </div>
   {% endmacro %}
 
   <h2>项目 · 资产 · 漏洞</h2>
-  <p class="meta">按项目列出对应资产及其漏洞。每条含简介、危害、手动复现与红队评级。</p>
+  <p class="meta">按项目列出对应资产及其漏洞。每条由专职复核 Pi 撰写简介、危害、红队评级、手动复现与修复方式。</p>
 
   {% if not sections %}
   <p class="empty">暂无项目数据。</p>

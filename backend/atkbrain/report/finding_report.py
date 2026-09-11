@@ -5,7 +5,7 @@ from typing import Any
 
 from ..graph.model import display_finding_severity, redteam_rating_block
 from .poc import poc_for_finding
-from .writeup import apply_deterministic_writeup, real_poc_text
+from .writeup import real_poc_text
 
 
 def _row_get(row: Any, key: str, default=None):
@@ -65,10 +65,14 @@ def serialize_finding_full(row: Any, *, related_node: dict | None = None,
         "secondary_verified": bool(_row_get(row, "secondary_verified") or 0),
         "redteam_rating": _row_get(row, "redteam_rating"),
         "redteam_rating_rationale": _row_get(row, "redteam_rating_rationale"),
+        "report_summary": _row_get(row, "report_summary"),
+        "report_impact": _row_get(row, "report_impact"),
+        "report_rating": _row_get(row, "report_rating"),
+        "report_repro": _row_get(row, "report_repro"),
+        "report_fix": _row_get(row, "report_fix"),
         "related_node": related_node,
         "related_edges": related_edges or [],
     }
-    out.update(finding_guidance(out))
     return out
 
 
@@ -83,11 +87,43 @@ def _verify_label(st: str | None) -> str:
 
 
 def prepare_finding_report(finding: dict, *, poc: dict | None = None) -> dict:
-    """补齐成因/危害/手动复现，供弹层与导出共用。"""
+    """把专职 Pi 写的五板块铺到弹层字段；没有则标 pending，不用类别模板填空。"""
+    from .pi_finding_page import PENDING_COPY, has_pi_page
+    from ..graph.model import redteam_rating_block, redteam_rating_label
+
     out = dict(finding)
-    if "impact" not in out:
-        out.update(finding_guidance(out))
-    return apply_deterministic_writeup(out, poc=poc)
+    _ = poc
+    summary = (out.get("report_summary") or "").strip()
+    impact = (out.get("report_impact") or "").strip()
+    rating = (out.get("report_rating") or "").strip()
+    repro = (out.get("report_repro") or "").strip()
+    fix = (out.get("report_fix") or "").strip()
+    pending = not has_pi_page(out)
+    out["report_pending"] = pending
+    if summary:
+        out["description"] = summary
+    if impact:
+        out["impact_detail"] = impact
+        out["impact"] = impact
+    elif pending:
+        out["impact_detail"] = PENDING_COPY
+        out["impact"] = PENDING_COPY
+    if rating:
+        out["secondary_review"] = rating
+    elif not pending:
+        out["secondary_review"] = redteam_rating_block(out)
+    else:
+        rt = redteam_rating_label(out.get("redteam_rating"))
+        why = (out.get("redteam_rating_rationale") or "").strip()
+        out["secondary_review"] = why or (PENDING_COPY if rt == "未评级" else f"级别：{rt}。正文待专职 Pi 撰写。")
+    if repro:
+        out["manual_repro"] = repro
+        out["manual_steps"] = [ln.strip() for ln in repro.splitlines() if ln.strip()]
+    else:
+        out["manual_repro"] = PENDING_COPY if pending else ""
+        out["manual_steps"] = []
+    out["remediation"] = fix or (PENDING_COPY if pending else "")
+    return out
 
 
 def manual_verification_steps(finding: dict, poc: dict | None = None) -> list[str]:
@@ -110,7 +146,7 @@ def render_finding_markdown(
     poc: dict | None = None,
     heading: str = "#",
 ) -> str:
-    """单漏洞 Markdown：简介、危害、手动复现、红队评级。"""
+    """单漏洞 Markdown：简介、危害、红队评级、手动复现、修复方式。"""
     p = project or {}
     target = p.get("target") or ""
     poc = poc or poc_for_finding(finding, target if isinstance(target, str) else "")
@@ -133,23 +169,31 @@ def render_finding_markdown(
     lines += _md_block(finding.get("description") or finding.get("title"))
     lines += [f"{h2} 危害", ""]
     lines += _md_block(finding.get("impact_detail") or finding.get("impact"))
+    lines += [f"{h2} 红队评级", ""]
+    lines += _md_block(finding.get("secondary_review") or redteam_rating_block(finding))
     lines += [f"{h2} 手动复现", ""]
-    for s in finding.get("manual_steps") or []:
-        lines.append(s)
+    repro = (finding.get("manual_repro") or "").strip()
+    if repro:
+        lines += _md_block(repro)
+    else:
+        for s in finding.get("manual_steps") or []:
+            lines.append(s)
+        if not finding.get("manual_steps"):
+            lines += _md_block("")
     curl = real_poc_text(poc.get("curl") or finding.get("poc_curl"))
     py = real_poc_text(poc.get("python") or finding.get("poc_python"))
     raw_curl = (poc.get("curl") or finding.get("poc_curl") or "").strip()
     raw_py = (poc.get("python") or finding.get("poc_python") or "").strip()
     if curl:
-        lines += ["", "```bash", curl, "```"]
+        lines += ["```bash", curl, "```", ""]
     if py:
-        lines += ["", "```python", py, "```"]
+        lines += ["```python", py, "```", ""]
     if not curl and not py:
-        lines += ["", "_未采集可执行 PoC（无真实 poc_curl / poc_python）。_"]
+        lines += ["_未采集可执行 PoC（无真实 poc_curl / poc_python）。_", ""]
         if raw_curl or raw_py:
             lines.append("_系统拒绝为高危项合成假利用脚本。_")
-    lines += ["", f"{h2} 红队评级", ""]
-    lines += _md_block(finding.get("secondary_review") or redteam_rating_block(finding))
+    lines += [f"{h2} 修复方式", ""]
+    lines += _md_block(finding.get("remediation") or finding.get("report_fix"))
     return "\n".join(lines)
 
 

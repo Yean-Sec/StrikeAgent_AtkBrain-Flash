@@ -308,6 +308,30 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .legend .row { gap: 5px; }
 .legend .dot { width: 10px; height: 10px; border-radius: 50%; }
 
+.finding-review-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(204,120,92,.45);
+  background: rgba(204,120,92,.10);
+  font-size: 13px;
+}
+.finding-review-banner b { font-size: 14px; }
+.finding-review-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-top: 5px;
+  background: var(--primary);
+  animation: ringlateral 1.2s ease-in-out infinite;
+}
+.finding-review-titles {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pulse-dot.is-live { animation: ringlateral 1.2s ease-in-out infinite; }
 .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--hairline); margin-bottom: 16px; }
 .tab { padding: 8px 14px; font-size: 14px; font-weight: 500; color: var(--muted); cursor: pointer; border: 1px solid transparent; border-radius: 8px 8px 0 0; background: transparent; }
 .tab:hover { color: var(--ink); background: rgba(204,120,92,.08); }

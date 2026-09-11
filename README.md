@@ -82,13 +82,13 @@ Cybench 官方认证榜单第 3 名（`deepseek-v4-flash`，84.13 / 100）。
 - sudo apt 安装 python3 python3-pip python3-dev build-essential nodejs npm curl；导出 PDF 再装 libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev shared-mime-info。
 - pip：sudo /usr/bin/python3 -m pip install -r backend/requirements.txt --break-system-packages
 - 前端：cd frontend && npm install（atkbrain-up.sh 前必须有 frontend/node_modules）
-- 全局安装 Claude Code：sudo npm install -g @anthropic-ai/claude-code；本机 claude 能跑（已登录，或 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY，可选 ANTHROPIC_BASE_URL）。
-- 把当前 shell 里的 ANTHROPIC_* / CLAUDE_* / ATKBRAIN_* 准备好后再 sudo scripts/atkbrain-up.sh。脚本会把密钥快照到 backend/data/atkbrain-claude.env（权限 600）。systemd 的 PATH 里要有 claude。
+- 全局安装 Pi：sudo npm install -g @earendil-works/pi-coding-agent；本机 `pi --version` 能跑（DEEPSEEK_API_KEY，可选 ANTHROPIC_AUTH_TOKEN 别名）。
+- 把当前 shell 里的 DEEPSEEK_* / ANTHROPIC_* / ATKBRAIN_* / PI_* 准备好后再 sudo scripts/atkbrain-up.sh。脚本会把密钥快照到 backend/data/atkbrain-claude.env（权限 600）。systemd 的 PATH 里要有 pi。
 
 三、Skill / 工具路径（最容易部署错）
-猎面 Claude 的 cwd 是 backend/data/workspaces/<项目id>/，不是仓库根。Skill 和本仓库绑定，不是用户全局环境。
-- 源文件：REPO/.claude/skills/kali-kit、recon-fanout、recon-spiral。只进 git，不要复制到 ~/.claude，不要改 Claude Code 用户级 settings。
-- 运行时：会话启动会把本赛道 skill 拷到该猎工作区 backend/data/workspaces/<pid>/.claude/skills/。ClaudeAgentOptions 必须是 setting_sources=["project"]、plugins=[]、skills=白名单里这几个名字。
+猎面 Pi 的 cwd 是 backend/data/workspaces/<项目id>/，不是仓库根。Skill 和本仓库绑定，不是用户全局环境。
+- 源文件：REPO/.claude/skills/kali-kit、recon-fanout、recon-spiral。只进 git，不要复制到 ~/.pi，不要改 Pi 用户级 settings 来装 skill。
+- 运行时：会话启动会把本赛道 skill 拷到该猎工作区 backend/data/workspaces/<pid>/.agents/skills/。Pi 从 cwd 向上发现。
 - kali-kit 不能用手写死本机路径。仓库里的 .claude/skills/kali-kit/SKILL.md 用占位符 <REPO>。真正给从者看的那份由 backend/atkbrain/agents/kali_kit.py 的 skill_markdown() 按 REPO_ROOT 生成（REPO_ROOT = backend 的上一级）。project_skills.install_into_workspace 会在拷贝后覆盖工作区里的 kali-kit/SKILL.md。部署时不要把 SKILL.md 改成某台机器的绝对路径。
 - Kali 没有、仓库自带的脚本必须用仓库绝对路径调用（工作区 cwd 找不到相对路径）：
   python3 $REPO/tools/JSFinder/JSFinder.py -u <url> -ou js_urls.txt -os js_subs.txt
@@ -98,10 +98,10 @@ Cybench 官方认证榜单第 3 名（`deepseek-v4-flash`，84.13 / 100）。
 - 不要把 kali-kit 全文塞进系统提示；从者需要路径时调用 skill kali-kit。CTF 开局读 recon-fanout，红队开局读 recon-spiral。
 
 四、验收
-curl -sS http://127.0.0.1:5003/api/health   期望 ok: true，并有 claude_sdk
+curl -sS http://127.0.0.1:5003/api/health   期望 ok: true，claude_sdk.label 为「Pi 就绪」
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/   期望 200
 浏览器打开 http://127.0.0.1:5001/
-失败先看 backend/data/logs/backend.err.log 与 frontend.err.log：缺包、端口占用、claude 不在 unit 的 PATH、或没快照密钥。
+失败先看 backend/data/logs/backend.err.log 与 frontend.err.log：缺包、端口占用、pi 不在 unit 的 PATH、或没快照密钥。
 ```
 
 ### 环境
@@ -113,8 +113,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/   期望 200
 | ------------- | ------------------------------------------------------------------------------------------ |
 | 系统            | Kali / Debian 系，systemd，root（`sudo`）                                                       |
 | Python        | `/usr/bin/python3`，**3.12+**。后端 unit 直接跑这个解释器，不要只用 venv 装包却不改 unit                         |
-| Node.js / npm | **18+**（[Claude Code](https://docs.anthropic.com/en/docs/claude-code) 官方要求 **≥ 22** 时按官方走） |
-| Claude Code   | 本机 `claude` 能用：已登录，或配好 Anthropic 兼容网关                                                      |
+| Node.js / npm | **18+**（Pi 建议较新 Node）                                                                   |
+| Pi            | 本机 `pi` 能用：`npm i -g @earendil-works/pi-coding-agent`，配好 `DEEPSEEK_API_KEY`           |
 | 端口            | **5001** 控制台，**5003** API，不要被其它进程占着                                                        |
 | 磁盘            | `backend/data/` 会写库、工作区、日志、报告                                                              |
 
@@ -130,12 +130,11 @@ sudo apt install -y libcairo2 libpango-1.0-0 libpangocairo-1.0-0 \
   libgdk-pixbuf-2.0-0 libffi-dev shared-mime-info
 ```
 
-安装 Claude Code：
+安装 Pi：
 
 ```bash
-sudo npm install -g @anthropic-ai/claude-code
-claude --version
-claude auth status    # 或按官方文档完成登录
+sudo npm install -g @earendil-works/pi-coding-agent
+pi --version
 ```
 
 模型密钥用环境变量即可，安装脚本会快照到 `backend/data/atkbrain-claude.env`（权限 `600`，不要提交进 git）：
@@ -143,11 +142,10 @@ claude auth status    # 或按官方文档完成登录
 
 | 变量                                           | 作用                            |
 | -------------------------------------------- | ----------------------------- |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | 大模型密钥                         |
-| `ANTHROPIC_BASE_URL`                         | 兼容 Anthropic Messages 的网关（可选） |
-| `ANTHROPIC_MODEL` 等                          | 模型名（可选）                       |
-| `ATKBRAIN_CLAUDE_BIN`                        | `claude` 可执行文件路径，默认 `claude`  |
-| `ATKBRAIN_CLAUDE_MODEL`                      | 默认 `sonnet`                   |
+| `DEEPSEEK_API_KEY`                           | 大模型密钥                         |
+| `ANTHROPIC_AUTH_TOKEN`                       | 密钥别名（有则自动填给 Pi）               |
+| `ATKBRAIN_PI_BIN`                            | `pi` 可执行文件路径，默认 `pi`          |
+| `ATKBRAIN_PI_MODEL` / `ATKBRAIN_CLAUDE_MODEL` | 默认 `deepseek-flash`           |
 | `ATKBRAIN_API_TOKEN`                         | 非空则 API / WebSocket 要带令牌（可选）  |
 
 
@@ -176,7 +174,7 @@ sudo /usr/bin/python3 -m pip install -r requirements.txt --break-system-packages
 cd ..
 ```
 
-3. 把当前 shell 里的 `ANTHROPIC_*` / `CLAUDE_*` / `ATKBRAIN_*` 准备好（没有的可以先 `export ANTHROPIC_API_KEY=...`），再一键交给 systemd：
+3. 把当前 shell 里的 `DEEPSEEK_*` / `ANTHROPIC_*` / `ATKBRAIN_*` / `PI_*` 准备好（没有的可以先 `export DEEPSEEK_API_KEY=...`），再一键交给 systemd：
 
 ```bash
 sudo scripts/atkbrain-up.sh
@@ -198,18 +196,18 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/
 
 日志：`backend/data/logs/backend.log`、`backend.err.log`、`frontend.log`、`frontend.err.log`。数据在 `backend/data/`，已进 `.gitignore`。
 
-红队默认 5 个项目、CTF 默认 3 个，两道互不占槽，都可调到 20。每项目 2 路编排（从者 + 御主）。设置页和顶栏能看到当前占用。
+红队默认 5 个项目、CTF 默认 3 个，两道互不占槽，都可调到 20。项目内 Pi 工人不设上限。设置页和顶栏能看到当前占用。
 
 ### 常见问题
 
 **`health: DOWN`**  
-刚 restart 时 uvicorn 还在加载，等几秒再 curl。一直挂就看 `backend.err.log`：缺包、端口占用、或 `claude` 不在 `PATH`。
+刚 restart 时 uvicorn 还在加载，等几秒再 curl。一直挂就看 `backend.err.log`：缺包、端口占用、或 `pi` 不在 `PATH`。
 
 **前端 unit 起不来，提示先 `npm install`**  
 `scripts/atkbrain-frontend.sh` 要求 `frontend/node_modules` 已存在。
 
-**控制台显示 Claude Code 未就绪**  
-本机 `claude` 未登录，或 `atkbrain-claude.env` 里没有密钥。在已登录的 shell 里再执行一次 `sudo scripts/atkbrain-backend.sh restart`（会重新快照环境变量）。
+**控制台显示 Pi 未就绪**  
+本机 `pi` 不在 PATH，或 `atkbrain-claude.env` 里没有密钥。在已配好密钥的 shell 里再执行一次 `sudo scripts/atkbrain-backend.sh restart`（会重新快照环境变量）。
 
 **5001 / 5003 被占**  
 `ss -tlnp | grep -E '5001|5003'`，停掉旧进程后再 `atkbrain-up.sh`。

@@ -1,7 +1,7 @@
-"""Loop 监督：把攻击图交给 Claude Code，方案只来自御主模型。
+"""Loop 监督：把攻击图交给御主模型，方案只来自御主。
 
-每轮从者开打前先问御主（与红队/SRC 同一套门闩）。
-入口传输层失败整段跳过，不当方法失败去换路。需要开口时在总墙钟内问 Claude Code，
+从者整轮（含工人）打完再问御主（与红队/SRC 同一套门闩）。
+入口传输层失败整段跳过，不当方法失败去换路。需要开口时在总墙钟内问模型，
 直到给出方案或超时；不注入机械换路模板。
 """
 from __future__ import annotations
@@ -84,6 +84,7 @@ _SKIP_TEXT = {
     "hold_course": "刚注入过指令，再给几轮把当前验证做完，御主强制 noop。",
     "infra": "入口传输层失败，御主整段跳过，不当方法失败去换路。",
     "let_commander": "从者尚未连着空转满暂停阈值，先让从者打。",
+    "human_override": "本轮有人工强制指令，御主让路，不改方向。",
     "binding_ignored": "上一步未执行御主绑定，收紧约束后重注，不开新方案。",
     "binding_empty": "本轮无工具，御主绑定沿用，不开新方案。",
 }
@@ -713,6 +714,8 @@ class LoopSupervisor:
     claimed_ids: list[str] = field(default_factory=list)
     binding: AdvisorBinding | None = None
     force_bundle_review: bool = False
+    human_override: bool = False
+    human_hold_until: int = 0
 
 
     def note_progress(self, *, nodes: int, edges: int, findings: int, flags: int, quality: str = "none") -> bool:
@@ -1117,8 +1120,8 @@ class LoopSupervisor:
             self.project_id, "log",
             {"level": "info",
              "message": (
-                 f"御主就绪：每轮先下令，从者等待；"
-                 f"超时 {wait}s 后从者自走。"
+                 f"御主就绪：从者整轮打完再下令；"
+                 f"超时 {wait}s 后下一轮从者自走。"
              )},
             run_id=self.run_id,
         )
@@ -1188,7 +1191,7 @@ class LoopSupervisor:
         )
 
     async def emit_skip(self, turn: int, *, reason: str, detail: str = "") -> None:
-        """本轮不调用 Claude，但仍留下一条可见的御主记录，避免轮次空洞。"""
+        """本轮不调用御主，但仍留下一条可见的御主记录，避免轮次空洞。"""
         text = (detail or "").strip() or _SKIP_TEXT.get(reason) or reason
         await self._emit_supervisor(
             "skip",
@@ -1414,7 +1417,25 @@ class LoopSupervisor:
         if assigned is not None:
             self.claimed_ids = [str(i.get("id") or "") for i in assigned if i.get("id")]
 
-        if (not infra) and self.binding is not None:
+        human_turn = bool(getattr(self, "human_override", False))
+        if human_turn:
+            self.human_override = False
+
+        try:
+            from .scheduler import manager as run_manager
+            pending_human = run_manager.has_pending_human(self.project_id)
+        except Exception:
+            pending_human = False
+        if human_turn or pending_human:
+            _requeue_active()
+            try:
+                self.last_steer_turn = int(turn or 0)
+            except (TypeError, ValueError):
+                pass
+            await self.emit_skip(turn, reason="human_override")
+            return
+
+        if (not infra) and self.binding is not None and not human_turn:
             status = binding_compliance(
                 self.binding,
                 assigned=assigned,
@@ -1589,53 +1610,91 @@ class LoopSupervisor:
             first_turns=first_turns,
         )
         asked_bundle = bool(self.force_bundle_review)
+        forced = False
         if self.force_bundle_review:
             review, review_why = True, "turn"
             self.force_bundle_review = False
+            forced = True
         void_plan = bool(peer_contaminated or (claim_unverified and claim_in_plan))
         if void_plan and not review:
             self.last_steer_turn = None
             review, review_why = True, "turn"
-        if not review and should_force_chain_close_review(
+            forced = True
+        letting_follower = review_why in ("hold_course", "in_flight")
+        if (not review) and (not letting_follower) and should_force_chain_close_review(
             chain_live=chain_live,
             has_plan=had_plan,
             assigned_tactics={intent_tactic(i) for i in (claimed or [])},
             verified_categories=verified_finding_categories(graph) if chain_live else None,
         ):
             review, review_why = True, "turn"
+            forced = True
             await emit(
                 self.project_id, "log",
                 {"level": "info",
                  "message": "御主开口：图上已有已验证能力却未消耗，禁止再证明或跳过。"},
                 run_id=self.run_id,
             )
-        if not review and should_force_oracle_review(
+        if (not review) and (not letting_follower) and should_force_oracle_review(
             needs_oracle=bool(bind_now.get("needs_channel_oracle")),
             has_plan=had_plan,
             assigned_tactics={intent_tactic(i) for i in (claimed or [])},
         ):
             review, review_why = True, "turn"
+            forced = True
             await emit(
                 self.project_id, "log",
                 {"level": "info",
                  "message": "御主开口：图上仍是单通道观测，输入面未关，禁止只打指纹或目录。"},
                 run_id=self.run_id,
             )
+        if review and had_plan and not forced:
+            try:
+                stall_after = int(getattr(settings, "supervisor_consult_stall_turns", 2) or 2)
+            except (TypeError, ValueError):
+                stall_after = 2
+            graph_stalled = (
+                self.stall_class in ("method", "chain")
+                and int(self.no_progress or 0) >= hard_turns
+            )
+            if should_hold_active_plan(
+                has_active_plan=had_plan,
+                exec_turns=self.plan_exec_turns,
+                dwell_turns=dwell,
+                quality=quality,
+                infra=infra,
+                peer_contaminated=peer_contaminated,
+                claim_unverified=claim_unverified,
+                enum_vs_surface=enum_vs_surface,
+                fake_key_loop=fake_key_loop,
+                graph_stalled=graph_stalled,
+                login_vs_enum=login_vs_enum,
+            ):
+                review, review_why = False, "hold_course"
+            elif not should_consult_supervisor(
+                has_active_plan=had_plan,
+                no_progress=self.no_progress,
+                stall_after=stall_after,
+                quality=quality,
+                infra=infra,
+                peer_contaminated=peer_contaminated,
+                claim_unverified=claim_unverified,
+                enum_vs_surface=enum_vs_surface,
+                fake_key_loop=fake_key_loop,
+                graph_stalled=graph_stalled,
+                login_vs_enum=login_vs_enum,
+            ):
+                review, review_why = False, "progress"
 
         if not review:
             _requeue_active()
-            if had_plan:
-                await self._emit_continue(
-                    turn, reason=review_why or "hold_course", quality=quality,
-                    detail=self.last_diagnosis or "继续当前方案",
-                )
-            else:
-                await self.emit_skip(turn, reason=review_why)
-            if review_why in ("hold_course", "in_flight", "let_commander"):
+            await self.emit_skip(turn, reason=review_why or "hold_course")
+            if review_why in ("hold_course", "in_flight", "let_commander", "progress"):
                 why_cn = {
                     "hold_course": "刚下过指令，等当前验证做完",
                     "in_flight": "本轮任务仍在验证，尚未证实或否证",
                     "let_commander": "先让从者打",
+                    "progress": "从者仍在推进当前方案",
                 }.get(review_why, review_why)
                 await emit(
                     self.project_id, "log",
@@ -1711,14 +1770,14 @@ class LoopSupervisor:
         wait = float(getattr(settings, "supervisor_timeout_sec", 360) or 360)
 
         async def _on_wait(attempt: int, err: str, delay: float) -> None:
-            # 超时是 Claude Code CLI 墙钟，不是上下文不够。控制台不要当成报错。
+            # 超时是 Pi CLI 墙钟，不是上下文不够。控制台不要当成报错。
             if delay > 0:
                 msg = (
-                    f"御主 Claude Code 首问超时（{err}），"
+                    f"御主首问超时（{err}），"
                     f"{delay:.0f}s 后用原简报再问（第 {attempt} 次）。"
                 )
             else:
-                msg = f"御主 Claude Code 首问超时（{err}），原简报立刻再问（第 {attempt} 次）。"
+                msg = f"御主首问超时（{err}），原简报立刻再问（第 {attempt} 次）。"
             await emit(
                 self.project_id, "log",
                 {"level": "info", "message": msg},
@@ -1755,7 +1814,7 @@ class LoopSupervisor:
                 self.project_id, "log",
                 {"level": "warn",
                  "message": (
-                     f"御主 {wait_s}s 未下达任务，从者按本轮自己的思路继续"
+                     f"御主 {wait_s}s 未下达任务，下一轮从者按自己的思路继续"
                      f"（{consult_error}）"
                  )},
                 run_id=self.run_id,

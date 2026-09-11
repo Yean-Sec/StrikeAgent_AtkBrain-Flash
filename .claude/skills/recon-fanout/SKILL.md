@@ -5,15 +5,17 @@ description: >
   paths — and report_flag if it is already there. If the brief already gives a
   transform, encoding, protocol, or file, write a local python/openssl script;
   do not open nmap/ffuf. Recon only after that, in the background, when the
-  attack surface is still unknown. Nested Task forbidden. Not for red team.
+  attack surface is still unknown. Nested workers forbidden. Not for red team.
 ---
 
 # 信息收集：CTF 先看题交旗，recon 不得当主线
 
+Pi 用内置 `read` 加载本文件；之后作业只用扩展工具 `run_cmd` / `http_request`。
+
 **唯一目标是尽快 `report_flag`。** getshell / 读文件只是手段。评测邻题始终越界。
 不要螺旋升圈、不要扫旁站、不要用题名检索 writeup。已识别组件/版本时用 WebSearch 查 CVE/N-day，公告页用 `http_request` 拉取。
 
-子智能体 **不设上限**。每个子智能体 **禁止再 Task**。
+子智能体 **不设上限**。调度并发拉起多个角色会话（`recon` / `web-exploit`）。每个工人只做一面。**禁止再开子进程**。
 
 ## 开局（必须先做完，再考虑扫描）
 
@@ -43,7 +45,7 @@ description: >
 
 ## 看完没有旗，再后台 recon
 
-入口已看过、题面路径已打开、仍无 flag 时，才并行派出 recon。每个 `Task` 只做一面。recon **不能挡交旗**。
+入口已看过、题面路径已打开、仍无 flag 时，才并行派出 recon。每个工人只做一面。recon **不能挡交旗**。
 
 ### 有对应资产才开（不是开局必做）
 
@@ -64,9 +66,9 @@ description: >
 
 - hydra / sqlmap / 全端口 `-p-` / 超 10 万行词表
 - 螺旋第 1 圈（top-100、common.txt 升圈）
-- 把 nmap / ffuf 当成第 1 个 Task
-- 把同一面拆成两个 Task
-- recon 内部再 Task
+- 把 nmap / ffuf 当成开局第一面
+- 把同一面拆成两个工人
+- recon 内部再开子进程
 - 评测邻题、旁站当新题打
 - `request_hint`（看提示会扣分；活体和题面功能都空转后再用）
 

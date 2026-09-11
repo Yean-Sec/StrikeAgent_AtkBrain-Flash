@@ -15,7 +15,14 @@ import re
 import time
 from urllib.parse import urlparse
 
-from claude_agent_sdk import create_sdk_mcp_server, tool
+def tool(name: str, description: str, input_schema: dict):
+    """本地工具装饰器：不再依赖 claude_agent_sdk。"""
+    def deco(fn):
+        fn._atkbrain_name = name
+        fn._atkbrain_description = description
+        fn._atkbrain_schema = input_schema
+        return fn
+    return deco
 
 from ..db import db, new_id, now
 from ..events import emit
@@ -80,7 +87,7 @@ async def persist_milestone(ctx: AgentContext, milestone: str, **extra) -> dict 
                     from ..memory.evolve import evolve_from_episode_id
                     evo = await evolve_from_episode_id(str(row["id"]))
                     if evo:
-                        msg += "，Claude 已蒸馏跨局路线/方法/思想"
+                        msg += "，已蒸馏跨局路线/方法/思想"
                 except Exception:
                     pass
         await emit(ctx.project_id, "log", {"level": "info", "message": msg}, run_id=ctx.run_id)
@@ -990,7 +997,9 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         "上报一个漏洞。必须先验证真实性：evidence 或可复现 PoC 缺一不可，否则记为未验证。"
         "二次验证与红队评级必须同一轮完成：独立再打一遍（换通道/重放 PoC/对照预期）后，"
         "同时给 secondary_verified=true、redteam_rating、redteam_rating_rationale"
-        "（rationale 须写清二次怎么打、看到什么、为何是这个级）。只做其中一项会拒绝。"
+        "以及漏洞页五段 report_summary/report_impact/report_rating/report_repro/report_fix"
+        "（简介、对本项目的危害、红队评级、实际走过的复现、针对本条的修复；禁止模板套话）。"
+        "只做其中一项会拒绝。"
         "禁止因类别名高估，也禁止因「只读」低估任意文件读。"
         "红队完成条件是 getshell（report_shell）。finding 不单独收工。",
         {
@@ -1018,6 +1027,26 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                     "type": "string",
                     "description": "须同时阐述二次验证过程（换通道/重放/对照）和评级理由，写入报告",
                 },
+                "report_summary": {
+                    "type": "string",
+                    "description": "漏洞页「简介」：本条入口、触发方式、二次验证看到了什么。禁止模板套话",
+                },
+                "report_impact": {
+                    "type": "string",
+                    "description": "漏洞页「危害」：对本项目已证明的影响，没打到的标尚未证明",
+                },
+                "report_rating": {
+                    "type": "string",
+                    "description": "漏洞页「红队评级」正文：级别 + 为何是这个级 + 二次怎么打的",
+                },
+                "report_repro": {
+                    "type": "string",
+                    "description": "漏洞页「手动复现」：你刚才实际走过的步骤和成功判定，不要 Burp 套话",
+                },
+                "report_fix": {
+                    "type": "string",
+                    "description": "漏洞页「修复方式」：针对本条根因的立即缓解和根治",
+                },
                 "proof_type": {
                     "type": "string",
                     "enum": ["write_txt", "poc_replay", "impact_extract"],
@@ -1026,6 +1055,10 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                 "proof_canary": {"type": "string", "description": "可选 canary"},
                 "proof_url": {"type": "string", "description": "可选证明 URL"},
                 "proof_detail": {"type": "string", "description": "可选证明详情"},
+                "finding_id": {
+                    "type": "string",
+                    "description": "二次验证时填已入库漏洞 id，避免重复造条",
+                },
             },
             "required": ["severity", "category", "title"],
         },
@@ -1061,11 +1094,26 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             cvss=args.get("cvss"),
             proof_type=args.get("proof_type"), proof_canary=args.get("proof_canary"),
             proof_url=args.get("proof_url"), proof_detail=args.get("proof_detail"),
+            finding_id=args.get("finding_id"),
             secondary_verified=_truthy(args.get("secondary_verified")),
             redteam_rating=args.get("redteam_rating"),
             redteam_rating_rationale=args.get("redteam_rating_rationale"),
+            report_summary=args.get("report_summary"),
+            report_impact=args.get("report_impact"),
+            report_rating=args.get("report_rating"),
+            report_repro=args.get("report_repro"),
+            report_fix=args.get("report_fix"),
         )
         row = await gstore.add_finding(ctx.project_id, f, run_id=ctx.run_id)
+        if isinstance(row, dict) and row.get("secondary_verified"):
+            try:
+                from ..projects import get_project as _gp_page
+                from ..report.pi_finding_page import ensure_pi_page, has_pi_page
+                if not has_pi_page(row):
+                    proj = await _gp_page(ctx.project_id)
+                    row = await ensure_pi_page(ctx.project_id, row, project=proj)
+            except Exception:
+                pass
         nk = str(args.get("node_key") or "").strip()
         obj = normalize_objective(ctx.objective)
         src_clue = obj == SRC and (
@@ -1665,17 +1713,27 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
     return tools
 
 
-def build_server(ctx: AgentContext):
-    return create_sdk_mcp_server(SERVER_NAME, "1.0.0", tools=build_atkbrain_tools(ctx))
+def mcp_tool_map(ctx: AgentContext) -> dict:
+    return {t._atkbrain_name: t for t in build_atkbrain_tools(ctx)}
+
+
+def mcp_tool_defs(ctx: AgentContext) -> list[dict]:
+    return [
+        {
+            "name": t._atkbrain_name,
+            "description": t._atkbrain_description,
+            "inputSchema": t._atkbrain_schema,
+        }
+        for t in build_atkbrain_tools(ctx)
+    ]
 
 
 def tool_names(objective: str | None = None) -> list[str]:
     names = ["run_cmd", "http_request", "add_node", "add_edge", "report_finding",
              "report_shell", "report_pivot_capability", "propose_intents",
              "resolve_intent", "mark_honeypot", "note"]
-    # 仅 flag 赛道声明 report_flag。覆盖账本 CTF 与红队都用。
     if objective is None or objective_allows_flag(objective):
         names.insert(6, "report_flag")
         names.insert(7, "request_hint")
     names.append("note_scan_coverage")
-    return [f"mcp__{SERVER_NAME}__{n}" for n in names]
+    return names

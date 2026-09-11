@@ -1,9 +1,9 @@
 """监督输入：只给攻击图上的事实（节点/边/发现/Intent/否证/flag）和局面摘要。
 
-不喂工具流水、上轮长摘录、进化经验全文。顾问走 Claude Code（约 1M 上下文），
+不喂工具流水、上轮长摘录、进化经验全文。顾问走一次性 Pi，
 简报预算是安全轨，不是因为装不下才裁图。超时是 CLI 墙钟，不要靠压短简报抢救。
 可喂跨局蒸馏的战术族名（do/avoid），禁止当本题步骤或 payload。
-不把换通道/禁枚举写成现成方案；通道怎么打由 Claude Code 根据图判断。
+不把换通道/禁枚举写成现成方案；通道怎么打由御主根据图判断。
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..db import db
 
-# Claude Code 约 1M token；简报按 256k 字给足图，不是小上下文配额。
+# 简报按 256k 字给足图，不是小上下文配额。
 BRIEF_BUDGET = 256_000
 COMPACT_BUDGET = 256_000
 

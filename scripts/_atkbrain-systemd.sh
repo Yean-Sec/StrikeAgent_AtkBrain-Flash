@@ -40,7 +40,7 @@ from pathlib import Path
 dest = Path(os.environ["DEST"])
 dest.parent.mkdir(parents=True, exist_ok=True)
 
-keep_prefixes = ("ANTHROPIC_", "CLAUDE_", "ATKBRAIN_")
+keep_prefixes = ("ANTHROPIC_", "CLAUDE_", "ATKBRAIN_", "DEEPSEEK_", "PI_")
 existing: dict[str, str] = {}
 
 def unquote(v: str) -> str:

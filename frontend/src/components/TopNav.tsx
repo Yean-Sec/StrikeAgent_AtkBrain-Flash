@@ -6,7 +6,7 @@ interface TrackSlots {
   limit: number;
   cap: number;
 }
-interface ClaudeInfo {
+interface PiInfo {
   active: number;
   limit: number;
   cap: number;
@@ -18,7 +18,7 @@ interface Health {
   cap: number;
   redteam?: TrackSlots;
   ctf?: TrackSlots;
-  claude?: ClaudeInfo;
+  claude?: PiInfo;
   claude_sdk?: { state: "ready" | "unavailable"; label?: string };
 }
 
@@ -87,7 +87,7 @@ export function TopNav() {
             <div
               className="row status-control"
               style={{ gap: 8 }}
-              title="红队与 SRC 共用项目槽，CTF 另有独立槽，互不占用。多点的启动会在本赛道槽满时排队。Claude Code 栏显示两道合计。"
+              title="红队与 SRC 共用项目槽，CTF 另有独立槽，互不占用。多点的启动会在本赛道槽满时排队。已开项目内工人数不因顶栏变化被杀掉。"
             >
               <span className="pulse-dot" style={{ background: (rtActive + ctfActive) > 0 ? "var(--success)" : "var(--muted-soft)" }} />
               <span>红队/SRC {rtActive}/{rt?.limit ?? "-"}</span>
@@ -107,11 +107,13 @@ export function TopNav() {
                 />
               )}
             </div>
-            {cl && (
-              <div className="row status-control" style={{ gap: 6 }} title="编排会话合计：红队/SRC 项目 + CTF 项目，每项目 2 个（从者 + 御主）。子智能体不设上限。">
+            {h.claude_sdk && (
+              <div className="row status-control" style={{ gap: 6 }} title="Pi 就绪状态。本机进程数仅展示，项目内工人不设上限。">
                 <span className="pulse-dot" style={{ background: h.claude_sdk?.state === "unavailable" ? "var(--error)" : "var(--success)" }} />
-                <span>{h.claude_sdk?.label || "Claude Code 连接正常"}</span>
-                <span className="muted" style={{ fontSize: 11 }}>· {cl.active}/{cl.limit}</span>
+                <span>{h.claude_sdk?.label || "Pi 就绪"}</span>
+                {(cl?.active ?? 0) > 0 && (
+                  <span className="muted" style={{ fontSize: 11 }}>· {cl?.active} 进程</span>
+                )}
               </div>
             )}
           </div>

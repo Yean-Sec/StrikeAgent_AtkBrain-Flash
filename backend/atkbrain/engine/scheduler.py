@@ -64,6 +64,7 @@ class RunHandle:
     run_id: str | None = None
     hard_restart: bool = False  # True=清图+新容器+烧 attempt；False=续跑
     user_stop: bool = False     # True=人工暂停，重启后不要自动拉起
+    human_interrupt: bool = False  # 人工强制指令：打断本轮从者，下一轮立刻改向
     slot_held: bool = False     # 已拿到本赛道项目并发槽
     slot_kind: str = "redteam"  # redteam | ctf
     bench_held: bool = False    # 兼容旧句柄；现与 ctf 槽合一，不再单独占
@@ -85,11 +86,10 @@ def hunt_slot_kind(project: dict | None, objective: str | None = None) -> str:
 
 
 class RunManager:
-    """两道互不占槽的项目闸 + 编排会话展示：
+    """两道互不占槽的项目闸：
     - 红队 `redteam_sem`：红队与 SRC 同时跑的数量（默认 5）。
     - CTF `ctf_sem`：CTF / 评测子题（默认 3，上限 20）。
-    - 会话层 `claude_per_project`：每项目 2 路（从者 + 御主）。
-      顶栏 Claude Code 显示两道合计 × 2（默认 8 项目 → 16 路）。
+    项目内 Pi 工人不设上限；顶栏只闸项目槽。
     """
 
     def __init__(self) -> None:
@@ -101,9 +101,8 @@ class RunManager:
         self.project_sem = self.redteam_sem
         self.sem = self.redteam_sem
         self.bench_sem = self.ctf_sem
-        self.claude_per_project = max(1, int(getattr(settings, "claude_per_project", 2) or 2))
+        self.claude_per_project = 0
         self.max_claude = 0
-        self._relink_claude_cap()
         self.handles: dict[str, RunHandle] = {}
         self.shutting_down = False
 
@@ -112,8 +111,9 @@ class RunManager:
 
     @property
     def claude_active(self) -> int:
-        """当前在跑的 Agent 会话数 ≈ (红队占槽 + CTF 占槽) × 每项目会话。"""
-        return (self.redteam_sem.active + self.ctf_sem.active) * self.claude_per_project
+        """本机正在跑的 Pi 进程数（项目内工人不封顶）。"""
+        from ..agents.pi_runtime import live_pi_count
+        return live_pi_count()
 
     def is_running(self, project_id: str) -> bool:
         h = self.handles.get(project_id)
@@ -138,12 +138,8 @@ class RunManager:
         return self.handles.get(project_id)
 
     def _relink_claude_cap(self) -> None:
-        """红队/CTF 项目并发变化后，顶栏 Claude Code 显示两道合计 × 每项目会话。"""
-        total_projects = self.redteam_sem.limit + self.ctf_sem.limit
-        self.max_claude = min(
-            total_projects * self.claude_per_project,
-            settings.max_concurrency_cap,
-        )
+        """项目内 Pi 不封顶；顶栏不再用「项目数 × 2」冒充上限。"""
+        self.max_claude = 0
 
     async def set_concurrency(self, value: int, *, track: str = "redteam") -> int:
         """按赛道设置项目并发。track=ctf 只动 CTF 槽，红队反之。"""
@@ -173,8 +169,9 @@ class RunManager:
         return await self.set_redteam_concurrency(value)
 
     def set_claude_per_project(self, value: int) -> int:
-        """每项目固定 2 个 Claude：从者 + 御主。"""
-        self.claude_per_project = 2
+        """项目内 Pi 不设上限；忽略外部写入。"""
+        _ = value
+        self.claude_per_project = 0
         self._relink_claude_cap()
         return self.claude_per_project
 
@@ -266,15 +263,45 @@ class RunManager:
         return True
 
     def steer(self, project_id: str, message: str) -> bool:
-        """把人工指令投入项目的 steering 队列，在下一个安全 checkpoint 注入。"""
+        """人工强制指令：入队并立刻打断本轮从者，下一轮必须改向。不与御主同级。"""
         h = self.handles.get(project_id)
         if not h or not self.is_running(project_id):
             return False
         try:
             h.steering.put_nowait(message)
-            return True
         except asyncio.QueueFull:
             return False
+        h.human_interrupt = True
+        agent = h.agent
+        if agent is not None and hasattr(agent, "interrupt"):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                async def _nudge() -> None:
+                    try:
+                        await agent.interrupt()  # type: ignore[misc]
+                    except Exception:
+                        pass
+                loop.create_task(_nudge())
+        return True
+
+    def has_pending_human(self, project_id: str) -> bool:
+        h = self.handles.get(project_id)
+        if not h:
+            return False
+        if getattr(h, "human_interrupt", False):
+            return True
+        return h.steering.qsize() > 0
+
+    def take_human_interrupt(self, project_id: str) -> bool:
+        """本轮因人工指令被打断：取出并清旗，供循环立刻进入下一轮。"""
+        h = self.handles.get(project_id)
+        if not h or not getattr(h, "human_interrupt", False):
+            return False
+        h.human_interrupt = False
+        return True
 
     def drain_steering(self, project_id: str) -> list[str]:
         h = self.handles.get(project_id)
@@ -327,9 +354,9 @@ class RunManager:
             },
             "claude": {
                 "active": self.claude_active,
-                "limit": self.max_claude,
-                "cap": settings.max_concurrency_cap,
-                "per_project": self.claude_per_project,
+                "limit": 0,
+                "cap": 0,
+                "per_project": 0,
             },
         }
 

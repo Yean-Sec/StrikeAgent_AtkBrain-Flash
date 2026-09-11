@@ -147,4 +147,10 @@ def apply_platform_env_aliases(env: MutableMapping[str, str] | None = None) -> d
         "LLM_API_KEY",
         "OPENAI_API_KEY",
     )
+    _fill(
+        "DEEPSEEK_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "LLM_API_KEY",
+        "OPENAI_API_KEY",
+    )
     return mapped

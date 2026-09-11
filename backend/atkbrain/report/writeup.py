@@ -761,11 +761,7 @@ def merge_ai_writeup(finding: dict, spec: dict) -> dict:
 
 
 async def _ai_one_writeup(finding: dict) -> dict | None:
-    import asyncio
-
-    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
-
-    from ..agents.session import _get_spawn_sem
+    from ..agents.pi_runtime import query_text
 
     facts = _facts_for_ai(finding)
     prompt = (
@@ -776,34 +772,17 @@ async def _ai_one_writeup(finding: dict) -> dict | None:
         (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
     )
     wait = float(getattr(settings, "report_timeout_sec", 90) or 90)
-    opts = ClaudeAgentOptions(
-        tools=[],
-        allowed_tools=[],
-        disallowed_tools=["Bash", "WebFetch", "Read", "Write", "Edit", "Grep", "Glob", "WebSearch", "TodoWrite", "Task"],
+    blob = await query_text(
         system_prompt=WRITEUP_SYSTEM,
-        model=model,
-        fallback_model=settings.claude_fallback_model,
-        max_turns=1,
-        permission_mode="dontAsk",
-        setting_sources=[],
-        skills=[],
-        plugins=[],
+        user_prompt=prompt,
         cwd=str(settings.data_dir),
-        max_buffer_size=8 * 1024 * 1024,
+        timeout=max(30.0, wait),
+        tools=False,
+        model=model,
+        role="finding-page",
+        project_id=str(finding.get("project_id") or ""),
     )
-    texts: list[str] = []
-
-    async def _run() -> None:
-        async for msg in query(prompt=prompt, options=opts):
-            if isinstance(msg, AssistantMessage):
-                for b in getattr(msg, "content", []) or []:
-                    if isinstance(b, TextBlock) and (b.text or "").strip():
-                        texts.append(b.text)
-
-    sem = _get_spawn_sem()
-    async with sem:
-        await asyncio.wait_for(_run(), timeout=max(30.0, wait))
-    specs = parse_writeups_payload("\n".join(texts))
+    specs = parse_writeups_payload(blob)
     if not specs:
         return None
     fid = str(finding.get("id") or "")

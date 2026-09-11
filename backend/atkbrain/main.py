@@ -18,7 +18,7 @@ from .db import db, now
 
 
 def _raise_nofile_limit() -> None:
-    """systemd 默认 soft nofile=1024，20 项目×普通 Claude 会 EMFILE 打挂 SQLite。"""
+    """systemd 默认 soft nofile=1024，多项目并发 Pi 会 EMFILE 打挂 SQLite。"""
     try:
         import resource
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -70,6 +70,11 @@ async def _benchmark_autopilot_loop():
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     _raise_nofile_limit()
+    try:
+        from .agents.pi_runtime import ensure_pi_agent_dir
+        ensure_pi_agent_dir()
+    except Exception as e:
+        print(f"[startup] 写入 Pi 配置失败：{e}")
     await db.connect()
     # 崩溃/重启后：runs 表孤儿行无法继续，先收口。项目 status=running 先记下来再续跑，
     # 不要一上来全部改 idle，否则 systemd 重启会把进行中的猎丢掉。

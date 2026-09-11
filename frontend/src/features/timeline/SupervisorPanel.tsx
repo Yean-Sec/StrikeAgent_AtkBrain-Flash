@@ -16,7 +16,7 @@ const KIND_LABEL: Record<string, string> = {
   runtime_review: "御主审查",
 };
 
-/** 御主栏只展示失败记录与 Claude Code 生成的内容，不展示 skip/probe 等机械条目。 */
+/** 御主栏只展示失败记录与模型生成的内容，不展示 skip/probe 等机械条目。 */
 const VISIBLE_KINDS = new Set(["error", "empty", "plan", "hold", "runtime_review"]);
 
 type SupervisorRow = {
@@ -181,7 +181,7 @@ export function SupervisorPanel({ events }: { events: RTEvent[] }) {
   if (!rows.length) {
     return (
       <p className="muted" style={{ padding: 16 }}>
-        暂无御主记录。御主开口后，这里只显示 Claude Code 给出的方案，以及调用失败。
+        暂无御主记录。御主开口后，这里只显示模型给出的方案，以及调用失败。
       </p>
     );
   }

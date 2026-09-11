@@ -1,7 +1,7 @@
-"""本仓库猎面专用的 Claude Code skills。
+"""本仓库猎面专用 skills。
 
 源文件在仓库根 `.claude/skills/`（进 git）。会话启动时按赛道拷进该猎工作区
-`backend/data/workspaces/<pid>/.claude/skills/`。不写 `~/.claude`。
+`backend/data/workspaces/<pid>/.agents/skills/`，猎面 Pi 用 `--no-skills` + `--skill` 精确加载。不写 `~/.pi`。
 """
 from __future__ import annotations
 
@@ -45,10 +45,24 @@ def _materialize_kali_kit(dst_root: Path) -> None:
     (dest / "SKILL.md").write_text(skill_markdown(), encoding="utf-8")
 
 
+def skill_abs_paths(workspace: str | Path, names: list[str] | None = None) -> list[str]:
+    """工作区里已落地的 skill 目录绝对路径，供 Pi `--skill` 精确加载。"""
+    root = Path(workspace) / ".agents" / "skills"
+    out: list[str] = []
+    for name in names or []:
+        n = str(name or "").strip()
+        if not n:
+            continue
+        p = (root / n).resolve()
+        if p.is_dir() and (p / "SKILL.md").is_file():
+            out.append(str(p))
+    return out
+
+
 def install_into_workspace(workspace: str | Path, *, objective: str | None = None) -> list[str]:
-    """把本赛道 skill 拷到猎面工作区，返回名称供 ClaudeAgentOptions.skills。"""
+    """把本赛道 skill 拷到猎面工作区，返回名称。"""
     names = skill_names(objective=objective)
-    dst_root = Path(workspace) / ".claude" / "skills"
+    dst_root = Path(workspace) / ".agents" / "skills"
     try:
         dst_root.mkdir(parents=True, exist_ok=True)
         wanted = set(names)
