@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import time
 from dataclasses import dataclass
 
 from ..config import settings
 from .guard import Guard, GuardDecision
+
+_PROXY_ENV_KEYS = (
+    "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+    "ALL_PROXY", "all_proxy", "no_proxy", "NO_PROXY",
+)
 
 
 @dataclass
@@ -51,6 +57,34 @@ async def run_shell(
     if extra_env:
         env = os.environ.copy()
         env.update(extra_env)
+        try:
+            from ..proxy.enforce import proxy_url_from_env, wrap_proxychains
+            from ..proxy.pool import pool as _proxy_pool
+            chain = _proxy_pool.pick_chain(8)
+            px = proxy_url_from_env(extra_env)
+            if px and px not in chain:
+                chain = [px, *[u for u in chain if u != px]]
+            if chain:
+                command = wrap_proxychains(command, chain)
+                # connect() 由 proxychains 接管；清掉 env，避免 curl 再套一层代理。
+                for k in _PROXY_ENV_KEYS:
+                    env.pop(k, None)
+        except FileNotFoundError as e:
+            return CmdResult(
+                exit_code=-1, stdout="", stderr=str(e),
+                blocked=True,
+                reason="红队/SRC 需要 proxychains4 才能强制走代理，本机未安装。",
+                category="proxy",
+                duration=time.monotonic() - t0,
+            )
+        except Exception as e:
+            return CmdResult(
+                exit_code=-1, stdout="", stderr=str(e),
+                blocked=True,
+                reason=f"无法套上出口代理：{e}",
+                category="proxy",
+                duration=time.monotonic() - t0,
+            )
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -58,6 +92,7 @@ async def run_shell(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            start_new_session=True,
         )
         try:
             if limit <= 0:
@@ -65,7 +100,10 @@ async def run_shell(
             else:
                 out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=limit)
         except asyncio.TimeoutError:
-            proc.kill()
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
             await proc.wait()
             return CmdResult(
                 exit_code=-1, stdout="", stderr=f"timeout after {limit}s",

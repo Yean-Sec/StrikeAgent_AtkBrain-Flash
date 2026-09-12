@@ -42,7 +42,7 @@ def kit_web(repo_root: str) -> str:
     jsfinder = f"{repo_root}/tools/JSFinder/JSFinder.py"
     bypass = f"{repo_root}/tools/bypass-403/bypass-403.sh"
     return f"""# Web 能力（默认工具 + 一条可复制命令）
-- 端口扫描：`timeout 60 /usr/bin/nmap -sV -T4 -Pn --top-ports 100 --open <host>`（`run_cmd` 填 `timeout=60`）。加宽 `--top-ports 1000`（timeout=90）；确认活体后再 `-p-`。备选 `/usr/bin/masscan` 不默认。
+- 端口扫描：CTF 可用 `timeout 60 /usr/bin/nmap -sV -T4 -Pn --top-ports 100 --open <host>`。红队/SRC **禁止 nmap/masscan**（原始套接字会漏真实 IP），改用 `curl` / `http_request` / `ffuf`。
 - Web 指纹：`/usr/bin/whatweb -a 3 <url>`。
 - WAF：`/usr/bin/wafw00f <url>`。
 - nuclei：`/usr/bin/nuclei -u <url> -silent -nc`（引擎已装；模板走 nuclei 自己的目录，禁止 which）。

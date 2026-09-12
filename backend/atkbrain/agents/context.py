@@ -164,8 +164,8 @@ class AgentContext:
                 from ..proxy.pool import pool as _proxy_pool
                 must = _proxy_pool.must_proxy(self.objective)
                 if must:
-                    px = await _proxy_pool.wait_pick(8.0)
-                    extra_env = _proxy_pool.proxy_env(px)
+                    px = await _proxy_pool.wait_pick(8.0, prefer_http=True)
+                    extra_env = _proxy_pool.proxy_env(px)  # runner 会再扩成多节点轮换
             except Exception:
                 extra_env = None
             if must and not extra_env:
@@ -198,7 +198,7 @@ class AgentContext:
             from ..proxy.pool import pool as _proxy_pool
             if not _proxy_pool.must_proxy(self.objective):
                 return None
-            return _proxy_pool.pick()
+            return _proxy_pool.pick(prefer_http=True)
         except Exception:
             return None
 
@@ -218,10 +218,10 @@ class AgentContext:
         from ..proxy.pool import pool as _proxy_pool
         tried: set[str] = set()
         last_err: Exception | None = None
-        for attempt in range(3):
-            px = await _proxy_pool.wait_pick(8.0 if attempt == 0 else 0.0)
-            if not px or px in tried:
-                px = _proxy_pool.pick()
+        for attempt in range(5):
+            px = _proxy_pool.pick(exclude=tried, prefer_http=True)
+            if not px:
+                px = await _proxy_pool.wait_pick(8.0 if attempt == 0 else 0.0, prefer_http=True)
             if not px or px in tried:
                 break
             tried.add(px)
@@ -230,6 +230,10 @@ class AgentContext:
                     follow_redirects=True, timeout=30.0, verify=False, proxy=px,
                 ) as cli:
                     return await cli.request(method, url, headers=headers, content=content)
+            except (httpx.ConnectError, httpx.ProxyError, httpx.ConnectTimeout) as e:
+                last_err = e
+                _proxy_pool.drop(px)
+                continue
             except Exception as e:
                 last_err = e
                 continue

@@ -67,7 +67,7 @@ _SHELL_PROGS = {"sh", "bash", "zsh", "dash", "ksh", "ash", "busybox"}
 _INTERP_PROGS = {"python", "python2", "python3", "ruby", "node", "nodejs", "perl", "php", "php7", "php8"}
 _INTERP_CODE_FLAGS = {"-c", "-e", "-r", "--eval", "--command"}
 # 命令前缀里的“包装器”：定位真正程序名时应跳过它们（及 timeout 的时长参数、VAR=val 赋值）。
-_WRAPPERS = {"env", "sudo", "nohup", "stdbuf", "nice", "setsid", "time"}
+_WRAPPERS = {"env", "sudo", "nohup", "stdbuf", "nice", "setsid", "time", "proxychains", "proxychains4"}
 
 
 def _leading_prog(tokens: list[str]) -> str:
@@ -615,6 +615,17 @@ class Guard:
             why = ctf_mega_dict_reason(cmd)
             if why:
                 return GuardDecision(False, f"拦截：{why}", "policy")
+        else:
+            try:
+                from ..proxy.pool import pool as _proxy_pool
+                must_px = _proxy_pool.must_proxy(self.objective)
+            except Exception:
+                must_px = False
+            if must_px:
+                from ..proxy.enforce import proxy_bypass_reason
+                why = proxy_bypass_reason(cmd)
+                if why:
+                    return GuardDecision(False, f"拦截：{why}", "proxy")
 
         if self.quarantine_dir and self.quarantine_dir in cmd:
             if _EXEC_PREFIX_RE.search(cmd) or "chmod" in cmd:

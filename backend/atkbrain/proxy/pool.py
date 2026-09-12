@@ -32,6 +32,8 @@ PROXY_ECHO_URLS = (
 )
 MAX_LIVE = 120
 CHECK_TIMEOUT = 4.0
+CHAIN_N = 8
+DROP_COOLDOWN_SEC = 12 * 60
 SOURCE_CAP = 240
 PROBE_CAP = 1000
 LOOP_PAUSE_SEC = 8.0
@@ -118,6 +120,7 @@ class ProxyPool:
     _task: asyncio.Task | None = field(default=None, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _direct_ip: str | None = field(default=None, repr=False)
+    _cooldown: dict[str, float] = field(default_factory=dict, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -168,14 +171,80 @@ class ProxyPool:
                 out.append(u)
         return out
 
-    def pick(self) -> str | None:
-        if not self.enabled or not self.live:
+    def _cooling(self) -> set[str]:
+        now = time.monotonic()
+        dead = {u for u, until in self._cooldown.items() if until > now}
+        if len(self._cooldown) > 400:
+            self._cooldown = {u: t for u, t in self._cooldown.items() if t > now}
+        return dead
+
+    def drop(self, url: str | None, *, seconds: float = DROP_COOLDOWN_SEC) -> None:
+        """立刻踢出池子，冷却期内探活也不加回来。连接失败时调用。"""
+        u = (url or "").strip()
+        if not u:
+            return
+        if u.lower().startswith("socks5h://"):
+            u = "socks5://" + u.split("://", 1)[1]
+        self._cooldown[u] = time.monotonic() + max(30.0, float(seconds or DROP_COOLDOWN_SEC))
+        self.live = [i for i in self.live if i.url != u]
+        if self.live:
+            self.exit_ip = self.live[0].exit_ip
+        else:
+            self.exit_ip = None
+
+    def _usable(self, exclude: set[str] | None = None) -> list[LiveProxy]:
+        skip = set(exclude or ()) | self._cooling()
+        skip |= {
+            ("socks5://" + u.split("://", 1)[1]) if u.lower().startswith("socks5h://") else u
+            for u in list(skip)
+        }
+        return [i for i in self.live if i.url not in skip]
+
+    def _rank(self, items: list[LiveProxy], *, prefer_http: bool) -> list[list[LiveProxy]]:
+        custom = set(self._custom_urls())
+        custom_hit = [i for i in items if i.url in custom]
+        httpish = [i for i in items if i.url not in custom and (i.proto or "").startswith("http")]
+        https_http = [i for i in httpish if i.https_ok]
+        http_plain = [i for i in httpish if not i.https_ok]
+        socks = [i for i in items if i.url not in custom and not (i.proto or "").startswith("http")]
+        https_socks = [i for i in socks if i.https_ok]
+        socks_rest = [i for i in socks if not i.https_ok]
+        if prefer_http:
+            return [custom_hit, https_http, http_plain, https_socks, socks_rest]
+        return [custom_hit, https_http + https_socks, http_plain, socks_rest]
+
+    def pick(self, exclude: set[str] | None = None, *, prefer_http: bool = False) -> str | None:
+        """选一个出口。自建节点优先；命令通道默认 prefer_http，避免随机抽到已死 SOCKS。"""
+        if not self.enabled:
             return None
-        https_ok = [i for i in self.live if i.https_ok]
-        if https_ok:
-            return random.choice(https_ok).url
-        httpish = [i for i in self.live if (i.proto or "").startswith("http")]
-        return random.choice(httpish or self.live).url
+        items = self._usable(exclude)
+        if not items:
+            return None
+        for bucket in self._rank(items, prefer_http=prefer_http):
+            if bucket:
+                return random.choice(bucket).url
+        return None
+
+    def pick_chain(self, n: int = CHAIN_N, exclude: set[str] | None = None) -> list[str]:
+        """proxychains 用的一跳候选：自建在前，HTTP 次之，SOCKS 垫底。"""
+        if not self.enabled:
+            return []
+        items = self._usable(exclude)
+        if not items:
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        want = max(1, min(int(n or CHAIN_N), 16))
+        for bucket in self._rank(items, prefer_http=True):
+            random.shuffle(bucket)
+            for item in bucket:
+                if item.url in seen:
+                    continue
+                seen.add(item.url)
+                out.append(item.url)
+                if len(out) >= want:
+                    return out
+        return out
 
     def must_proxy(self, obj: str | None) -> bool:
         """红队/SRC 且开关开：必须走代理，禁止回落直连。"""
@@ -200,10 +269,10 @@ class ProxyPool:
             "NO_PROXY": "127.0.0.1,localhost,::1",
         }
 
-    async def wait_pick(self, timeout: float = 8.0) -> str | None:
+    async def wait_pick(self, timeout: float = 8.0, *, prefer_http: bool = False) -> str | None:
         deadline = time.monotonic() + max(0.0, float(timeout))
         while True:
-            px = self.pick()
+            px = self.pick(prefer_http=prefer_http)
             if px:
                 return px
             if time.monotonic() >= deadline:
@@ -367,7 +436,7 @@ class ProxyPool:
     ) -> None:
         if not urls:
             return
-        have = {i.url for i in self.live}
+        have = {i.url for i in self.live} | self._cooling()
         httpish: list[str] = []
         socks: list[str] = []
         for u in urls:
@@ -414,7 +483,8 @@ class ProxyPool:
                 hits += 1
                 async with self._lock:
                     seen = {j.url for j in self.live}
-                    if item.url not in seen:
+                    cooling = self._cooling()
+                    if item.url not in seen and item.url not in cooling:
                         self.live.append(item)
                     self.live = self.live[:MAX_LIVE]
                     if self.live:
