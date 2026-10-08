@@ -44,7 +44,7 @@
 
 ## 交付报告
 
-<p><i>此报告为一次真实的授权业务场景</i></p>
+<p><i>报告模版</i></p>
 
 [打开 HTML](docs/demo/intranet-lab-report.html)
 
