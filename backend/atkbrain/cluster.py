@@ -723,27 +723,17 @@ async def _http_get(url: str) -> dict | None:
         ]
         try:
             from .proxy.pool import pool as _proxy_pool
-            from .proxy.yakit import prepare_egress
-            eg = await prepare_egress("redteam")
-            if eg.refuse:
-                return await _http_get_httpx_v4(url)
-            if eg.proxy:
-                curl_args[1:1] = ["-x", eg.proxy]
+            if _proxy_pool.must_proxy("redteam"):
+                px = await _proxy_pool.wait_pick(8.0, prefer_http=True)
+                if not px:
+                    return None
+                curl_args[1:1] = ["-x", px]
             elif _proxy_pool.enabled:
-                px = _proxy_pool.pick()
+                px = _proxy_pool.pick(prefer_http=True)
                 if px:
                     curl_args[1:1] = ["-x", px]
-                else:
-                    return await _http_get_httpx_v4(url)
         except Exception:
-            try:
-                from .proxy.pool import pool as _proxy_pool
-                from .proxy.yakit import prepare_egress
-                eg = await prepare_egress("redteam")
-                if eg.refuse or (_proxy_pool.enabled and not eg.proxy and not _proxy_pool.pick()):
-                    return await _http_get_httpx_v4(url)
-            except Exception:
-                return await _http_get_httpx_v4(url)
+            return await _http_get_httpx_v4(url)
         curl_args.append(url)
         proc = await asyncio.create_subprocess_exec(
             *curl_args,

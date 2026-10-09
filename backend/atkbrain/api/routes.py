@@ -170,6 +170,13 @@ class PiModelsReq(BaseModel):
     text: str = ""
 
 
+class LlmProfileReq(BaseModel):
+    format: str = "openai"
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+
+
 class ReviewFlagsReq(BaseModel):
     secondary_verify: bool | None = None
     redteam_rating: bool | None = None
@@ -324,12 +331,13 @@ async def apply_version(request: Request):
 
 @router.get("/settings")
 async def get_settings():
+    from ..agents.pi_runtime import console_model, role_model
     return {
         "concurrency": manager.snapshot(),
         "proxy": _proxy_snap(),
         "defaults": {
-            "model": settings.claude_model,
-            "supervisor_model": (settings.supervisor_model or settings.claude_model),
+            "model": console_model(),
+            "supervisor_model": role_model(getattr(settings, "supervisor_model", None)),
             "evolve_ai": bool(getattr(settings, "evolve_ai", True)),
             "loop_max_turns": settings.loop_max_turns,
             "hard_stop": {
@@ -433,6 +441,38 @@ async def api_pi_models_set(req: PiModelsReq):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"ok": True, "text": req.text or ""}
+
+
+@router.get("/settings/llm")
+async def api_llm_profile():
+    from ..agents.pi_runtime import llm_profile
+    return llm_profile()
+
+
+@router.post("/settings/llm")
+async def api_llm_profile_set(req: LlmProfileReq):
+    from ..agents.pi_runtime import save_llm_profile
+    try:
+        view = save_llm_profile(
+            fmt=req.format,
+            model=req.model,
+            base_url=req.base_url,
+            api_key=req.api_key,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, **view}
+
+
+@router.post("/settings/llm/test")
+async def api_llm_profile_test(req: LlmProfileReq):
+    from ..agents.pi_runtime import probe_llm
+    return await probe_llm(
+        fmt=req.format,
+        model=req.model,
+        base_url=req.base_url,
+        api_key=req.api_key,
+    )
 
 
 def _slim_list_config(cfg: dict | None) -> dict:
@@ -912,7 +952,7 @@ async def api_report_export_file(pid: str, jid: str):
     return Response(
         path.read_bytes(),
         media_type=media,
-        headers={"Content-Disposition": f'{disp}; filename="{name}"'},
+        headers={"Content-Disposition": report_export.content_disposition(disp, str(name))},
     )
 
 

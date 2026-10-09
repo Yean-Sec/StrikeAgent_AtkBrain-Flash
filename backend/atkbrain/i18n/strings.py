@@ -30,8 +30,8 @@ _MSG = {
     "missing": {"zh": "未采集", "en": "Not collected"},
     "auth_fail": {"zh": "验证失败", "en": "Verification failed"},
     "llm_key_missing": {
-        "zh": "未配置大模型密钥。在设置 → Pi 模型里把 apiKey 写成真实密钥并保存，或在项目目录 .env 填写 DEEPSEEK_API_KEY 后执行 docker compose up -d。",
-        "en": "No model API key. Paste a real apiKey under Settings → Pi models and save, or set DEEPSEEK_API_KEY in the project .env and run docker compose up -d.",
+        "zh": "未配置大模型密钥。在设置 → 模型里填写 API Key 并保存，或在项目目录 .env 填写 DEEPSEEK_API_KEY 后执行 docker compose up -d。",
+        "en": "No model API key. Fill in the API key under Settings → Model and save, or set DEEPSEEK_API_KEY in the project .env and run docker compose up -d.",
     },
     "password_wrong": {"zh": "口令错误", "en": "Wrong password"},
     "review_busy": {"zh": "该漏洞这项复核正在进行", "en": "This finding already has that review running"},

@@ -81,13 +81,7 @@ _LOCAL_PROXY_PORTS = {1080, 1081, 1082, 9050, 9051, 4145, 10800, 8083}
 
 
 def _local_proxy_ports() -> set[int]:
-    ports = set(_LOCAL_PROXY_PORTS)
-    try:
-        base = int(getattr(settings, "yakit_mitm_port", 8084) or 8084)
-        ports.update(range(base, base + 24))
-    except Exception:
-        ports.update(range(8084, 8108))
-    return ports
+    return set(_LOCAL_PROXY_PORTS)
 
 
 _LOCAL_PROXY_HINT_RE = re.compile(

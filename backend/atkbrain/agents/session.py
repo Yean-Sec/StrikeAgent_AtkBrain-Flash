@@ -18,7 +18,7 @@ from ..objective import objective_allows_flag, objective_is_src
 from ..scope import Scope
 from .context import AgentContext
 from .mcp_http import register_project_mcp, unregister_project_mcp
-from .pi_runtime import PiSession, cap_hunt_workers, kill_live_for_project
+from .pi_runtime import PiSession, cap_hunt_workers, kill_live_for_project, project_model
 from .project_skills import skill_abs_paths
 from .prompts import (
     build_brief,
@@ -89,9 +89,7 @@ class ProjectAgent:
         self.brief = build_brief(project)
         self._write_brief()
         self._project_skill_names = self._write_skills()
-        self.model = (cfg.get("model") or "").strip() or settings.claude_model
-        if self.model.lower() in ("sonnet", "haiku", "opus") or self.model.lower().startswith("claude"):
-            self.model = settings.claude_model
+        self.model = project_model(cfg.get("model"))
         self._roles = build_subagents(self.objective)
         self.last_session_id: str | None = None
         self._connected = False

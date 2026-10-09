@@ -101,13 +101,11 @@ class HotpathTtlTests(unittest.IsolatedAsyncioTestCase):
     def test_timeouts_and_ttls(self) -> None:
         from ..agents.context import _HTTP_TIMEOUT
         from ..graph.store import _GRAPH_TTL_SEC, _INTENT_TTL_SEC
-        from ..proxy.yakit import _SCOPE_HOST_TTL
 
         self.assertEqual(float(_HTTP_TIMEOUT.connect), 5.0)
         self.assertEqual(float(_HTTP_TIMEOUT.read), 12.0)
         self.assertLessEqual(_GRAPH_TTL_SEC, 4.0)
         self.assertEqual(_INTENT_TTL_SEC, 20.0)
-        self.assertEqual(_SCOPE_HOST_TTL, 8.0)
 
     async def test_intent_refresh_ttl_skips(self) -> None:
         from ..graph import store as gstore
@@ -128,11 +126,6 @@ class HotpathTtlTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(out, payload)
         gstore.invalidate_graph_cache(pid)
         self.assertNotIn(pid, gstore._GRAPH_CACHE)
-
-    def test_yakit_scope_host_cache(self) -> None:
-        text = (ROOT / "proxy" / "yakit.py").read_text(encoding="utf-8")
-        self.assertIn("_scope_ok", text)
-        self.assertIn("_SCOPE_HOST_TTL", text)
 
 
 if __name__ == "__main__":

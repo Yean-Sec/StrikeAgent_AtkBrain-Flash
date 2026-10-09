@@ -2,7 +2,7 @@
 #   docker compose -f compose.yaml -f deploy/compose.build.yaml -f deploy/compose.bridge.yaml up -d --build --wait
 #
 # 容器内 127.0.0.1 不再是宿主机。本机代理、本机靶场请写 host.docker.internal。
-# Yakit MITM / nmap 内网口径弱于 Linux host 网络，Kali 上请不要用这份。
+# nmap 内网口径弱于 Linux host 网络，Kali 上请不要用这份。
 
 services:
   atkbrain:
@@ -14,5 +14,3 @@ services:
       - "2334:2334"
       - "80:80"
       - "443:443"
-      - "11433:11433"
-      - "8084-8107:8084-8107"

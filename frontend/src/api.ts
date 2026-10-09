@@ -34,6 +34,29 @@ export type AuthMe = {
   default_username?: string | null;
 };
 
+export type LlmProfile = {
+  format: "openai" | "anthropic" | string;
+  model: string;
+  base_url: string;
+  api_key_set: boolean;
+  api_key_hint: string;
+};
+
+export type LlmProfileInput = {
+  format: string;
+  model: string;
+  base_url: string;
+  api_key?: string;
+};
+
+export type LlmTestResult = {
+  ok: boolean;
+  latency_ms?: number;
+  model?: string;
+  reply?: string;
+  error?: string;
+};
+
 export type LoginResult = {
   ok: boolean;
   username?: string;
@@ -228,6 +251,11 @@ export const api = {
   getPiModels: () => req<{ text: string }>("/api/settings/pi-models"),
   savePiModels: (text: string) =>
     req<{ ok: boolean; text: string }>("/api/settings/pi-models", { method: "POST", headers: J, body: JSON.stringify({ text }) }),
+  getLlmProfile: () => req<LlmProfile>("/api/settings/llm"),
+  saveLlmProfile: (body: LlmProfileInput) =>
+    req<LlmProfile & { ok: boolean }>("/api/settings/llm", { method: "POST", headers: J, body: JSON.stringify(body) }),
+  testLlmProfile: (body: LlmProfileInput) =>
+    req<LlmTestResult>("/api/settings/llm/test", { method: "POST", headers: J, body: JSON.stringify(body) }),
 
   listProjects: () => req<Project[]>("/api/projects"),
   getProject: (id: string) => req<Project>(`/api/projects/${id}`),

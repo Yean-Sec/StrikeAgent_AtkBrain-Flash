@@ -50,7 +50,16 @@ export function SettingsPage() {
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [custom, setCustom] = useState("");
   const [proxy, setProxy] = useState<any>(null);
-  const [piModels, setPiModels] = useState("");
+  const [llm, setLlm] = useState({
+    format: "openai" as "openai" | "anthropic",
+    model: "",
+    base_url: "",
+    api_key: "",
+    api_key_hint: "",
+    api_key_set: false,
+  });
+  const [llmBusy, setLlmBusy] = useState<"" | "save" | "test">("");
+  const [llmTest, setLlmTest] = useState<{ ok: boolean; text: string } | null>(null);
   const [review, setReview] = useState({ secondary_verify: true, redteam_rating: true });
   const [totpUrl, setTotpUrl] = useState("");
   const [totpSecret, setTotpSecret] = useState("");
@@ -70,7 +79,16 @@ export function SettingsPage() {
       }).catch(() => {});
     };
     load();
-    api.getPiModels().then((r) => setPiModels(String(r?.text || ""))).catch(() => {});
+    api.getLlmProfile().then((r) => {
+      setLlm({
+        format: r?.format === "anthropic" ? "anthropic" : "openai",
+        model: String(r?.model || ""),
+        base_url: String(r?.base_url || ""),
+        api_key: "",
+        api_key_hint: String(r?.api_key_hint || ""),
+        api_key_set: Boolean(r?.api_key_set),
+      });
+    }).catch(() => {});
     api.settings().then((r) => {
       const rv = r?.review;
       if (rv && typeof rv.secondary_verify === "boolean" && typeof rv.redteam_rating === "boolean") {
@@ -95,15 +113,58 @@ export function SettingsPage() {
     setNotice({ ok, text });
   };
 
-  const savePi = async () => {
+  const llmBody = () => ({
+    format: llm.format,
+    model: llm.model.trim(),
+    base_url: llm.base_url.trim(),
+    api_key: llm.api_key,
+  });
+
+  const applyLlm = (r: { format?: string; model?: string; base_url?: string; api_key_hint?: string; api_key_set?: boolean }) => {
+    setLlm((cur) => ({
+      ...cur,
+      format: r?.format === "anthropic" ? "anthropic" : cur.format,
+      model: String(r?.model || cur.model),
+      base_url: String(r?.base_url || cur.base_url),
+      api_key: "",
+      api_key_hint: String(r?.api_key_hint || ""),
+      api_key_set: Boolean(r?.api_key_set),
+    }));
+  };
+
+  const saveLlm = async () => {
+    if (llmBusy) return;
     setMessage("");
+    setLlmBusy("save");
     try {
-      const r = await api.savePiModels(piModels);
-      setPiModels(String(r?.text || piModels));
+      const r = await api.saveLlmProfile(llmBody());
+      applyLlm(r);
       window.dispatchEvent(new Event("atkbrain-health"));
       tell(true, t("settings.piSaved"));
     } catch (e: any) {
       tell(false, String(e?.message || e));
+    } finally {
+      setLlmBusy("");
+    }
+  };
+
+  const testLlm = async () => {
+    if (llmBusy) return;
+    setLlmTest(null);
+    setLlmBusy("test");
+    try {
+      const r = await api.testLlmProfile(llmBody());
+      if (r?.ok) {
+        const head = t("settings.testOk", { ms: r.latency_ms ?? 0 });
+        const reply = r.reply ? t("settings.testReply", { reply: r.reply }) : "";
+        setLlmTest({ ok: true, text: reply ? `${head} · ${reply}` : head });
+      } else {
+        setLlmTest({ ok: false, text: String(r?.error || t("settings.saveFailedTitle")) });
+      }
+    } catch (e: any) {
+      setLlmTest({ ok: false, text: String(e?.message || e) });
+    } finally {
+      setLlmBusy("");
     }
   };
 
@@ -367,16 +428,60 @@ export function SettingsPage() {
         <section className="card-cream" style={{ gridColumn: "1 / -1" }}>
           <h3>{t("settings.piTitle")}</h3>
           <p className="muted">{t("settings.piHint")}</p>
-          <textarea
-            className="input"
-            style={{ width: "100%", minHeight: 280, marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12 }}
-            value={piModels}
-            onChange={(e) => setPiModels(e.target.value)}
-            spellCheck={false}
-          />
-          <div className="row" style={{ gap: 8, marginTop: 12 }}>
-            <button className="btn btn-primary btn-sm" type="button" onClick={() => { void savePi(); }}>{t("settings.savePi")}</button>
+          <div style={{ display: "grid", gap: 12, marginTop: 14, maxWidth: 640 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="muted">{t("settings.format")}</span>
+              <select
+                className="input"
+                value={llm.format}
+                onChange={(e) => setLlm((cur) => ({ ...cur, format: e.target.value === "anthropic" ? "anthropic" : "openai" }))}
+              >
+                <option value="openai">{t("settings.formatOpenai")}</option>
+                <option value="anthropic">{t("settings.formatAnthropic")}</option>
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="muted">{t("settings.model")}</span>
+              <input
+                className="input mono"
+                value={llm.model}
+                placeholder={llm.format === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1"}
+                onChange={(e) => setLlm((cur) => ({ ...cur, model: e.target.value }))}
+                spellCheck={false}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="muted">{t("settings.baseUrl")}</span>
+              <input
+                className="input mono"
+                value={llm.base_url}
+                placeholder={llm.format === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1"}
+                onChange={(e) => setLlm((cur) => ({ ...cur, base_url: e.target.value }))}
+                spellCheck={false}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="muted">{t("settings.apiKey")}</span>
+              <input
+                className="input mono"
+                type="password"
+                value={llm.api_key}
+                placeholder={llm.api_key_set ? t("settings.apiKeyKeep", { hint: llm.api_key_hint || "…" }) : "sk-…"}
+                onChange={(e) => setLlm((cur) => ({ ...cur, api_key: e.target.value }))}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
           </div>
+          <div className="row" style={{ gap: 8, marginTop: 12 }}>
+            <button className="btn btn-primary btn-sm" type="button" disabled={llmBusy !== ""} onClick={() => { void saveLlm(); }}>
+              {llmBusy === "save" ? t("common.saving") : t("settings.savePi")}
+            </button>
+            <button className="btn btn-secondary btn-sm" type="button" disabled={llmBusy !== ""} onClick={() => { void testLlm(); }}>
+              {llmBusy === "test" ? t("settings.testing") : t("settings.testLlm")}
+            </button>
+          </div>
+          {llmTest ? <p className={llmTest.ok ? "muted" : "error-text"} style={{ marginTop: 10 }}>{llmTest.text}</p> : null}
         </section>
       </div>
     </div>

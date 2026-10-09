@@ -37,12 +37,6 @@ KIT_RULES = """# 本机工具纪律
 - 开局策略（CTF 先看入口 vs 红队三圈）见 skill `recon-fanout` / `recon-spiral`。本 skill 只给路径和可复制命令。
 """
 
-KIT_YAKIT = """# Yakit（红队/SRC 且顶栏开关开时）
-- 禁止自设 `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`，禁止 `--noproxy`，禁止再套 proxychains。HTTP 已由平台指到本机 MITM。
-- 需要 Fuzzer、History、爬虫、替换规则时，调用已注入的 Yakit MCP 工具（`http_fuzzer`、`query_http_flow`、`web_crawler`、`start_mitm_v2` 等），不要自己找 Burp 端口。
-- 不要把代理改成空或直连；出口由平台写入池节点。
-"""
-
 
 def kit_web(repo_root: str) -> str:
     jsfinder = f"{repo_root}/tools/JSFinder/JSFinder.py"

@@ -183,7 +183,7 @@ Open the **https** URL `panel` prints and accept the self-signed certificate. Th
 
 Sign in as `admin` / `admin`. The page requires a new password immediately.
 
-Then set the model. In the console open **Settings → Pi models**. The text box is Pi's `models.json`. Edit `providers` (including `apiKey`, base URL, and the model list), then set `defaultProvider` and `defaultModel` to the one hunts should load. Saving writes `backend/data/pi-models.json`. Later Pi processes read that file. Invalid JSON is rejected.
+Then set the model. In the console open **Settings → Model**, choose OpenAI or Anthropic, and fill in the model, base URL, and API key. OpenAI uses Chat Completions. Anthropic uses the Messages API. Saving writes `backend/data/pi-models.json`, which later Pi processes read. **Test connection** sends one short request to confirm the URL and key.
 
 Forgot the URL or password: run `panel` for the install you used. If it says there is no plaintext copy, set `ATKBRAIN_ADMIN_PASSWORD` and `ATKBRAIN_ADMIN_PASSWORD_RESET=1` in `.env`. On Docker, run the same `docker compose ... up -d` again. On a Linux install, run `sudo scripts/atkbrain-backend.sh restart`. Set RESET back to `false` after you can sign in.
 

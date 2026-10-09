@@ -35,8 +35,8 @@ services:
       ATKBRAIN_PI_BIN: ${ATKBRAIN_PI_BIN:-pi}
       ATKBRAIN_PI_PROVIDER: ${ATKBRAIN_PI_PROVIDER:-deepseek}
       ATKBRAIN_PI_MODEL: ${ATKBRAIN_PI_MODEL:-deepseek-flash}
-      ATKBRAIN_YAKIT_MCP_FULL_PORT: ${ATKBRAIN_YAKIT_MCP_FULL_PORT:-11433}
-      ATKBRAIN_YAKIT_MITM_PORT: ${ATKBRAIN_YAKIT_MITM_PORT:-8084}
+      # 历史名。只在还没有 pi-models.json 时当 defaultModel 的种子；控制台保存的模型优先。
+      ATKBRAIN_CLAUDE_MODEL: ${ATKBRAIN_CLAUDE_MODEL:-}
       # 下面两项从仓库根目录 .env 注入，不要把真实密钥贴进 compose.yaml
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}

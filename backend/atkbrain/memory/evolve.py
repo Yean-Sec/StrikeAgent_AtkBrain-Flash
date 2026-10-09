@@ -670,8 +670,10 @@ async def ai_refine_playbook(
         + ("\n".join(pb_lines) or "（空）")
         + "\n\n请蒸馏最多 3 条：思想、方式方法、路线。只消耗上面列出的栈/线索/手法，不要补链上没有的 hop。"
     )
-    model = (getattr(settings, "evolve_model", None) or "").strip() or (
-        (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
+    from ..agents.pi_runtime import query_text, role_model
+    model = role_model(
+        getattr(settings, "evolve_model", None),
+        getattr(settings, "supervisor_model", None),
     )
     wait = float(getattr(settings, "evolve_timeout_sec", 90) or 90)
     applied: list[dict] = []

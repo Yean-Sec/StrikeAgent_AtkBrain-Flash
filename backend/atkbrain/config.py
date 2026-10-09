@@ -129,7 +129,7 @@ class Settings(BaseSettings):
     redteam_runtime_hard_stop_sec: int = 12 * 60 * 60 # 红队：12 小时强制停止
     entry_unreachable_yield_sec: int = 0
 
-    claude_model: str = "deepseek-flash"
+    claude_model: str = "deepseek-flash"  # 历史名，与 pi_model 同义；控制台 pi-models.json 优先
     claude_fallback_model: str = "deepseek-flash"
     claude_bin: str = os.environ.get("ATKBRAIN_PI_BIN", os.environ.get("ATKBRAIN_CLAUDE_BIN", "pi"))
     pi_bin: str = os.environ.get("ATKBRAIN_PI_BIN", "pi")
@@ -150,14 +150,6 @@ class Settings(BaseSettings):
     # 例如 https://atkbrain.example.com ；有则 panel/跳转都用它，不要带路径。
     public_origin: str = ""
     session_max_age_sec: int = 24 * 3600  # 登录起算 24 小时，不滑动续期
-    # Yakit：MCP 全能力桥 + MITM。proxy-settings.json 无 yakit_enabled 且本机有 yak 时默认开。
-    yakit_mcp_url: str = "http://127.0.0.1:11432/mcp"
-    yakit_mcp_host: str = "127.0.0.1"
-    yakit_mcp_port: int = 11432
-    yakit_mcp_full_port: int = 11433  # Flash 自拉 --enable-all，不抢 Cursor 的 11432
-    yakit_mitm_host: str = "127.0.0.1"
-    yakit_mitm_port: int = 8084
-    yakit_mitm_ctf: bool = False  # 缺省 CTF 不抓包；true 时仍要项目 config.yakit_mitm 才进 MITM
     github_repo: str = "Yean-Sec/StrikeAgent_AtkBrain-Flash"
     github_token: str = ""
 

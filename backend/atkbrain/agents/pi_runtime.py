@@ -244,14 +244,14 @@ def _is_backend_cmd(cmd: bytes) -> bool:
 
 
 def _is_protected_cmd(cmd: bytes) -> bool:
-    """停猎扫 /proc 时不能误杀控制台、反代、Yakit。"""
+    """停猎扫 /proc 时不能误杀控制台和反代。"""
     if not cmd or _is_backend_cmd(cmd):
         return True
     blob = cmd.replace(b"\0", b" ").lower()
     first = cmd.split(b"\0", 1)[0].rsplit(b"/", 1)[-1].lower()
-    if first in (b"caddy", b"caddy.exe", b"yak", b"yak.exe", b"uvicorn"):
+    if first in (b"caddy", b"caddy.exe", b"uvicorn"):
         return True
-    if b"yak mcp" in blob or b"uvicorn" in blob:
+    if b"uvicorn" in blob:
         return True
     return False
 
@@ -500,12 +500,22 @@ def pi_bin() -> str:
     )
 
 
+_BUILTIN_MODEL = "deepseek-flash"
+
+
 def _env_pi_model() -> str:
-    return (
-        (getattr(settings, "pi_model", None) or "").strip()
-        or (getattr(settings, "claude_model", None) or "").strip()
-        or "deepseek-flash"
-    )
+    """还没有 pi-models.json 时的种子。
+
+    ATKBRAIN_PI_MODEL 与历史 ATKBRAIN_CLAUDE_MODEL 同义。
+    只改了其中一个、另一个仍是内置 deepseek-flash 时，用改过的那个。
+    """
+    pi = (getattr(settings, "pi_model", None) or "").strip()
+    claude = (getattr(settings, "claude_model", None) or "").strip()
+    if pi and pi != _BUILTIN_MODEL:
+        return pi
+    if claude and claude != _BUILTIN_MODEL:
+        return claude
+    return pi or claude or _BUILTIN_MODEL
 
 
 def _env_pi_provider() -> str:
@@ -602,6 +612,224 @@ def save_pi_models_text(text: str) -> dict:
     return data
 
 
+_OPENAI_API = "openai-completions"
+_ANTHROPIC_API = "anthropic-messages"
+
+
+def _profile_format(api: str, provider: str) -> str:
+    blob = f"{api} {provider}".lower()
+    return "anthropic" if "anthropic" in blob else "openai"
+
+
+def _expand_api_key(raw: str | None) -> str:
+    text = str(raw or "").strip().strip('"').strip("'")
+    if text.startswith("$"):
+        name = text[1:].strip()
+        if name.startswith("{") and name.endswith("}"):
+            name = name[1:-1].strip()
+        if not name:
+            return ""
+        return str(os.environ.get(name) or "")
+    return text
+
+
+def _key_hint(raw: str | None) -> tuple[bool, str]:
+    usable = _usable_api_key(_expand_api_key(raw))
+    if not usable:
+        return False, ""
+    tail = usable[-4:] if len(usable) >= 4 else usable
+    return True, f"…{tail}"
+
+
+def llm_profile() -> dict:
+    """设置页表单。只暴露格式、模型、地址和密钥是否已填，不回传密钥。"""
+    data = load_pi_models()
+    providers = data.get("providers") if isinstance(data.get("providers"), dict) else {}
+    name = str(data.get("defaultProvider") or "").strip()
+    prov = providers.get(name) if isinstance(providers.get(name), dict) else {}
+    fmt = _profile_format(str(prov.get("api") or ""), name)
+    base = str(prov.get("baseUrl") or "").strip()
+    if not base:
+        base = "https://api.anthropic.com" if fmt == "anthropic" else "https://api.openai.com/v1"
+    set_, hint = _key_hint(prov.get("apiKey"))
+    return {
+        "format": fmt,
+        "model": str(data.get("defaultModel") or "").strip(),
+        "base_url": base,
+        "api_key_set": set_,
+        "api_key_hint": hint,
+    }
+
+
+def save_llm_profile(*, fmt: str, model: str, base_url: str, api_key: str) -> dict:
+    """把通用表单写成 Pi 能读的 models.json。密钥留空则保留已保存的值。"""
+    kind = (fmt or "").strip().lower()
+    if kind not in {"openai", "anthropic"}:
+        raise ValueError("格式只能是 openai 或 anthropic")
+    model_id = (model or "").strip()
+    if not model_id or len(model_id) > 200:
+        raise ValueError("需要填写模型")
+    base = (base_url or "").strip().rstrip("/")
+    if not base.lower().startswith(("http://", "https://")) or " " in base:
+        raise ValueError("Base URL 需要以 http:// 或 https:// 开头")
+    existing = load_pi_models()
+    providers = existing.get("providers") if isinstance(existing.get("providers"), dict) else {}
+    current_name = str(existing.get("defaultProvider") or "").strip()
+    current = providers.get(current_name) if isinstance(providers.get(current_name), dict) else {}
+    key = (api_key or "").strip()
+    if not key:
+        key = str(current.get("apiKey") or "").strip()
+    ctx, mx = 200_000, 16_384
+    prev_models = current.get("models") if isinstance(current.get("models"), list) else []
+    for item in prev_models:
+        if not isinstance(item, dict) or str(item.get("id") or "") != model_id:
+            continue
+        try:
+            ctx = int(item.get("contextWindow") or ctx)
+            mx = int(item.get("maxTokens") or mx)
+        except (TypeError, ValueError):
+            pass
+        break
+    provider = "anthropic" if kind == "anthropic" else "openai"
+    data = {
+        "defaultProvider": provider,
+        "defaultModel": model_id,
+        "providers": {
+            provider: {
+                "baseUrl": base,
+                "api": _ANTHROPIC_API if kind == "anthropic" else _OPENAI_API,
+                "apiKey": key,
+                "models": [{
+                    "id": model_id,
+                    "name": model_id,
+                    "contextWindow": ctx,
+                    "maxTokens": mx,
+                    "input": ["text", "image"],
+                }],
+            }
+        },
+    }
+    save_pi_models_text(json.dumps(data, ensure_ascii=False))
+    return llm_profile()
+
+
+def llm_probe_url(fmt: str, base_url: str) -> str:
+    base = (base_url or "").strip().rstrip("/")
+    if (fmt or "").strip().lower() == "anthropic":
+        if base.endswith("/messages"):
+            return base
+        if base.endswith("/v1"):
+            return base + "/messages"
+        return base + "/v1/messages"
+    if base.endswith("/chat/completions"):
+        return base
+    return base + "/chat/completions"
+
+
+def _probe_reply(fmt: str, body: Any) -> str:
+    if not isinstance(body, dict):
+        return ""
+    if fmt == "anthropic":
+        content = body.get("content")
+        if isinstance(content, list):
+            parts = [
+                str(item.get("text") or "").strip()
+                for item in content
+                if isinstance(item, dict)
+            ]
+            return " ".join(part for part in parts if part)[:200]
+        return ""
+    choices = body.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        message = choices[0].get("message")
+        if isinstance(message, dict):
+            return str(message.get("content") or "").strip()[:200]
+    return ""
+
+
+def _probe_error(body: Any, text: str) -> str:
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            msg = str(err.get("message") or err.get("type") or "").strip()
+            if msg:
+                return msg[:400]
+        if isinstance(err, str) and err.strip():
+            return err.strip()[:400]
+    return (text or "").strip()[:400]
+
+
+def _redact(text: str, key: str) -> str:
+    if key and key in text:
+        return text.replace(key, "***")
+    return text
+
+
+async def probe_llm(*, fmt: str, model: str, base_url: str, api_key: str) -> dict:
+    """发一条最短对话，确认地址、密钥和模型能连通。失败只返回错误文本。"""
+    kind = (fmt or "").strip().lower()
+    if kind not in {"openai", "anthropic"}:
+        return {"ok": False, "error": "格式只能是 openai 或 anthropic"}
+    model_id = (model or "").strip()
+    base = (base_url or "").strip()
+    if not model_id:
+        return {"ok": False, "error": "需要填写模型"}
+    if not base.lower().startswith(("http://", "https://")):
+        return {"ok": False, "error": "Base URL 需要以 http:// 或 https:// 开头"}
+    existing = load_pi_models()
+    providers = existing.get("providers") if isinstance(existing.get("providers"), dict) else {}
+    current_name = str(existing.get("defaultProvider") or "").strip()
+    current = providers.get(current_name) if isinstance(providers.get(current_name), dict) else {}
+    explicit = (api_key or "").strip()
+    key = _usable_api_key(_expand_api_key(explicit or str(current.get("apiKey") or "")))
+    if not key:
+        return {"ok": False, "error": "未配置 API Key"}
+    url = llm_probe_url(kind, base)
+    import httpx
+
+    payload: dict[str, Any] = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": "Reply with the single word OK."}],
+    }
+    if kind == "anthropic":
+        payload["max_tokens"] = 16
+        headers = {
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+    else:
+        payload["max_tokens"] = 16
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0), follow_redirects=True, trust_env=False) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if (
+                kind == "openai"
+                and resp.status_code == 400
+                and "max_tokens" in (resp.text or "")
+                and "max_completion_tokens" not in payload
+            ):
+                payload.pop("max_tokens", None)
+                payload["max_completion_tokens"] = 16
+                resp = await client.post(url, headers=headers, json=payload)
+    except Exception as e:
+        return {"ok": False, "error": _redact(str(e), key)[:400] or "连接失败"}
+    latency = int((time.perf_counter() - started) * 1000)
+    try:
+        body = resp.json()
+    except Exception:
+        body = None
+    if resp.status_code >= 400:
+        detail = _redact(_probe_error(body, resp.text), key)
+        if not detail:
+            detail = f"HTTP {resp.status_code}"
+        return {"ok": False, "latency_ms": latency, "error": detail}
+    reply = _probe_reply(kind, body)
+    return {"ok": True, "latency_ms": latency, "model": model_id, "reply": reply}
+
+
 def pi_model() -> str:
     try:
         model = str(load_pi_models().get("defaultModel") or "").strip()
@@ -620,6 +848,37 @@ def pi_provider() -> str:
     except Exception:
         pass
     return _env_pi_provider()
+
+
+def _legacy_model_name(name: str) -> bool:
+    n = (name or "").strip().lower()
+    return (not n) or n in {"sonnet", "haiku", "opus"} or n.startswith("claude")
+
+
+def console_model() -> str:
+    """控制台「设置 → Pi 模型」里的 defaultModel。"""
+    return pi_model()
+
+
+def project_model(explicit: str | None) -> str:
+    """项目单独指定的模型优先；没写或仍是旧 Claude 别名时用控制台模型。"""
+    raw = (explicit or "").strip()
+    if raw and not _legacy_model_name(raw):
+        return raw
+    return console_model()
+
+
+def role_model(*candidates: str | None) -> str:
+    """御主 / 导出 / 蒸馏。内置 deepseek-flash 不能盖过控制台里保存的模型。"""
+    chosen = console_model()
+    for item in candidates:
+        raw = (item or "").strip()
+        if _legacy_model_name(raw):
+            continue
+        if raw == _BUILTIN_MODEL and chosen and chosen != _BUILTIN_MODEL:
+            continue
+        return raw
+    return chosen
 
 
 def ensure_pi_agent_dir(*, hosted: bool | None = None) -> Path:

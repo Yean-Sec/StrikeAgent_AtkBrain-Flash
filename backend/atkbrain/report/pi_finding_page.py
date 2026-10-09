@@ -162,7 +162,7 @@ async def compose_pi_page(finding: dict, *, project: dict | None = None) -> dict
     """二次验证完成后，用无工具一次性 Pi 撰写五个板块。"""
     if not bool(getattr(settings, "report_ai", True)):
         return {}
-    from ..agents.pi_runtime import query_text
+    from ..agents.pi_runtime import query_text, role_model
 
     facts = _facts_blob(finding, project)
     prompt = (
@@ -170,8 +170,9 @@ async def compose_pi_page(finding: dict, *, project: dict | None = None) -> dict
         "请按系统要求撰写漏洞页五个板块，只使用这些事实。\n\n"
         + json.dumps(facts, ensure_ascii=False, indent=2)[:80000]
     )
-    model = (getattr(settings, "report_model", None) or "").strip() or (
-        (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
+    model = role_model(
+        getattr(settings, "report_model", None),
+        getattr(settings, "supervisor_model", None),
     )
     wait = float(getattr(settings, "report_timeout_sec", 90) or 90)
     blob = await query_text(

@@ -164,20 +164,20 @@ def main() -> None:
 
     rr(d, (40 * S, 748 * S, 1360 * S, 1068 * S), 10, CARD, HAIR, 1)
     tx(d, (60 * S, 764 * S), "06  受控执行与落盘", f_h, INK)
-    tx(d, (240 * S, 768 * S), "Pi · Yakit MITM · Yak MCP :11433 · SQLite", f_en, MUTED)
+    tx(d, (240 * S, 768 * S), "Pi · 出口代理池 · SQLite", f_en, MUTED)
 
     blocks = [
         (
             70,
             310,
             "Pi 与 MCP",
-            "Pi  runtime  deepseek-flash\n图工具  本机 HTTP 扩展\nYak MCP  :11433 全能力\nrun_cmd / http_request / report_*",
+            "Pi runtime  控制台所选模型\n图工具  本机 HTTP 扩展\nrun_cmd / http_request / report_*",
         ),
         (
             400,
             300,
             "出网",
-            "红队/蓝队 HTTP 第一跳 MITM\nDownstream 必须走出口代理池\n无存活节点则拒绝出网\nCTF 始终直连，默认不进 Yakit",
+            "红队/蓝队 HTTP 走出口代理池\n池内无存活节点则拒绝出网\nCTF 始终直连",
         ),
         (
             720,

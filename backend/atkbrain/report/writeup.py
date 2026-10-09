@@ -761,15 +761,16 @@ def merge_ai_writeup(finding: dict, spec: dict) -> dict:
 
 
 async def _ai_one_writeup(finding: dict) -> dict | None:
-    from ..agents.pi_runtime import query_text
+    from ..agents.pi_runtime import query_text, role_model
 
     facts = _facts_for_ai(finding)
     prompt = (
         "请为下面这一条漏洞写短危害说明。只使用事实包，只填 impact_detail。\n\n"
         + json.dumps(facts, ensure_ascii=False, indent=2)[:80000]
     )
-    model = (getattr(settings, "report_model", None) or "").strip() or (
-        (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
+    model = role_model(
+        getattr(settings, "report_model", None),
+        getattr(settings, "supervisor_model", None),
     )
     wait = float(getattr(settings, "report_timeout_sec", 90) or 90)
     blob = await query_text(

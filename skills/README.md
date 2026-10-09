@@ -15,4 +15,4 @@ Skill 源文件和本项目绑定，**不是**本机 `~/.claude` 或 `~/.pi` 全
 | `recon-spiral` | 红队 |
 | `src-hunt-playbook` | SRC |
 
-猎面运行时是 **Pi**。从者与角色工人的 `cwd` 是猎工作区。调度按御主方案并发拉起 Pi 进程（`--skill` 精确加载），工人禁止再开子进程。图工具走 `pi/extensions/atkbrain-tools.ts`。红队 / SRC 打开 Yakit 后，同一套 HTTP 桥会转发本机 Yak MCP（MITM、History、Fuzzer 等）；发包类强制走 MITM 下游代理池。证书与引擎是否匹配看控制台顶栏，不要混用 11432 / 11433 两套 CA。
+猎面运行时是 **Pi**。从者与角色工人的 `cwd` 是猎工作区。调度按御主方案并发拉起 Pi 进程（`--skill` 精确加载），工人禁止再开子进程。图工具走 `pi/extensions/atkbrain-tools.ts`。红队 / SRC 的 HTTP 与命令走出口代理池；池子关闭时直连。CTF 始终直连。

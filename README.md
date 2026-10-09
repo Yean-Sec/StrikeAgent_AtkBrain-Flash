@@ -179,7 +179,7 @@ Docker 镜像里带了常用探测工具。Linux 实例只保证控制台和 Pi 
 
 首次用 `admin` / `admin` 进去，页面会要求马上改密。
 
-然后配置模型。打开控制台的 **设置 → Pi 模型**，编辑框里就是 Pi 的 `models.json`。改 `providers`（含 `apiKey`、接口地址、模型列表），再用 `defaultProvider` 和 `defaultModel` 指定猎面实际加载的那一个。保存后写入 `backend/data/pi-models.json`，之后拉起的 Pi 读这份文件。JSON 不合法会拒绝保存。
+然后配置模型。打开控制台的 **设置 → 模型**，选择 OpenAI 或 Anthropic，填写模型、Base URL 和 API Key。OpenAI 走 Chat Completions，Anthropic 走 Messages API。保存后写入 `backend/data/pi-models.json`，之后拉起的 Pi 读这份文件。点「测试连通」会发一条最短请求，确认地址和密钥可用。
 
 忘了入口或口令：再跑对应搭法的 `panel`。若提示没有明文副本，在 `.env` 设 `ATKBRAIN_ADMIN_PASSWORD` 与 `ATKBRAIN_ADMIN_PASSWORD_RESET=1`。Docker 再执行一次对应系统的 `docker compose ... up -d`。Linux 实例再执行 `sudo scripts/atkbrain-backend.sh restart`。确认能登录后把 RESET 改回 `false`。
 

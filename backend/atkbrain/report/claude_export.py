@@ -65,6 +65,18 @@ EXPORT_SYSTEM = f"""你是 StrikeAgent_AtkBrain-Flash 的专职交付报告撰�
 """
 
 _jobs: dict[str, dict] = {}
+_export_tasks: set[asyncio.Task] = set()
+
+
+def content_disposition(disposition: str, filename: str) -> str:
+    """中文文件名不能直接放进 latin-1 头，否则下载接口 500。"""
+    from urllib.parse import quote
+    raw = (filename or "report").replace("\r", "").replace("\n", "").replace('"', "")
+    ascii_name = raw.encode("ascii", "ignore").decode() or "report"
+    return (
+        f"{disposition}; filename=\"{ascii_name}\"; "
+        f"filename*=UTF-8''{quote(raw, safe='')}"
+    )
 
 
 def _job_dir() -> Path:
@@ -257,7 +269,7 @@ def _facts_payload(data: dict) -> dict:
 
 async def _export_enrich(facts: dict, *, project_id: str = "", lang: object = "zh") -> dict:
     """专职导出 Pi：无工具一次性会话，role=report-export。"""
-    from ..agents.pi_runtime import query_text
+    from ..agents.pi_runtime import query_text, role_model
 
     loc = normalize_locale(lang)
     if loc == "en":
@@ -270,8 +282,9 @@ async def _export_enrich(facts: dict, *, project_id: str = "", lang: object = "z
             "# 渗透测试事实包（专职导出 Pi 只填槽，禁止整页 HTML）\n"
             + json.dumps(facts, ensure_ascii=False, indent=2)[:100000]
         )
-    model = (getattr(settings, "report_model", None) or "").strip() or (
-        (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
+    model = role_model(
+        getattr(settings, "report_model", None),
+        getattr(settings, "supervisor_model", None),
     )
     wait = max(60.0, float(getattr(settings, "report_timeout_sec", 90) or 90) * 2)
     wait = min(wait, 240.0)
@@ -434,7 +447,9 @@ async def start_export_job(project_id: str, fmt: str, *, force: bool = True, lan
     }
     _jobs[job_id] = job
     _persist_job(job)
-    asyncio.create_task(run_export_job(job))
+    task = asyncio.create_task(run_export_job(job))
+    _export_tasks.add(task)
+    task.add_done_callback(_export_tasks.discard)
     return _job_public(job)
 
 

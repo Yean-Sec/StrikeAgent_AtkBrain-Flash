@@ -492,7 +492,8 @@ async def consult_supervisor(
     wait = float(timeout if timeout is not None else getattr(settings, "supervisor_timeout_sec", 360) or 360)
     attempt_cap = float(getattr(settings, "supervisor_attempt_timeout_sec", 90) or 90)
     inner = max(5.0, min(wait, attempt_cap if attempt_cap > 0 else wait))
-    model = (getattr(settings, "supervisor_model", None) or "").strip() or settings.claude_model
+    from ..agents.pi_runtime import query_text, role_model
+    model = role_model(getattr(settings, "supervisor_model", None))
     retries = max(1, int(getattr(settings, "claude_connect_retries", 4) or 4))
     last_exc: BaseException | None = None
     for attempt in range(1, retries + 1):

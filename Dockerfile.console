@@ -1,5 +1,5 @@
 # StrikeAgent_AtkBrain-Flash — 控制台一键镜像（本机功能口径）
-# 与根目录 Dockerfile（TSecBench 托管、ATKBRAIN_HOSTED=1、无前端/无 yak）分开。
+# 与根目录 Dockerfile（TSecBench 托管、ATKBRAIN_HOSTED=1、无前端）分开。
 # 构建：docker compose -f compose.yaml -f deploy/compose.build.yaml up -d --build --wait
 ARG NODE_IMAGE=docker.m.daocloud.io/library/node:20-bookworm-slim
 ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim-bookworm
@@ -96,25 +96,6 @@ RUN set -eux; \
 COPY scripts/docker-seed-wordlists.sh /tmp/docker-seed-wordlists.sh
 RUN chmod 0755 /tmp/docker-seed-wordlists.sh && /tmp/docker-seed-wordlists.sh && rm -f /tmp/docker-seed-wordlists.sh
 
-# Yak 引擎（Yakit MCP / MITM）。优先阿里云 OSS，失败再走 oss.yaklang.io
-RUN set -eux; \
-    arch="$(uname -m)"; \
-    case "$arch" in \
-      x86_64|amd64) yak_bin=yak_linux_amd64 ;; \
-      aarch64|arm64) yak_bin=yak_linux_arm64 ;; \
-      *) echo "[docker] 不支持的架构 $arch，跳过 yak" >&2; exit 0 ;; \
-    esac; \
-    if curl -fsSL --retry 3 -o /usr/local/bin/yak "https://yaklang.oss-cn-beijing.aliyuncs.com/yak/latest/${yak_bin}"; then \
-      chmod 0755 /usr/local/bin/yak; \
-    elif curl -fsSL --retry 3 -o /tmp/install-yak.sh http://oss.yaklang.io/install-latest-yak.sh; then \
-      bash /tmp/install-yak.sh; \
-      command -v yak >/dev/null; \
-      rm -f /tmp/install-yak.sh; \
-    else \
-      echo "[docker] 未能下载 yak，镜像可起控制台但 Yakit 不可用" >&2; \
-    fi; \
-    yak version || yak --version || true
-
 WORKDIR /opt/atkbrain/backend
 
 COPY backend/requirements.txt /opt/atkbrain/backend/requirements.txt
@@ -150,7 +131,7 @@ RUN chmod 0755 /opt/atkbrain/docker-console-entrypoint.sh /opt/atkbrain/scripts/
     && test -f /opt/atkbrain/skills/recon-fanout/SKILL.md \
     && test -f /opt/atkbrain/pi/extensions/atkbrain-tools.ts
 
-EXPOSE 2333 2334 11433 8084
+EXPOSE 2333 2334
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=90s --retries=18 \
     CMD python3 -m atkbrain.healthcheck

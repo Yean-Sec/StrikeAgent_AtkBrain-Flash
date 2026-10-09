@@ -36,7 +36,6 @@ class CapHelpersTests(unittest.TestCase):
         self.assertTrue(_is_pi_cmdline(b"node\0/usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js\0--mode\0rpc"))
         self.assertFalse(_is_pi_cmdline(b"python3\0-m\0atkbrain.main"))
         self.assertTrue(_is_backend_cmd(b"python3\0-m\0atkbrain.main"))
-        self.assertTrue(_is_protected_cmd(b"/usr/local/bin/yak\0mcp\0--port\011433"))
         self.assertTrue(_is_protected_cmd(b"caddy\0run"))
         self.assertFalse(_is_protected_cmd(b"pi\0--mode\0rpc"))
 

@@ -11,26 +11,8 @@ from .context import AgentContext
 from .tools import mcp_tool_defs, mcp_tool_map
 
 
-async def _yakit_defs(ctx: AgentContext | None) -> list[dict]:
-    del ctx
-    return []
-
-
-async def _yakit_names(pid: str) -> set[str]:
-    extra = await _yakit_defs(_CTX.get(pid))
-    return {str(t.get("name") or "") for t in extra if t.get("name")}
-
-
 async def _merged_defs(pid: str) -> list[dict]:
-    defs = list(_DEFS.get(pid) or [])
-    extra = await _yakit_defs(_CTX.get(pid))
-    names = {str(d.get("name") or "") for d in defs}
-    for t in extra:
-        n = str(t.get("name") or "")
-        if n and n not in names:
-            defs.append(t)
-            names.add(n)
-    return defs
+    return list(_DEFS.get(pid) or [])
 
 router = APIRouter()
 
@@ -92,25 +74,6 @@ async def _dispatch(pid: str, body: dict) -> dict | None:
         fns = _TOOLS.get(pid) or {}
         fn = fns.get(name)
         if fn is None:
-            ctx = _CTX.get(pid)
-            if ctx is not None and name in await _yakit_names(pid):
-                try:
-                    from ..proxy.yakit import yakit
-                    out = await yakit.hunter_call(
-                        name, args,
-                        objective=ctx.objective, project=ctx.project,
-                        scope_check=ctx._http_blocked,
-                    )
-                    content = out.get("content") if isinstance(out, dict) else [{"type": "text", "text": str(out)}]
-                    return _rpc_result(rid, {
-                        "content": content,
-                        "isError": bool(isinstance(out, dict) and out.get("is_error")),
-                    })
-                except Exception as e:
-                    return _rpc_result(rid, {
-                        "content": [{"type": "text", "text": str(e)[:400]}],
-                        "isError": True,
-                    })
             return _rpc_result(rid, {
                 "content": [{"type": "text", "text": f"unknown tool {name}"}],
                 "isError": True,
@@ -200,26 +163,6 @@ async def call_agent_tool(pid: str, name: str, request: Request):
     if not isinstance(args, dict):
         args = {}
     if fn is None:
-        ctx = _CTX.get(pid)
-        if ctx is not None and name in await _yakit_names(pid):
-            try:
-                from ..proxy.yakit import yakit
-                out = await yakit.hunter_call(
-                    name, args,
-                    objective=ctx.objective, project=ctx.project,
-                    scope_check=ctx._http_blocked,
-                )
-                text = ""
-                if isinstance(out, dict):
-                    content = out.get("content") or []
-                    if isinstance(content, list):
-                        text = "\n".join(
-                            str(c.get("text") or "") for c in content if isinstance(c, dict)
-                        )
-                    return {"text": text, "is_error": bool(out.get("is_error"))}
-                return {"text": str(out), "is_error": False}
-            except Exception as e:
-                return JSONResponse({"text": str(e)[:400], "is_error": True}, status_code=502)
         return JSONResponse({"text": f"unknown tool {name}", "is_error": True}, status_code=404)
     out = await fn(args)
     text = ""
