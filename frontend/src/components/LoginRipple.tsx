@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { animate, stagger, utils } from "animejs";
 
 /** 只在奶油 / 陶土里轻轻变，避免高饱和闪色。 */
-const PALETTE = ["#d9b6a6", "#cc785c", "#e0cfc2", "#c4a090", "#b88974", "#c9b4a8", "#d4c4b6"];
+const PALETTE = ["#d6e4ff", "#7aa2ff", "#e4dcff", "#b7c9f2", "#9eb6ee", "#c5d4f5", "#eef4ff"];
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 type Kind = "round" | "sq" | "tall";
@@ -266,7 +266,7 @@ export function LoginRipple() {
         hot.add(utils.random(0, dots.length - 1, 0));
       }
       hot.forEach((i) => {
-        dots[i].style.color = utils.randomPick(["#cc785c", "#b88974", "#d9b6a6"]) as string;
+        dots[i].style.color = utils.randomPick(["#4c7dff", "#7aa2ff", "#a9c0f5"]) as string;
       });
       track(animate(dots, {
         opacity: (_, i) => (hot.has(i) ? utils.random(0.28, 0.42, 2) : 0.04),

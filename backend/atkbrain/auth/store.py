@@ -5,7 +5,7 @@ import json
 import time
 
 from ..db import db, new_id, now
-from .crypto import token_hash
+from atkbrain_native import token_hash
 
 
 async def get_user(username: str) -> dict | None:

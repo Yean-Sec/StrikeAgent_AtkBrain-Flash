@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from .project_status import format_duration, hunt_hard_stop_info
+from atkbrain_native import format_duration, hunt_hard_stop_info
 
 
 class HardStopI18nTests(unittest.TestCase):

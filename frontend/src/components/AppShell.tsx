@@ -7,8 +7,10 @@ import type { AppVersion } from "../types";
 import { useAuth } from "../AuthGate";
 import { useT } from "../i18n";
 import { consumeShowUpdate, UpdateModal } from "./UpdateModal";
+import { HuntViewProvider } from "../features/chat/huntView";
+import { ToolExplain } from "../features/chat/ToolExplain";
 
-type IconName = "projects" | "plus" | "settings" | "collapse" | "logout" | "vulns";
+type IconName = "projects" | "plus" | "settings" | "collapse" | "logout" | "vulns" | "account" | "model" | "hunt" | "review" | "proxy" | "guard";
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -16,6 +18,12 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   if (name === "vulns") return <svg {...common}><path d="M12 3l8 4v6c0 5-3.4 7.6-8 9-4.6-1.4-8-4-8-9V7z" /><path d="M9 12l2 2 4-4" /></svg>;
   if (name === "plus") return <svg {...common}><path d="M12 5v14M5 12h14" /></svg>;
   if (name === "settings") return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-3v-.08A1.7 1.7 0 0 0 10.68 18.36a1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7.02 14.7 1.7 1.7 0 0 0 5.46 13.7H5v-3h.08a1.7 1.7 0 0 0 1.56-1.03 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 11.3 4.46V4h3v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03H20v3h-.08A1.7 1.7 0 0 0 18.36 14.4Z" /></svg>;
+  if (name === "account") return <svg {...common}><circle cx="12" cy="8" r="3" /><path d="M5 19c1.5-3 3.8-4.5 7-4.5S17.5 16 19 19" /></svg>;
+  if (name === "model") return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M8 9h8M8 13h5" /></svg>;
+  if (name === "hunt") return <svg {...common}><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2" /></svg>;
+  if (name === "review") return <svg {...common}><path d="M5 12l4 4 10-10" /><path d="M4 19h16" /></svg>;
+  if (name === "proxy") return <svg {...common}><circle cx="12" cy="12" r="8" /><path d="M4 12h16M12 4c2.5 2.8 2.5 13.2 0 16M12 4c-2.5 2.8-2.5 13.2 0 16" /></svg>;
+  if (name === "guard") return <svg {...common}><path d="M12 3l7 3v6c0 4.5-3 6.8-7 8-4-1.2-7-3.5-7-8V6z" /></svg>;
   if (name === "logout") return <svg {...common}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></svg>;
   return <svg {...common}><path d="M15 18l-6-6 6-6" /></svg>;
 }
@@ -108,6 +116,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   return (
+    <HuntViewProvider>
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="app-sidebar">
         <div className="sidebar-brand">
@@ -129,9 +138,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Link to="/vulns" className={`sidebar-link ${onVulns ? "active" : ""}`} title={t("shell.vulns")}>
             <Icon name="vulns" /><span>{t("shell.vulns")}</span>
           </Link>
-          <Link to="/settings/account" className={`sidebar-link ${location.pathname.startsWith("/settings") ? "active" : ""}`} title={t("shell.settings")}>
-            <Icon name="settings" /><span>{t("shell.settings")}</span>
-          </Link>
+          {([
+            ["account", "account", t("settings.navAccount")],
+            ["model", "model", t("settings.navModel")],
+            ["hunt", "hunt", t("settings.navHunt")],
+            ["review", "review", t("settings.navReview")],
+            ["proxy", "proxy", t("settings.navProxy")],
+            ["guard", "guard", t("settings.navGuard")],
+          ] as const).map(([id, icon, label]) => (
+            <Link
+              key={id}
+              to={`/settings/${id}`}
+              className={`sidebar-link ${location.pathname === `/settings/${id}` ? "active" : ""}`}
+              title={label}
+            >
+              <Icon name={icon} /><span>{label}</span>
+            </Link>
+          ))}
           {me?.authenticated ? (
             <button
               className="sidebar-link"
@@ -174,6 +197,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {updateOpen && ver?.status === "update_available" ? (
         <UpdateModal ver={ver} onClose={() => setUpdateOpen(false)} />
       ) : null}
+      <ToolExplain />
     </div>
+    </HuntViewProvider>
   );
 }

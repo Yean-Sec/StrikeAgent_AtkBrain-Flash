@@ -9,11 +9,11 @@ import datetime as _dt
 from jinja2 import Template
 
 from ..db import db
-from ..graph import store as gstore
-from ..graph.model import SEVERITY_ORDER, display_finding_severity, is_placeholder_node
-from ..graph.verify import is_visible_finding
-from ..objective import finding_row_visible, normalize_objective, objective_is_src, sort_findings_by_severity
-from ..projects import get_project
+import atkbrain_native as gstore
+from atkbrain_native import SEVERITY_ORDER, display_finding_severity, is_placeholder_node
+from atkbrain_native import is_visible_finding
+from atkbrain_native import finding_row_visible, normalize_objective, objective_is_src, sort_findings_by_severity
+from atkbrain_native import get_project
 from .finding_report import (
     finding_guidance,
     prepare_finding_report,
@@ -266,10 +266,10 @@ def _build_section(project: dict | None, graph: dict, findings: list[dict], *,
 
 
 async def build_report_data(project_id: str, *, enrich_ai: bool = False) -> dict:
-    project = await get_project(project_id)
+    project = get_project(project_id)
     if project and project.get("kind") == "cluster":
         return await build_cluster_report_data(project)
-    graph = await gstore.get_graph(project_id)
+    graph = gstore.get_graph(project_id)
     runs = await db.fetchall(
         "SELECT * FROM runs WHERE project_id=? ORDER BY started_at DESC", (project_id,)
     )
@@ -282,7 +282,7 @@ async def build_report_data(project_id: str, *, enrich_ai: bool = False) -> dict
         if k in node_by_key:
             path_nodes.append(node_by_key[k])
     cfg = (project or {}).get("config") or {}
-    from ..objective import ctf_full_score, normalize_objective
+    from atkbrain_native import ctf_full_score, normalize_objective
     objective = normalize_objective(cfg.get("objective", "getshell"))
     flag_rows = await db.fetchall(
         "SELECT * FROM flags WHERE project_id=? ORDER BY created_at", (project_id,)
@@ -473,10 +473,10 @@ _HTML_TMPL = Template(r"""
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>StrikeAgent_AtkBrain-Flash 报告 · {{ p.name }}</title>
 <style>
-  :root{ --canvas:#faf9f5; --card:#efe9de; --dark:#181715; --ink:#141413; --body:#3d3d3a;
-    --muted:#6c6a64; --coral:#cc785c; --hair:#e6dfd8; --crit:#c64545; --high:#d4a017; --ok:#5db872; }
+  :root{ --canvas:#f4f7fc; --card:#ffffff; --dark:#eef3fb; --ink:#243044; --body:#4a5a6e;
+    --muted:#8b97a8; --coral:#4c7dff; --hair:#e6edf5; --crit:#c64545; --high:#cc785c; --med:#d4a017; --low:#5db8a6; --info:#8e8b82; --ok:#22a06b; }
   *{box-sizing:border-box}
-  body{background:var(--canvas);color:var(--ink);margin:0;
+  body{background:radial-gradient(900px 420px at 8% -10%, rgba(196,214,255,.55), transparent 60%),radial-gradient(800px 380px at 100% 0%, rgba(232,220,255,.45), transparent 55%),var(--canvas);color:var(--ink);margin:0;
     font-family:Inter,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.55;padding:48px}
   h1,h2,h3{font-family:"Tiempos Headline","EB Garamond",Georgia,serif;font-weight:400;letter-spacing:-.5px}
   h1{font-size:40px;margin:0 0 8px}
@@ -486,17 +486,17 @@ _HTML_TMPL = Template(r"""
   .meta{color:var(--muted);font-size:14px}
   .stat{display:inline-block;background:var(--card);border-radius:9999px;padding:4px 14px;margin:4px 6px 4px 0;font-size:13px}
   .shell-ok{background:var(--coral);color:#fff;padding:10px 16px;border-radius:12px;display:inline-block;font-weight:600}
-  .section{background:#fffdf8;border:1px solid var(--hair);border-radius:14px;padding:22px 24px;margin:18px 0}
+  .section{background:#fff;border:1px solid var(--hair);border-radius:14px;padding:22px 24px;margin:18px 0}
   .section-head{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:baseline;margin-bottom:8px}
   .section-head .target{font-family:"JetBrains Mono",monospace;font-size:15px}
   .card{background:var(--card);border-radius:12px;padding:16px 18px;margin:10px 0}
   .crit{border-left:5px solid var(--crit)}
   .high{border-left:5px solid var(--high)}
-  .med{border-left:5px solid #6b8cae}
+  .med{border-left:5px solid var(--med)}
   .badge{font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:3px 10px;border-radius:9999px;color:#fff}
-  .b-critical{background:var(--crit)} .b-high{background:var(--high);color:#141413} .b-medium{background:#8e8b82}
-  .b-low{background:#b8b3a8;color:#141413} .b-info{background:#d8d2c6;color:#141413}
-  pre{background:var(--dark);color:#faf9f5;padding:14px;border-radius:8px;overflow-x:auto;font-family:"JetBrains Mono",monospace;font-size:12.5px;white-space:pre-wrap}
+  .b-critical{background:var(--crit)} .b-high{background:var(--high)} .b-medium{background:var(--med);color:#243044}
+  .b-low{background:var(--low)} .b-info{background:var(--info)}
+  pre{background:#eef3fb;color:var(--ink);border:1px solid var(--hair);padding:14px;border-radius:8px;overflow-x:auto;font-family:"JetBrains Mono",monospace;font-size:12.5px;white-space:pre-wrap}
   code{font-family:"JetBrains Mono",monospace}
   ul{padding-left:20px} li{margin:4px 0}
   .vuln-body{white-space:pre-wrap;font-size:14px;margin:0 0 10px;line-height:1.6}

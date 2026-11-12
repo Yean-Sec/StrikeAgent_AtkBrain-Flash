@@ -13,17 +13,17 @@ from urllib.parse import urlparse
 
 from .db import db, now, _dumps
 from .events import emit
-from .projects import (
-    _filter_scope_ips,
-    _resolve,
+from atkbrain_native import (
     assert_safe_project_target,
     create_single_project,
+    filter_scope_ips,
     get_project,
+    resolve_project_host,
     update_config,
     update_scope_and_config,
     update_status,
 )
-from .scope import _IP_RE, registrable_domain
+from atkbrain_native import _IP_RE, registrable_domain
 
 # 导入表头/列名，不是主机
 _ASSET_HEADER_TOKENS = frozenset({
@@ -81,7 +81,7 @@ async def _set_import_progress(project_id: str, *, persist_cfg: bool = False, **
         pass
     if persist_cfg:
         try:
-            project = await get_project(project_id)
+            project = get_project(project_id)
             if project:
                 cfg = dict(project.get("config") or {})
                 phase = str(cur.get("phase") or "")
@@ -95,7 +95,7 @@ async def _set_import_progress(project_id: str, *, persist_cfg: bool = False, **
                         )
                         if cur.get(k) is not None
                     }
-                await update_config(project_id, cfg)
+                update_config(project_id, cfg)
         except Exception:
             pass
     return dict(cur)
@@ -117,7 +117,7 @@ async def import_progress_for(project_id: str) -> dict:
             _IMPORT[project_id] = paused
             return dict(paused)
         return {**mem, "importing": live and phase in ("parse", "merge", "spawn", "start")}
-    project = await get_project(project_id)
+    project = get_project(project_id)
     cfg = ((project or {}).get("config") or {}).get("import_progress") or {}
     if isinstance(cfg, dict):
         phase = str(cfg.get("phase") or "")
@@ -392,7 +392,7 @@ def group_hosts_for_objective(
     objective: str | None = None,
 ) -> list[MachineGroup]:
     """红队：全局源站 IP 并查集。SRC：先按产品域分桶，只在桶内并 IP。"""
-    from .objective import objective_is_src
+    from atkbrain_native import objective_is_src
 
     hosts = list(by_host.keys())
     if not hosts:
@@ -470,8 +470,8 @@ async def origin_ips_for_host(host: str, objective: str | None = None) -> set[st
         return set()
     if _IP_RE.match(h):
         return {h}
-    ips_raw = await _resolve(h)
-    ips, _warn = _filter_scope_ips(h, ips_raw, objective)
+    ips_raw = set(resolve_project_host(h))
+    ips, _warn = filter_scope_ips(h, list(ips_raw), objective)
     return set(ips)
 
 
@@ -504,7 +504,7 @@ def preview_asset_groups(
     objective: str | None = None,
 ) -> dict:
     """同步预览：去路径/www/表头后按赛道收组。不做 DNS，导入时才会按源站 IP 再并。"""
-    from .objective import objective_is_src
+    from atkbrain_native import objective_is_src
 
     t = (track or "").strip().lower()
     o = (objective or "").strip().lower()
@@ -590,7 +590,7 @@ async def _absorb_group_into(sub: dict, group: MachineGroup) -> dict:
     if group.entry_url and not cfg.get("entry_url"):
         cfg["entry_url"] = group.entry_url
     await _persist_machine_identity(sub["id"], ports=ports or None, scope=scope, config=cfg)
-    return await get_project(sub["id"]) or sub
+    return get_project(sub["id"]) or sub
 
 
 async def _spawn_machine_group(
@@ -617,7 +617,7 @@ async def _spawn_machine_group(
     extra = [h for h in group.vhosts if h != group.primary]
     extra_ips = set(group.ips)
     n_alias = len(group.vhosts)
-    from .objective import objective_is_src
+    from atkbrain_native import objective_is_src
     obj = (project.get("config") or {}).get("objective")
     if n_alias <= 1:
         label = group.primary
@@ -625,7 +625,7 @@ async def _spawn_machine_group(
         label = f"{group.primary}（产品域 {n_alias}）"
     else:
         label = f"{group.primary}（同机 {n_alias}）"
-    sub = await create_single_project(
+    sub = create_single_project(
         name=f"{project['name']} · {label}",
         target=group.primary,
         ports=group.ports or None,
@@ -931,7 +931,7 @@ def _title(html: str) -> str:
 
 async def triage_cluster(project_id: str, strategy: str = "host") -> dict:
     """对集群项目做存活快筛并按策略划分子项目。"""
-    project = await get_project(project_id)
+    project = get_project(project_id)
     if not project or project["kind"] != "cluster":
         return {"error": "非集群项目"}
     assets = (project.get("config") or {}).get("assets") or project.get("scope", {}).get("targets", [])
@@ -1015,7 +1015,7 @@ async def triage_cluster(project_id: str, strategy: str = "host") -> dict:
         else:
             absorbed += 1
 
-    await update_status(project_id, "idle")
+    update_status(project_id, "idle")
     summary = {
         "assets": len(assets), "hosts": len(by_host_assets),
         "live_hosts": len(by_host), "live_endpoints": len(live),
@@ -1035,14 +1035,14 @@ async def spawn_subprojects_from_assets(project_id: str, *, auto_start: bool = F
     同主机多端口并集；解析到同一 IP 的不同域名合成一台机。
     auto_start=True 时边建边排队启动（进度 phase=start）。
     """
-    project = await get_project(project_id)
+    project = get_project(project_id)
     if not project or project["kind"] != "cluster":
         return {"error": "非集群项目", "subprojects_created": 0, "subprojects": []}
 
     assets = (project.get("config") or {}).get("assets") or project.get("scope", {}).get("targets", [])
     by_host, ports_by_host = _hosts_from_assets(assets)
     objective = ((project.get("config") or {}).get("objective"))
-    from .objective import objective_is_src
+    from atkbrain_native import objective_is_src
     src = objective_is_src(objective)
     policy = "product_zone" if src else "machine"
     merge_msg = "正在按产品域合并…" if src else "正在按同机（FQDN/源站 IP）合并…"
@@ -1146,7 +1146,7 @@ async def spawn_subprojects_from_assets(project_id: str, *, auto_start: bool = F
             sid = sub.get("id")
             if sid:
                 try:
-                    from .engine.scheduler import manager
+                    from atkbrain_native import hunt_manager as manager
                     if not manager.is_running(sid):
                         manager.start(sid)
                         started.append(sid)
@@ -1161,7 +1161,7 @@ async def spawn_subprojects_from_assets(project_id: str, *, auto_start: bool = F
             message=f"已排队启动 {len(started)} 个",
         )
 
-    await update_status(project_id, "idle")
+    update_status(project_id, "idle")
     summary = {
         "assets": len(assets),
         "hosts": len(by_host),
@@ -1270,9 +1270,8 @@ def resume_cluster_import(project_id: str, *, auto_start: bool = True) -> dict:
 
 
 async def list_subprojects(project_id: str) -> list[dict]:
-    rows = await db.fetchall("SELECT * FROM projects WHERE parent_id=? ORDER BY created_at", (project_id,))
-    from .projects import _serialize
-    return [_serialize(r) for r in rows]
+    from atkbrain_native import list_child_projects
+    return list_child_projects(project_id)
 
 
 async def add_assets_to_cluster(project_id: str, assets: list[str]) -> dict:
@@ -1281,7 +1280,7 @@ async def add_assets_to_cluster(project_id: str, assets: list[str]) -> dict:
     「已导入」只看已有 (主机, 端口)。上次导入若只写入了 assets、子项目创建被打断，
     再次导入同一份列表会补建缺失子项目，而不是整表跳过。
     """
-    project = await get_project(project_id)
+    project = get_project(project_id)
     if not project or project["kind"] != "cluster":
         return {"error": "非集群项目", "added": [], "subprojects_created": 0, "subprojects": []}
 
@@ -1376,7 +1375,7 @@ async def add_assets_to_cluster(project_id: str, assets: list[str]) -> dict:
         scope["targets"] = scope_targets_out
         scope.setdefault("mode", "strict")
         scope.setdefault("allow_subdomains", False)
-        await update_scope_and_config(project_id, scope, cfg)
+        update_scope_and_config(project_id, scope, cfg)
     if added:
         job = schedule_cluster_import(
             project_id, auto_start=True, total_hint=max(spawn_n, len(pending_host_set)),
@@ -1402,12 +1401,12 @@ async def add_assets_to_cluster(project_id: str, assets: list[str]) -> dict:
 
 async def refold_cluster_by_machine(project_id: str) -> dict:
     """把已有 idle/error 子项目按同 FQDN / 同 DNS IP 折成一台机。running 不动，不自动开跑。"""
-    project = await get_project(project_id)
+    project = get_project(project_id)
     if not project or project["kind"] != "cluster":
         return {"error": "非集群项目"}
 
-    from .engine.scheduler import manager
-    from .projects import delete_project
+    from atkbrain_native import hunt_manager as manager
+    from atkbrain_native import delete_project
 
     subs = await list_subprojects(project_id)
     running_ids: set[str] = set()
@@ -1473,7 +1472,7 @@ async def refold_cluster_by_machine(project_id: str) -> dict:
             if not eid or eid == canonical["id"]:
                 continue
             try:
-                await delete_project(eid)
+                delete_project(eid)
                 deleted.append(eid)
             except Exception as e:
                 await emit(project_id, "log", {

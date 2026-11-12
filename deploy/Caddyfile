@@ -1,22 +1,15 @@
-# Let's Encrypt：.env 里 ATKBRAIN_PUBLIC_HOST / ATKBRAIN_PUBLIC_ORIGIN。
-# 反代到 :2333（默认 Caddy 已占 :2334 TLS）。
-#   docker compose -f compose.yaml -f deploy/compose.caddy.yaml up -d --wait
-
-{$ATKBRAIN_PUBLIC_HOST} {
-	encode gzip
-	reverse_proxy 127.0.0.1:2333 {
-		header_up X-Forwarded-Proto {scheme}
-		header_up Host {http.request.hostport}
-		flush_interval -1
+:8080 {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:2333
 	}
-}
-
-:2334 {
-	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
-	encode gzip
-	reverse_proxy 127.0.0.1:2333 {
-		header_up X-Forwarded-Proto https
-		header_up Host {http.request.hostport}
-		flush_interval -1
+	handle /project/* {
+		rewrite * /project/_/index.html
+		root * /var/www/atkbrain
+		file_server
+	}
+	handle {
+		root * /var/www/atkbrain
+		try_files {path} {path}/index.html {path}.html
+		file_server
 	}
 }

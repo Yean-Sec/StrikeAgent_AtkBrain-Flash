@@ -9,27 +9,27 @@
 <!-- /SLOT:title --></title>
 <style>
 :root{
- --primary:#cc785c;
- --primary-active:#a9583e;
- --ink:#141413;
- --body:#3d3d3a;
- --body-strong:#252523;
- --muted:#6c6a64;
- --muted-soft:#8e8b82;
- --hairline:#e6dfd8;
- --hairline-soft:#ebe6df;
- --canvas:#faf9f5;
- --surface-soft:#f5f0e8;
- --surface-card:#efe9de;
- --surface-cream-strong:#e8e0d2;
- --surface-dark:#181715;
- --surface-dark-elevated:#252320;
- --surface-dark-soft:#1f1e1b;
- --on-dark:#faf9f5;
- --on-dark-soft:#a09d96;
- --accent-teal:#5db8a6;
- --accent-amber:#e8a55a;
- --success:#5db872;
+ --primary:#4c7dff;
+ --primary-active:#3a63d8;
+ --ink:#243044;
+ --body:#4a5a6e;
+ --body-strong:#1e2a3a;
+ --muted:#8b97a8;
+ --muted-soft:#a8b2c1;
+ --hairline:#e6edf5;
+ --hairline-soft:#eef3f8;
+ --canvas:#f4f7fc;
+ --surface-soft:#f7f9fd;
+ --surface-card:#ffffff;
+ --surface-cream-strong:#eef4ff;
+ --surface-dark:#eef4ff;
+ --surface-dark-elevated:#f3f7ff;
+ --surface-dark-soft:#eaf1fb;
+ --on-dark:#243044;
+ --on-dark-soft:#7d8b9e;
+ --accent-teal:#3ecf8e;
+ --accent-amber:#f5b942;
+ --success:#22a06b;
  --warning:#d4a017;
  --error:#c64545;
  --node-danger:#f08c2a;
@@ -42,30 +42,34 @@
  --coral-deep:var(--primary-active);
  --hair:var(--hairline);
  --crit:var(--error);
- --high:var(--warning);
- --med:var(--muted-soft);
+ --high:#cc785c;
+ --med:#d4a017;
+ --low:#5db8a6;
  --ok:var(--success);
  --dark:var(--surface-dark);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
-body{background:var(--canvas);color:var(--body);font-family:"Noto Sans SC","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:15px;line-height:1.75}
+body{background:
+ radial-gradient(900px 420px at 8% -10%, rgba(196,214,255,.55), transparent 60%),
+ radial-gradient(800px 380px at 100% 0%, rgba(232,220,255,.45), transparent 55%),
+ var(--canvas);color:var(--body);font-family:"Noto Sans SC","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:15px;line-height:1.75}
 h1,h2,h3,h4,h5{color:var(--ink);font-family:inherit;line-height:1.35}
 a{color:var(--primary-active);text-decoration:none}
 a:hover{text-decoration:underline}
 code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"Cascadia Mono","JetBrains Mono",Consolas,monospace}
-pre{background:var(--surface-dark);color:var(--on-dark);border-radius:12px;padding:16px 18px;overflow-x:auto;font-size:12.5px;line-height:1.6;white-space:pre;margin:10px 0}
+pre{background:#eef3fb;color:var(--ink);border:1px solid var(--hairline);border-radius:12px;padding:16px 18px;overflow-x:auto;font-size:12.5px;line-height:1.6;white-space:pre;margin:10px 0}
 pre .c{color:var(--on-dark-soft)}
 .wrap{max-width:1180px;margin:0 auto;padding:0 28px}
 /* ---------- 封面 ---------- */
 .cover{background:var(--surface-dark);color:var(--on-dark);padding:84px 0 64px;position:relative;overflow:hidden}
 .cover .grain{position:absolute;inset:0;background:
- radial-gradient(900px 340px at 12% -10%,rgba(204,120,92,.16),transparent 60%),
- radial-gradient(700px 300px at 95% 15%,rgba(93,184,166,.10),transparent 55%)}
+ radial-gradient(900px 340px at 12% -10%,rgba(76,125,255,.16),transparent 60%),
+ radial-gradient(700px 300px at 95% 15%,rgba(196,180,255,.28),transparent 55%)}
 .cover .inner{position:relative;max-width:1180px;margin:0 auto;padding:0 28px}
 .cover .brand{display:flex;align-items:center;gap:10px;font-size:13px;letter-spacing:.14em;color:var(--on-dark-soft);text-transform:uppercase}
 .cover .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--primary);display:inline-block}
-.cover .tag{margin-top:18px;display:inline-block;border:1px solid rgba(204,120,92,.5);color:var(--primary);border-radius:999px;padding:4px 16px;font-size:13px;letter-spacing:.08em}
+.cover .tag{margin-top:18px;display:inline-block;border:1px solid rgba(76,125,255,.5);color:var(--primary);border-radius:999px;padding:4px 16px;font-size:13px;letter-spacing:.08em}
 .cover h1{font-size:46px;font-weight:800;margin:26px 0 10px;color:var(--on-dark);letter-spacing:.02em}
 .cover h1 .accent{color:var(--primary)}
 .cover .sub{font-size:17px;color:var(--on-dark-soft);max-width:760px}
@@ -108,7 +112,7 @@ section.sec{margin-top:64px}
 .asset .a-badges{display:flex;gap:6px;flex-wrap:wrap}
 .chip{font-size:11.5px;border-radius:999px;padding:2px 10px;font-weight:600;border:1px solid var(--hairline);background:var(--surface-soft);color:var(--muted)}
 .chip.crit{background:rgba(198,69,69,.10);border-color:rgba(198,69,69,.35);color:var(--crit)}
-.chip.high{background:rgba(212,160,23,.12);border-color:rgba(212,160,23,.4);color:#a07c10}
+.chip.high{background:rgba(204,120,92,.14);border-color:rgba(204,120,92,.45);color:#a9583e}
 .chip.ok{background:rgba(93,184,114,.12);border-color:rgba(93,184,114,.4);color:#3e8f52}
 .chip.teal{background:rgba(93,184,166,.12);border-color:rgba(93,184,166,.4);color:#2f8575}
 .asset .a-desc{font-size:13px;color:var(--body)}
@@ -176,7 +180,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 .sum-card .concl li:last-child{border-bottom:0}
 .sum-card .tag-sev{flex:0 0 auto;font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;margin-top:2px}
 .sum-card .tag-sev.crit{background:rgba(198,69,69,.12);color:var(--error)}
-.sum-card .tag-sev.high{background:rgba(212,160,23,.14);color:#a07c10}
+.sum-card .tag-sev.high{background:rgba(204,120,92,.16);color:#a9583e}
 .sum-card .tag-sev.med{background:rgba(142,139,130,.14);color:var(--muted)}
 .sum-foot{margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.7;background:var(--surface-soft);border:1px solid var(--hairline);border-radius:12px;padding:12px 16px}
 /* 验证图例放 SVG 外，避免裁切 */
@@ -191,7 +195,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 .path-board{background:var(--surface-soft);border:1px solid var(--hairline);border-radius:14px;padding:18px 16px 14px;margin-top:8px}
 .path-rows{display:flex;flex-direction:column;gap:8px}
 .path-row{display:flex;align-items:stretch;justify-content:center;gap:0;flex-wrap:nowrap}
-.pn{background:#fffdf8;border:1.5px solid var(--hairline);border-radius:10px;padding:10px 12px;width:210px;min-width:190px;max-width:210px;flex:0 0 210px;box-shadow:0 3px 10px rgba(20,20,19,.04);position:relative}
+.pn{background:#ffffff;border:1.5px solid var(--hairline);border-radius:10px;padding:10px 12px;width:210px;min-width:190px;max-width:210px;flex:0 0 210px;box-shadow:0 3px 10px rgba(20,20,19,.04);position:relative}
 .pn .pk{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:lowercase;margin-bottom:2px}
 .pn .pt{font-size:12.5px;font-weight:700;color:var(--ink);line-height:1.3;margin-bottom:2px}
 .pn .pd{font-size:11px;color:var(--muted);line-height:1.4}
@@ -210,10 +214,10 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 .path-legend{display:flex;flex-wrap:wrap;gap:10px 14px;margin-top:12px;padding-top:10px;border-top:1px dashed var(--hairline);font-size:11.5px;color:var(--muted)}
 .path-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 .path-legend .l-crit{background:var(--error)}
-.path-legend .l-warn{background:#e8a55a}
+.path-legend .l-warn{background:#f5b942}
 .path-legend .l-info{background:var(--accent-teal)}
 .path-legend .l-goal{background:var(--node-goal)}
-.path-caption{margin-top:12px;font-size:13px;color:var(--body);line-height:1.65;background:#fffdf8;border:1px solid var(--hairline);border-radius:10px;padding:12px 14px}
+.path-caption{margin-top:12px;font-size:13px;color:var(--body);line-height:1.65;background:#ffffff;border:1px solid var(--hairline);border-radius:10px;padding:12px 14px}
 @media(max-width:980px){
  .path-row{flex-wrap:wrap;justify-content:flex-start}
  .parrow{width:48px;min-width:48px;flex-basis:48px}
@@ -227,12 +231,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 .asset-map{background:var(--surface-soft);border:1px solid var(--hairline);border-radius:16px;padding:24px 22px 18px;margin:8px 0 22px;box-shadow:0 6px 18px rgba(20,20,19,.04)}
 .asset-map h4{font-size:14px;font-weight:800;color:var(--body-strong);margin:0 0 6px}
 .asset-map .am-sub{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55;max-width:900px}
-.asset-map svg{width:100%;height:auto;display:block;background:#fffdf8;border:1px solid var(--hairline);border-radius:14px}
+.asset-map svg{width:100%;height:auto;display:block;background:#ffffff;border:1px solid var(--hairline);border-radius:14px}
 .asset-map .am-legend{display:flex;flex-wrap:wrap;gap:12px 18px;margin-top:12px;font-size:12px;color:var(--muted)}
 .asset-map .am-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .am-svc-list{margin-top:14px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
 @media(max-width:800px){.am-svc-list{grid-template-columns:1fr}}
-.am-svc-list .am-item{background:#fffdf8;border:1px solid var(--hairline);border-radius:10px;padding:8px 12px;font-size:12.5px;line-height:1.45;color:var(--body)}
+.am-svc-list .am-item{background:#ffffff;border:1px solid var(--hairline);border-radius:10px;padding:8px 12px;font-size:12.5px;line-height:1.45;color:var(--body)}
 .am-svc-list .am-item b{color:var(--ink);font-weight:700}
 .am-svc-list .am-item.hot{border-color:rgba(198,69,69,.45);background:rgba(198,69,69,.05)}
 .am-svc-list .am-item .k{color:var(--muted);font-size:11px}
@@ -259,7 +263,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 
 </style>
 </head><body data-demo-sanitized="1">
-<div style="background:#181715;color:#faf9f5;text-align:center;padding:10px 16px;font-size:13px;letter-spacing:.04em">演示报告 · 内网靶场示例 · 已脱敏，不含真实单位 / 地址 / 账号</div>
+<div style="background:#4c7dff;color:#ffffff;text-align:center;padding:10px 16px;font-size:13px;letter-spacing:.04em">演示报告 · 内网靶场示例 · 已脱敏，不含真实单位 / 地址 / 账号</div>
 <header class="cover"><div class="grain"></div><div class="inner">
 <div class="brand"><span class="dot"></span>授权渗透测试交付报告</div>
 <span class="tag">
@@ -420,7 +424,7 @@ AUTHORIZED PENTEST · 2026-08-31</span>
   <svg viewBox="0 0 1120 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="资产关系图">
     <defs>
       <marker id="am-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-        <path d="M 0 1 L 9 5 L 0 9 z" fill="#cc785c"/>
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#4c7dff"/>
       </marker>
       <marker id="am-arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
         <path d="M 0 1 L 9 5 L 0 9 z" fill="#c64545"/>
@@ -429,18 +433,18 @@ AUTHORIZED PENTEST · 2026-08-31</span>
         <path d="M 0 1 L 9 5 L 0 9 z" fill="#b8b0a4"/>
       </marker>
       <filter id="am-shadow" x="-12%" y="-12%" width="124%" height="140%">
-        <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#141413" flood-opacity="0.07"/>
+        <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#243044" flood-opacity="0.07"/>
       </filter>
     </defs>
 
     <!-- ===== curved trunks (图一风格) ===== -->
     <g fill="none" stroke-width="1.7" marker-end="url(#am-arrow)">
       <!-- portal -> DataHub -->
-      <path d="M 500 90 C 360 110, 220 130, 180 168" stroke="#cc785c"/>
+      <path d="M 500 90 C 360 110, 220 130, 180 168" stroke="#4c7dff"/>
       <!-- portal -> docs -->
-      <path d="M 560 90 C 560 120, 560 140, 560 168" stroke="#cc785c"/>
+      <path d="M 560 90 C 560 120, 560 140, 560 168" stroke="#4c7dff"/>
       <!-- portal -> host -->
-      <path d="M 620 90 C 760 110, 880 130, 920 168" stroke="#e8a55a"/>
+      <path d="M 620 90 C 760 110, 880 130, 920 168" stroke="#f5b942"/>
     </g>
     <!-- docs -> gateway -->
     <path d="M 560 230 C 560 250, 560 270, 560 292" fill="none" stroke="#5db8a6" stroke-width="1.5" marker-end="url(#am-arrow-soft)"/>
@@ -474,36 +478,36 @@ AUTHORIZED PENTEST · 2026-08-31</span>
     <!-- ===== nodes ===== -->
     <!-- L1 portal -->
     <g filter="url(#am-shadow)">
-      <rect x="420" y="28" width="280" height="62" rx="14" fill="#181715"/>
-      <text x="560" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="#cc785c">入口目标</text>
-      <text x="560" y="72" text-anchor="middle" font-size="15" font-weight="700" fill="#faf9f5">portal.lab.internal:443</text>
+      <rect x="420" y="28" width="280" height="62" rx="14" fill="#eef4ff" stroke="#4c7dff"/>
+      <text x="560" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="#4c7dff">入口目标</text>
+      <text x="560" y="72" text-anchor="middle" font-size="15" font-weight="700" fill="#243044">portal.lab.internal:443</text>
     </g>
 
     <!-- L2 -->
     <g filter="url(#am-shadow)">
-      <rect x="70" y="168" width="220" height="62" rx="14" fill="#fffdf8" stroke="#c64545" stroke-width="1.8"/>
+      <rect x="70" y="168" width="220" height="62" rx="14" fill="#ffffff" stroke="#c64545" stroke-width="1.8"/>
       <text x="180" y="192" text-anchor="middle" font-size="12" font-weight="700" fill="#c64545">已破 · 数据中台</text>
-      <text x="180" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#141413">data.lab.internal:443</text>
+      <text x="180" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#243044">data.lab.internal:443</text>
     </g>
     <g filter="url(#am-shadow)">
-      <rect x="470" y="168" width="180" height="62" rx="14" fill="#fffdf8" stroke="#5db8a6" stroke-width="1.6"/>
+      <rect x="470" y="168" width="180" height="62" rx="14" fill="#ffffff" stroke="#5db8a6" stroke-width="1.6"/>
       <text x="560" y="192" text-anchor="middle" font-size="12" font-weight="700" fill="#5db8a6">文档站</text>
-      <text x="560" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#141413">docs.lab.internal</text>
+      <text x="560" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#243044">docs.lab.internal</text>
     </g>
     <g filter="url(#am-shadow)">
-      <rect x="820" y="168" width="220" height="62" rx="14" fill="#fffdf8" stroke="#e8a55a" stroke-width="1.8"/>
+      <rect x="820" y="168" width="220" height="62" rx="14" fill="#ffffff" stroke="#f5b942" stroke-width="1.8"/>
       <text x="930" y="192" text-anchor="middle" font-size="12" font-weight="700" fill="#c4842a">同机宿主</text>
-      <text x="930" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#141413">10.10.20.40</text>
+      <text x="930" y="212" text-anchor="middle" font-size="14" font-weight="700" fill="#243044">10.10.20.40</text>
     </g>
 
     <!-- under DataHub / food -->
     <g filter="url(#am-shadow)">
-      <rect x="40" y="300" width="240" height="56" rx="12" fill="#f5f0e8" stroke="#e6dfd8"/>
+      <rect x="40" y="300" width="240" height="56" rx="12" fill="#f7f9fd" stroke="#e6edf5"/>
       <text x="160" y="322" text-anchor="middle" font-size="11" fill="#6c6a64">旁路地址（前端泄露）</text>
       <text x="160" y="342" text-anchor="middle" font-size="12.5" fill="#3d3d3a">10.10.20.50 · SqlPad/TDengine</text>
     </g>
     <g filter="url(#am-shadow)">
-      <rect x="480" y="292" width="160" height="56" rx="12" fill="#fffdf8" stroke="#5db8a6"/>
+      <rect x="480" y="292" width="160" height="56" rx="12" fill="#ffffff" stroke="#5db8a6"/>
       <text x="560" y="314" text-anchor="middle" font-size="11" font-weight="700" fill="#5db8a6">边界网关</text>
       <text x="560" y="334" text-anchor="middle" font-size="13" fill="#3d3d3a">10.10.20.60:80</text>
     </g>
@@ -515,59 +519,59 @@ AUTHORIZED PENTEST · 2026-08-31</span>
       <text x="640" y="392" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">OmniDB :8999</text>
     </g>
     <g filter="url(#am-shadow)">
-      <rect x="740" y="348" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <rect x="740" y="348" width="160" height="58" rx="12" fill="#ffffff" stroke="#e6edf5"/>
       <text x="820" y="372" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">MinIO S3</text>
       <text x="820" y="392" text-anchor="middle" font-size="13" fill="#3d3d3a">:9000</text>
     </g>
     <g filter="url(#am-shadow)">
-      <rect x="920" y="348" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <rect x="920" y="348" width="160" height="58" rx="12" fill="#ffffff" stroke="#e6edf5"/>
       <text x="1000" y="372" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">AnnoApp</text>
       <text x="1000" y="392" text-anchor="middle" font-size="13" fill="#3d3d3a">:10081</text>
     </g>
 
     <g filter="url(#am-shadow)">
-      <rect x="560" y="448" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <rect x="560" y="448" width="160" height="58" rx="12" fill="#ffffff" stroke="#e6edf5"/>
       <text x="640" y="472" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">GitLab</text>
       <text x="640" y="492" text-anchor="middle" font-size="13" fill="#3d3d3a">:13080</text>
     </g>
     <g filter="url(#am-shadow)">
-      <rect x="740" y="448" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <rect x="740" y="448" width="160" height="58" rx="12" fill="#ffffff" stroke="#e6edf5"/>
       <text x="820" y="472" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">AppPortal 门户</text>
       <text x="820" y="492" text-anchor="middle" font-size="13" fill="#3d3d3a">:10090</text>
     </g>
     <g filter="url(#am-shadow)">
-      <rect x="920" y="448" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e8a55a"/>
+      <rect x="920" y="448" width="160" height="58" rx="12" fill="#ffffff" stroke="#f5b942"/>
       <text x="1000" y="472" text-anchor="middle" font-size="11" font-weight="700" fill="#c4842a">GitLab</text>
       <text x="1000" y="492" text-anchor="middle" font-size="13" fill="#3d3d3a">:10443</text>
     </g>
 
     <g filter="url(#am-shadow)">
-      <rect x="740" y="528" width="160" height="58" rx="12" fill="#fffdf8" stroke="#e6dfd8"/>
+      <rect x="740" y="528" width="160" height="58" rx="12" fill="#ffffff" stroke="#e6edf5"/>
       <text x="820" y="552" text-anchor="middle" font-size="11" font-weight="700" fill="#6c6a64">gunicorn 健康桩</text>
       <text x="820" y="572" text-anchor="middle" font-size="13" fill="#3d3d3a">:8888</text>
     </g>
 
     <!-- main IP port cluster (left bottom, clear of curves) -->
     <g filter="url(#am-shadow)">
-      <rect x="40" y="420" width="300" height="160" rx="14" fill="#fffdf8" stroke="#e6dfd8"/>
+      <rect x="40" y="420" width="300" height="160" rx="14" fill="#ffffff" stroke="#e6edf5"/>
       <text x="190" y="448" text-anchor="middle" font-size="12" font-weight="700" fill="#6c6a64">主站解析 IP · 10.10.20.10</text>
       <text x="190" y="468" text-anchor="middle" font-size="11" fill="#8e8b82">4 个开放端口（服务节点分条登记）</text>
-      <rect x="58" y="486" width="120" height="36" rx="8" fill="#f5f0e8"/>
+      <rect x="58" y="486" width="120" height="36" rx="8" fill="#f7f9fd"/>
       <text x="118" y="509" text-anchor="middle" font-size="12" fill="#3d3d3a">:80 HTTP</text>
-      <rect x="198" y="486" width="120" height="36" rx="8" fill="#f5f0e8"/>
+      <rect x="198" y="486" width="120" height="36" rx="8" fill="#f7f9fd"/>
       <text x="258" y="509" text-anchor="middle" font-size="12" fill="#3d3d3a">:8080 HTTP</text>
-      <rect x="58" y="532" width="120" height="36" rx="8" fill="#f5f0e8"/>
+      <rect x="58" y="532" width="120" height="36" rx="8" fill="#f7f9fd"/>
       <text x="118" y="555" text-anchor="middle" font-size="12" fill="#3d3d3a">:8443 HTTPS</text>
-      <rect x="198" y="532" width="120" height="36" rx="8" fill="#f5f0e8"/>
+      <rect x="198" y="532" width="120" height="36" rx="8" fill="#f7f9fd"/>
       <text x="258" y="555" text-anchor="middle" font-size="12" fill="#3d3d3a">:8888 HTTP</text>
     </g>
   </svg>
   <div class="am-legend">
-    <span><i style="background:#181715"></i>入口目标</span>
+    <span><i style="background:#4c7dff"></i>入口目标</span>
     <span><i style="background:#c64545"></i>已破 / 权限落地</span>
-    <span><i style="background:#e8a55a"></i>同机宿主 / GitLab</span>
+    <span><i style="background:#f5b942"></i>同机宿主 / GitLab</span>
     <span><i style="background:#5db8a6"></i>文档 / 网关</span>
-    <span><i style="background:#e6dfd8;border:1px solid #cfc7bb"></i>其它服务</span>
+    <span><i style="background:#e6edf5;border:1px solid #d5deea"></i>其它服务</span>
   </div>
 
   <h4 style="margin-top:18px">全部服务节点清单（22）</h4>

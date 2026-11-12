@@ -1,7 +1,7 @@
 """里程碑：红队 getshell、CTF getflag，以及提权/横向手段。"""
 from __future__ import annotations
 
-from ..objective import (
+from atkbrain_native import (
     DATA_ACCESS_CATEGORIES,
     KEY_LEAK_CATEGORIES,
     RT_ADMIN_ACCESS,

@@ -199,6 +199,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [importKick, setImportKick] = useState(0);
   const importPoll = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingHuntId = useRef<string | null>(null);
 
   const enterProject = (id: string) => {
     if (importPoll.current) clearTimeout(importPoll.current);
@@ -261,23 +262,30 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
           message: t("projects.mergingZone"),
         });
       }
-      const p: any = await api.createProject(body);
-      if (track === "ctf" && files.length) {
-        try {
-          await api.uploadChallengeFiles(p.id, files);
-        } catch (uploadErr) {
-          setCreatedId(p.id);
-          throw uploadErr;
+      let id = pendingHuntId.current;
+      if (!id) {
+        const p: any = await api.createProject(body);
+        id = p.id;
+        if (track === "ctf" && files.length) {
+          try {
+            await api.uploadChallengeFiles(id, files);
+          } catch (uploadErr) {
+            setCreatedId(id);
+            throw uploadErr;
+          }
         }
+        if (batch && (p.importing || p.import_progress)) {
+          setCreatedId(id);
+          setImportProgress(p.import_progress || { phase: "spawn", done: 0, total: 0, message: t("projects.importing") });
+          return;
+        }
+        pendingHuntId.current = id;
       }
-      if (batch && (p.importing || p.import_progress)) {
-        setCreatedId(p.id);
-        setImportProgress(p.import_progress || { phase: "spawn", done: 0, total: 0, message: t("projects.importing") });
-        return;
-      }
+      await api.start(id, false);
+      pendingHuntId.current = null;
       onCreated();
       onClose();
-      nav(`/project/${p.id}`);
+      nav(`/project/${id}`);
     } catch (e: any) {
       setErr(e.message || t("projects.createFailed"));
     } finally {

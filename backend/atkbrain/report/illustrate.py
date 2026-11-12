@@ -4,28 +4,31 @@ from __future__ import annotations
 import html
 from collections import Counter
 
-from ..graph.model import display_finding_severity
+from atkbrain_native import display_finding_severity
 
-# 与 frontend/src/theme.ts / styles.css :root 对齐
+# 与 frontend/src/theme.ts / styles.css :root 对齐。危害色单独保留。
 THEME = {
-    "primary": "#cc785c",
-    "primaryActive": "#a9583e",
-    "ink": "#141413",
-    "body": "#3d3d3a",
-    "muted": "#6c6a64",
-    "hairline": "#e6dfd8",
-    "canvas": "#faf9f5",
-    "surfaceSoft": "#f5f0e8",
-    "surfaceCard": "#efe9de",
-    "surfaceDark": "#181715",
-    "onDark": "#faf9f5",
-    "accentTeal": "#5db8a6",
-    "accentAmber": "#e8a55a",
-    "success": "#5db872",
+    "primary": "#4c7dff",
+    "primaryActive": "#3a63d8",
+    "ink": "#243044",
+    "body": "#4a5a6e",
+    "muted": "#8b97a8",
+    "hairline": "#e6edf5",
+    "canvas": "#f4f7fc",
+    "surfaceSoft": "#f7f9fd",
+    "surfaceCard": "#ffffff",
+    "surfaceDark": "#eef4ff",
+    "onDark": "#243044",
+    "accentTeal": "#3ecf8e",
+    "accentAmber": "#f5b942",
+    "success": "#22a06b",
     "warning": "#d4a017",
     "error": "#c64545",
     "goal": "#f23636",
     "danger": "#f08c2a",
+    "high": "#cc785c",
+    "low": "#5db8a6",
+    "info": "#8e8b82",
 }
 
 NODE_FILL = {
@@ -66,10 +69,10 @@ COL_X = {
 
 SEV_COLOR = {
     "critical": "#c64545",
-    "high": "#d4a017",
-    "medium": "#8e8b82",
-    "low": "#b8b3a8",
-    "info": "#a09d96",
+    "high": "#cc785c",
+    "medium": "#d4a017",
+    "low": "#5db8a6",
+    "info": "#8e8b82",
 }
 
 
@@ -88,6 +91,7 @@ def report_css() -> str:
   --surface-dark: {t["surfaceDark"]}; --on-dark: {t["onDark"]};
   --accent-teal: {t["accentTeal"]}; --accent-amber: {t["accentAmber"]};
   --success: {t["success"]}; --warning: {t["warning"]}; --error: {t["error"]};
+  --high: {t["high"]}; --low: {t["low"]}; --info: {t["info"]};
   --goal: {t["goal"]};
   --font-serif: "Noto Serif CJK SC","Noto Serif SC","EB Garamond",Georgia,serif;
   --font-sans: "Noto Sans CJK SC","Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
@@ -95,7 +99,11 @@ def report_css() -> str:
 }}
 * {{ box-sizing: border-box; }}
 body {{
-  margin: 0; background: var(--canvas); color: var(--ink);
+  margin: 0; color: var(--ink);
+  background:
+    radial-gradient(900px 420px at 8% -10%, rgba(196,214,255,.55), transparent 60%),
+    radial-gradient(800px 380px at 100% 0%, rgba(232,220,255,.45), transparent 55%),
+    var(--canvas);
   font-family: var(--font-sans); line-height: 1.6; padding: 0;
 }}
 .report-hero {{
@@ -110,8 +118,8 @@ body {{
 .report-hero .meta code {{ color: var(--accent-amber); }}
 .kpi-row {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }}
 .kpi {{
-  background: #252320; border: 1px solid #3a3732; border-radius: 999px;
-  padding: 6px 14px; font-size: 13px; color: var(--on-dark);
+  background: #fff; border: 1px solid var(--hairline); border-radius: 999px;
+  padding: 6px 14px; font-size: 13px; color: var(--ink);
 }}
 .kpi b {{ color: var(--primary); font-weight: 600; }}
 .wrap {{ padding: 32px 48px 64px; max-width: 1080px; margin: 0 auto; }}
@@ -135,18 +143,18 @@ h4 {{ font-size: 14px; color: var(--body); margin: 14px 0 6px; }}
   border-left: 5px solid var(--primary);
 }}
 .card.crit {{ border-left-color: var(--error); }}
-.card.high {{ border-left-color: var(--warning); }}
+.card.high {{ border-left-color: var(--high); }}
 .badge {{
   font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
   padding: 3px 10px; border-radius: 999px; color: #fff; background: var(--muted);
 }}
 .b-critical {{ background: var(--error); }}
-.b-high {{ background: var(--warning); color: #141413; }}
-.b-medium {{ background: #8e8b82; }}
-.b-low {{ background: #b8b3a8; color: #141413; }}
-.b-info {{ background: #d8d2c6; color: #141413; }}
+.b-high {{ background: var(--high); color: #fff; }}
+.b-medium {{ background: var(--warning); color: #243044; }}
+.b-low {{ background: var(--low); }}
+.b-info {{ background: var(--info); }}
 pre {{
-  background: var(--surface-dark); color: var(--on-dark); padding: 14px;
+  background: #eef3fb; color: var(--ink); border: 1px solid var(--hairline); padding: 14px;
   border-radius: 8px; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px;
   white-space: pre-wrap;
 }}
@@ -208,9 +216,9 @@ def graph_svg(graph: dict, *, max_nodes: int = 56) -> str:
             )
         )
         col = "#6d5cf0" if rel == "PIVOTS_TO" or hop else (
-            THEME["primary"] if e.get("on_rce_path") or rel in ("EXPLOITS", "ESCALATES_TO") else "#cbc4b6"
+            THEME["primary"] if e.get("on_rce_path") or rel in ("EXPLOITS", "ESCALATES_TO") else "#d5deea"
         )
-        sw = 2.4 if col != "#cbc4b6" else 1.2
+        sw = 2.4 if col != "#d5deea" else 1.2
         parts.append(
             f'<line x1="{a[0]}" y1="{a[1]}" x2="{b[0]}" y2="{b[1]}" '
             f'stroke="{col}" stroke-width="{sw}" stroke-opacity=".85"/>'

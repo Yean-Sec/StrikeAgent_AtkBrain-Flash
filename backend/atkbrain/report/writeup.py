@@ -1,6 +1,7 @@
 """漏洞详报：从真实 PoC/证据生成复现步骤，可选 AI 写成因与危害（禁止编造）。"""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -624,7 +625,7 @@ def apply_deterministic_writeup(finding: dict, *, poc: dict | None = None) -> di
         out["node_detail_unique"] = ""
     else:
         out["node_detail_unique"] = nd
-    from ..graph.model import redteam_rating_block
+    from atkbrain_native import redteam_rating_block
     out["secondary_review"] = redteam_rating_block(out)
     if not (out.get("impact_detail") or "").strip():
         out["impact_detail"] = deterministic_impact(out)
@@ -761,7 +762,7 @@ def merge_ai_writeup(finding: dict, spec: dict) -> dict:
 
 
 async def _ai_one_writeup(finding: dict) -> dict | None:
-    from ..agents.pi_runtime import query_text, role_model
+    from atkbrain_native import query_text, role_model
 
     facts = _facts_for_ai(finding)
     prompt = (
@@ -773,15 +774,16 @@ async def _ai_one_writeup(finding: dict) -> dict | None:
         getattr(settings, "supervisor_model", None),
     )
     wait = float(getattr(settings, "report_timeout_sec", 90) or 90)
-    blob = await query_text(
-        system_prompt=WRITEUP_SYSTEM,
-        user_prompt=prompt,
-        cwd=str(settings.data_dir),
-        timeout=max(30.0, wait),
-        tools=False,
-        model=model,
-        role="finding-page",
-        project_id=str(finding.get("project_id") or ""),
+    blob = await asyncio.to_thread(
+        query_text,
+        WRITEUP_SYSTEM,
+        prompt,
+        str(settings.data_dir),
+        max(30.0, wait),
+        False,
+        model,
+        "finding-page",
+        str(finding.get("project_id") or ""),
     )
     specs = parse_writeups_payload(blob)
     if not specs:

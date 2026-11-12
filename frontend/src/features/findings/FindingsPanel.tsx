@@ -44,9 +44,12 @@ export function findingFromVulnNode(n: GraphNode): Finding {
   };
 }
 
-export function collectVulns(findings: Finding[], nodes: GraphNode[] = [], opts?: { src?: boolean }): Finding[] {
+export function collectVulns(findings: Finding[], nodes: GraphNode[] = [], opts?: { src?: boolean; linkedNodeKeys?: string[] }): Finding[] {
   const fromFindings = filterVisibleFindings(findings, opts);
-  const linked = new Set(fromFindings.map((f) => f.node_key).filter(Boolean) as string[]);
+  const linked = new Set<string>([
+    ...(fromFindings.map((f) => f.node_key).filter(Boolean) as string[]),
+    ...(opts?.linkedNodeKeys || []),
+  ]);
   const extras = nodes
     .filter((n) => n.type === "vuln" && n.key && !linked.has(n.key) && !isPlaceholderGraphNode(n))
     .map(findingFromVulnNode);
@@ -136,18 +139,22 @@ export function FindingReviewBanner({ review, findings = [] }: { review: Finding
 }
 
 export function FindingsPanel({
-  projectId, findings, nodes = [], onSelectNode, src = false, review,
+  projectId, findings, nodes = [], linkedNodeKeys = [], onSelectNode, src = false, review,
 }: {
   projectId: string;
   findings: Finding[];
   nodes?: GraphNode[];
+  linkedNodeKeys?: string[];
   onSelectNode?: (n: GraphNode) => void;
   src?: boolean;
   review?: FindingReviewState;
 }) {
   const { t } = useT();
   const [selected, setSelected] = useState<Finding | null>(null);
-  const visible = useMemo(() => collectVulns(findings, nodes, { src }), [findings, nodes, src]);
+  const visible = useMemo(
+    () => collectVulns(findings, nodes, { src, linkedNodeKeys }),
+    [findings, nodes, src, linkedNodeKeys],
+  );
   const reviewingIds = useMemo(() => {
     if (!review) return new Set<string>();
     return new Set(liveReviewQueue(review, visible).map((f) => String(f.id || "")));

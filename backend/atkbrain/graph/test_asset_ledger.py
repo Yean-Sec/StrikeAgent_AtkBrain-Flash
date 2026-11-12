@@ -4,11 +4,11 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from ..graph.model import FindingIn
-from ..objective import hard_stop_exempt
-from ..scope import Scope, unauthorized_public_host
+from atkbrain_native import hard_stop_exempt
+from atkbrain_native import Scope, unauthorized_public_host
 
 
 class ScopeGateTests(unittest.TestCase):
@@ -38,18 +38,25 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from ..db import db
 
+        from ..config import settings
+
         self.db = db
         self.td = tempfile.TemporaryDirectory()
         self.old_path = db.path
         self.old_conn = db._conn
+        self.old_db_path = settings.db_path
         db._conn = None
         db.path = os.path.join(self.td.name, "ledger.db")
+        settings.db_path = Path(db.path)
         await db.connect()
 
     async def asyncTearDown(self):
+        from ..config import settings
+
         await self.db.close()
         self.db.path = self.old_path
         self.db._conn = self.old_conn
+        settings.db_path = self.old_db_path
         self.td.cleanup()
 
     async def _project(self, pid="p_test", target="app.example.com"):
@@ -115,10 +122,10 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
             await confirm_expansion("p_test", mode="domain", basis="  ", value="example.com")
 
     async def test_http_bind_must_match(self):
-        from ..http_log import bind_finding, record_exchange
+        from atkbrain_native import bind_finding, record_exchange
 
         await self._project()
-        eid = await record_exchange(
+        eid = record_exchange(
             "p_test", run_id=None, method="GET", url="https://app.example.com/a",
             status=200, response_body="ok marker",
         )
@@ -130,25 +137,25 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
                VALUES(?,?,?,?,?,?)""",
             (fid, "p_test", "low", "info", "t", ts),
         )
-        bad = await bind_finding(fid, [{
+        bad = bind_finding(fid, [{
             "id": eid, "role": "证明", "method": "POST", "url": "https://app.example.com/a",
             "status": 200, "summary": "ok marker",
         }])
         self.assertEqual(bad["bound"], [])
-        good = await bind_finding(fid, [{
+        good = bind_finding(fid, [{
             "id": eid, "role": "证明", "method": "GET", "url": "https://app.example.com/a",
             "status": 200, "summary": "ok marker",
         }])
         self.assertEqual(good["bound"], [eid])
 
     async def test_pending_cannot_be_high(self):
-        from ..graph.store import add_finding
+        from atkbrain_native import add_finding
 
         await self._project()
-        row = await add_finding("p_test", FindingIn(
-            severity="high", category="info", title="版本对应 nginx",
-            evidence="nginx 1.18 版本对应", redteam_rating="high", cvss=9.8,
-        ))
+        row = add_finding("p_test", {
+            "severity": "high", "category": "info", "title": "版本对应 nginx",
+            "evidence": "nginx 1.18 版本对应", "redteam_rating": "high", "cvss": 9.8,
+        })
         self.assertEqual(row["verification_status"], "pending")
         self.assertNotIn(row["severity"], ("high", "critical"))
         self.assertNotIn((row.get("redteam_rating") or ""), ("high", "critical"))
@@ -183,7 +190,7 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_model_chain_keeps_intent(self):
         from ..db import now
-        from ..engine.model_chain import advance_model_chain
+        from atkbrain_native import advance_model_chain
 
         await self._project()
         ts = now()
@@ -196,15 +203,14 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
                VALUES(?,?,?,?,?,?,?,?)""",
             ("i1", "p_test", "sqli", 0.5, "active", 0.5, 1, ts),
         )
-        nxt = await advance_model_chain("p_test")
+        nxt = advance_model_chain("p_test")
         self.assertEqual(nxt, "b")
         intent = await self.db.fetchone("SELECT status FROM intents WHERE id='i1'")
         self.assertEqual(intent["status"], "active")
 
     async def test_dependency_not_dispatched(self):
         from ..db import now
-        from ..graph.model import IntentIn
-        from ..graph.store import add_intent, list_open_intents
+        from atkbrain_native import add_intent, list_open_intents
 
         await self._project()
         ts = now()
@@ -213,8 +219,8 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
                VALUES(?,?,?,?,?,?,?,?,?)""",
             ("i_pre", "p_test", "先看入口", 0.5, "open", 0.5, 0, ts, "[]"),
         )
-        await add_intent("p_test", IntentIn(description="再打注入", depends_on=["i_pre"]))
-        open_rows = await list_open_intents("p_test")
+        add_intent("p_test", {"description": "再打注入", "depends_on": ["i_pre"]})
+        open_rows = list_open_intents("p_test")
         descs = [r["description"] for r in open_rows]
         self.assertIn("先看入口", descs)
         self.assertNotIn("再打注入", descs)

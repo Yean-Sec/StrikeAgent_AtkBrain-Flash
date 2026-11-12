@@ -1,4 +1,4 @@
-"""StrikeAgent_AtkBrain-Flash 自定义 MCP 工具集（in-process）。
+"""StrikeAgent_AtkBrain-Flash 扩展工具（本机 /agent-tools 调用）。
 
 这是智能体与外界交互的唯一受控通道：
 - run_cmd / http_request：命令与 HTTP 均经作业对象校验。
@@ -24,11 +24,49 @@ def tool(name: str, description: str, input_schema: dict):
         return fn
     return deco
 
+
+def _gate_intent(ctx) -> str | None:
+    from .context import tool_caller_role
+    from atkbrain_native import gate_intent
+    hop = str(getattr(ctx, "hop_auth_intent_id", "") or "").strip()
+    bound = [str(x) for x in (getattr(ctx, "bound_must_intents", None) or ()) if str(x or "").strip()]
+    return gate_intent(
+        str(getattr(ctx, "project_id", "") or ""),
+        bool(getattr(ctx, "intent_closed", False)),
+        hop,
+        bound,
+        tool_caller_role.get(),
+    )
+
 from ..db import db, new_id, now
 from ..events import emit
-from ..graph import store as gstore
-from ..graph.model import EdgeIn, FindingIn, IntentIn, NodeIn, display_finding_severity
-from ..objective import (
+import atkbrain_native as gstore
+def NodeIn(key, type="info", title="", detail=None, severity="info", is_rce=False, tags=None, status="open"):
+    return {
+        "key": key, "type": type, "title": title, "detail": detail,
+        "severity": severity, "is_rce": bool(is_rce), "tags": list(tags or []),
+        "status": status or "open",
+    }
+
+
+def EdgeIn(src=None, dst=None, relation="LEADS_TO", weight=0.5, rationale=None, **kw):
+    return {
+        "src": src if src is not None else kw.get("from"),
+        "dst": dst if dst is not None else kw.get("to"),
+        "relation": relation, "weight": weight, "rationale": rationale,
+    }
+
+
+def FindingIn(**kw):
+    return kw
+
+
+def IntentIn(**kw):
+    if "from" in kw:
+        kw["from_keys"] = kw.pop("from")
+    return kw
+from atkbrain_native import display_finding_severity
+from atkbrain_native import (
     DATA_ACCESS_CATEGORIES,
     KEY_LEAK_CATEGORIES,
     REDTEAM,
@@ -41,7 +79,7 @@ from ..objective import (
     src_impact_proven,
 )
 from .. import benchmark as bm
-from ..scope import (
+from atkbrain_native import (
     _IP_RE,
     _norm_host,
     public_hosts_in_text,
@@ -80,7 +118,7 @@ async def persist_milestone(ctx: AgentContext, milestone: str, **extra) -> dict 
         return None
     try:
         from ..memory.store import summarize_milestone
-        graph = await gstore.get_graph(pid, heal=True)
+        graph = gstore.get_graph(pid, heal=True)
         row = await summarize_milestone(project, milestone, graph=graph, **extra)
         skipped = bool(row and row.get("skipped"))
         if skipped:
@@ -190,7 +228,7 @@ def _attacker_identity_reason(host: str) -> str | None:
     if not h:
         return None
     try:
-        from ..scope import is_attacker_identity, is_loopback
+        from atkbrain_native import is_attacker_identity, is_loopback
         if is_loopback(h):
             return f"host={h} 是回环，不能作为立足点。"
         if is_attacker_identity(h):
@@ -264,7 +302,7 @@ async def _land_shell(
     primary = _primary_host(ctx)
     host = _norm_host(host or "") or primary
     from ..config import settings
-    from ..scope import is_internal_tld, is_loopback, is_platform_endpoint, is_private, is_single_label, local_self_hosts
+    from atkbrain_native import is_internal_tld, is_loopback, is_platform_endpoint, is_private, is_single_label, local_self_hosts
     blocked = _attacker_identity_reason(host)
     if blocked:
         return _text(f"拒绝：{blocked}", is_error=True)
@@ -279,7 +317,7 @@ async def _land_shell(
     if is_new_host and (
         is_private(host) or is_single_label(host) or is_internal_tld(host)
     ) and not is_loopback(host):
-        if not await gstore.has_verified_internal_vantage(ctx.project_id):
+        if not gstore.has_verified_internal_vantage(ctx.project_id):
             return _text(
                 "⛔ 拒绝凭空登记内网主机：尚未在授权目标上拿到立足点"
                 "（verified shell 或已核实 SSRF）。"
@@ -296,7 +334,7 @@ async def _land_shell(
         tags += ["lateral", "pivot"]
 
     title_host = f" @ {host}" if is_new_host else ""
-    await gstore.upsert_node(
+    gstore.upsert_node(
         ctx.project_id,
         NodeIn(key=gkey,
                type="goal" if is_goal else "foothold",
@@ -307,14 +345,14 @@ async def _land_shell(
         run_id=ctx.run_id,
     )
     if (not is_new_host) and node_key:
-        await gstore.add_edge(
+        gstore.add_edge(
             ctx.project_id,
             EdgeIn(**{"from": node_key, "to": gkey}, relation="ESCALATES_TO",
                    weight=1.0, rationale="getshell"),
             run_id=ctx.run_id,
         )
 
-    await gstore.add_finding(
+    gstore.add_finding(
         ctx.project_id,
         FindingIn(
             node_key=gkey,
@@ -411,7 +449,7 @@ async def maybe_absorb_intranet(
 ) -> str:
     """经已验证跳板观测到的内网主机自动扩进 Scope。泄露正文不会在没有通道时扩容。"""
     from urllib.parse import urlparse as _urlparse
-    from ..engine.intranet_reach import (
+    from atkbrain_native import (
         KIND_SSRF,
         entry_hosts,
         hosts_from_capability_observation,
@@ -422,7 +460,7 @@ async def maybe_absorb_intranet(
     )
     from ..scope_pivot import persist_scope, try_expand_scope
 
-    graph = await gstore.get_graph(ctx.project_id)
+    graph = gstore.get_graph(ctx.project_id)
     kinds = precondition_kinds(graph)
     if not kinds:
         return ""
@@ -439,7 +477,7 @@ async def maybe_absorb_intranet(
             targeted_entry = True
     if command:
         try:
-            from ..exec.guard import extract_hosts
+            from atkbrain_native import extract_hosts
             cmd_hosts = extract_hosts(command) or []
         except Exception:
             cmd_hosts = []
@@ -452,7 +490,7 @@ async def maybe_absorb_intranet(
     found = hosts_from_capability_observation(
         url=url, data=data, command=command, output=output,
     )
-    from ..engine.intranet_reach import clue_hosts_from_observation
+    from atkbrain_native import clue_hosts_from_observation
     clues = clue_hosts_from_observation(command=command, output=output)
     if not found and not clues:
         return ""
@@ -464,7 +502,7 @@ async def maybe_absorb_intranet(
     grew = False
     src = ""
     try:
-        src = await gstore.find_pivot_vuln(ctx.project_id, from_host, mech)
+        src = gstore.find_pivot_vuln(ctx.project_id, from_host, mech)
     except Exception:
         src = ""
     for h in found:
@@ -488,7 +526,7 @@ async def maybe_absorb_intranet(
         if res.get("expanded"):
             grew = True
         try:
-            asset_key = await gstore.ensure_host_target(
+            asset_key = gstore.ensure_host_target(
                 ctx.project_id, h, title=f"内网主机 {h}", run_id=ctx.run_id,
                 live=True,
             )
@@ -497,7 +535,7 @@ async def maybe_absorb_intranet(
         if src and asset_key and src != asset_key:
             rel = "PIVOTS_TO" if mech == "shell_reachable" else "LEADS_TO"
             try:
-                await gstore.add_edge(
+                gstore.add_edge(
                     ctx.project_id,
                     EdgeIn(**{"from": src, "to": asset_key}, relation=rel,
                            weight=0.9,
@@ -514,7 +552,7 @@ async def maybe_absorb_intranet(
         if h in peers:
             continue
         try:
-            await gstore.ensure_host_target(
+            gstore.ensure_host_target(
                 ctx.project_id, h, title=f"内网线索 {h}", run_id=ctx.run_id,
                 live=False,
             )
@@ -528,11 +566,11 @@ async def maybe_absorb_intranet(
             except Exception:
                 pass
         try:
-            await gstore.refresh_derived_intents(ctx.project_id, run_id=ctx.run_id)
+            gstore.refresh_derived_intents(ctx.project_id, run_id=ctx.run_id)
         except Exception:
             pass
         try:
-            return await gstore.nudge_hop_auth_frontier(
+            return gstore.nudge_hop_auth_frontier(
                 ctx.project_id, run_id=ctx.run_id,
             ) or ""
         except Exception:
@@ -636,7 +674,7 @@ def _out_of_scope_hosts(ctx: AgentContext, *texts: str) -> list[str]:
         # 邻题入口仍拦；已扩容内网的同网同胞允许写图，本机直连仍由守卫拦截。
         if "其它题目入口" not in why:
             try:
-                from ..scope import same_pivot_lan
+                from atkbrain_native import same_pivot_lan
                 if same_pivot_lan(h, ctx.scope):
                     continue
             except Exception:
@@ -733,7 +771,7 @@ async def _touch_http_service(ctx: AgentContext, url: str, res: dict | None) -> 
         title = server or f"HTTP {port}"
         tags = ["http", f"port:{port}", f"host:{host}", "auto"]
         try:
-            from ..objective import REDTEAM, SRC, normalize_objective
+            from atkbrain_native import REDTEAM, SRC, normalize_objective
             if normalize_objective(ctx.objective) in (REDTEAM, SRC):
                 tags.append("tier:app")
         except Exception:
@@ -768,7 +806,7 @@ async def _touch_http_service(ctx: AgentContext, url: str, res: dict | None) -> 
                     extra = "表面=" + ",".join(surf)
                     if isinstance(detail, str) and extra not in detail:
                         detail = detail + " " + extra
-            await gstore.upsert_node(
+            gstore.upsert_node(
                 ctx.project_id,
                 NodeIn(
                     key=key, type=ntype, title=title,
@@ -808,7 +846,7 @@ async def _upsert_http_path_node(
         if not (ntype == "danger" and old_type == "info"):
             return
         title = str(row["title"] or title)
-    await gstore.upsert_node(
+    gstore.upsert_node(
         ctx.project_id,
         NodeIn(
             key=pkey, type=ntype, title=title,
@@ -818,7 +856,7 @@ async def _upsert_http_path_node(
         ),
         run_id=ctx.run_id,
     )
-    await gstore.add_edge(
+    gstore.add_edge(
         ctx.project_id,
         EdgeIn(
             src=svc_key, dst=pkey, relation="LEADS_TO",
@@ -841,7 +879,7 @@ def _platform_graph_pollution(*texts: str) -> str | None:
         return None
     try:
         from ..config import settings
-        from ..scope import is_platform_endpoint, local_self_hosts
+        from atkbrain_native import is_platform_endpoint, local_self_hosts
         ports = {int(settings.port), int(settings.frontend_port)}
         hosts = local_self_hosts()
         for ip in _IPV4_RE.findall(blob):
@@ -857,7 +895,7 @@ def _platform_graph_pollution(*texts: str) -> str | None:
 async def _maybe_emit_lateral(ctx: AgentContext) -> None:
     """检测到内网横向（PIVOTS_TO 边 / 第二台主机 foothold）时，播一次 lateral 事件点亮 UI。"""
     try:
-        st = await gstore.get_stats(ctx.project_id)
+        st = gstore.get_stats(ctx.project_id)
     except Exception:
         return
     if st.get("lateral_active") and not ctx.lateral_emitted:
@@ -902,18 +940,28 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         halted = halt_if_full_score(ctx)
         if halted:
             return halted
-        from ..engine.intent_gate import gate_intent, maybe_confirm_command
-        gated = await gate_intent(ctx)
+        from atkbrain_native import maybe_confirm_command
+        gated = _gate_intent(ctx)
         if gated:
             return _text(gated, is_error=True)
         command = args.get("command", "")
-        denied = await maybe_confirm_command(ctx, command, bool(args.get("needs_confirm")))
+        hop = str(getattr(ctx, "hop_auth_intent_id", "") or "").strip()
+        bound = [str(x) for x in (getattr(ctx, "bound_must_intents", None) or ()) if str(x or "").strip()]
+        denied = await asyncio.to_thread(
+            maybe_confirm_command,
+            str(getattr(ctx, "project_id", "") or ""),
+            command,
+            bool(args.get("needs_confirm")),
+            hop,
+            bound,
+        )
         if denied:
             return _text(denied, is_error=True)
         rationale = args.get("rationale", "")
         timeout = args.get("timeout")
         await emit(ctx.project_id, "tool", {
             "tool": "run_cmd", "command": command, "rationale": rationale,
+            "cmd_inflight": int(getattr(ctx, "cmd_inflight", 0) or 0) + 1,
         }, run_id=ctx.run_id)
         res = await ctx.run_command(command, timeout=timeout)
         payload = {
@@ -935,8 +983,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         if res.blocked:
             return _text(f"[已拦截 · {res.category}] {res.reason}", is_error=True)
         try:
-            from ..engine.hop_auth_gate import command_timeout_note, remember_ssh_banner
-            from ..exec.guard import extract_host_ports
+            from atkbrain_native import command_timeout_note, remember_ssh_banner
+            from atkbrain_native import extract_host_ports
             out = f"{res.stdout or ''}\n{res.stderr or ''}"
             for h, p in extract_host_ports(command) or []:
                 remember_ssh_banner(ctx.workspace_dir, h, p, out)
@@ -944,7 +992,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         except Exception:
             note = ""
         try:
-            from ..engine.spiral import record_command
+            from atkbrain_native import record_command
             record_command(ctx.workspace_dir, command, stdout=res.stdout or "")
         except Exception:
             pass
@@ -974,8 +1022,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         except Exception:
             pass
         try:
-            from ..engine.hop_auth_gate import hop_auth_followup_note, maybe_record_ssh_delivery
-            from ..exec.guard import extract_host_ports
+            from atkbrain_native import hop_auth_followup_note, maybe_record_ssh_delivery
+            from atkbrain_native import extract_host_ports
             for h, p in extract_host_ports(command) or []:
                 maybe_record_ssh_delivery(
                     ctx.workspace_dir, command, host=h, port=p,
@@ -1011,8 +1059,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         halted = halt_if_full_score(ctx)
         if halted:
             return halted
-        from ..engine.intent_gate import gate_intent
-        gated = await gate_intent(ctx)
+        gated = _gate_intent(ctx)
         if gated:
             return _text(gated, is_error=True)
         url = args.get("url", "")
@@ -1026,6 +1073,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         data = args.get("data")
         await emit(ctx.project_id, "tool", {
             "tool": "http_request", "url": url, "method": method,
+            "command": f"{method} {url}".strip(),
+            "cmd_inflight": int(getattr(ctx, "cmd_inflight", 0) or 0) + 1,
         }, run_id=ctx.run_id)
         res = await ctx.http(url, method=method, headers=headers, data=data)
         await emit(ctx.project_id, "tool_result", {
@@ -1036,8 +1085,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             return _text(res["error"], is_error=True)
         if res.get("error"):
             try:
-                from ..http_log import record_exchange
-                await record_exchange(
+                from atkbrain_native import record_exchange
+                record_exchange(
                     ctx.project_id, run_id=ctx.run_id, method=method, url=url,
                     request_headers=headers, request_body=data if isinstance(data, str) else "",
                     status=res.get("status"), response_headers=res.get("headers"),
@@ -1062,7 +1111,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         if landed:
             body = body + f"\n[系统已根据远程 id 回显落定立足点 `{landed}`，关系图已更新。]"
         try:
-            from ..engine.hop_auth_gate import http_login_notes
+            from atkbrain_native import http_login_notes
             note = http_login_notes(method, data if isinstance(data, str) else "", res.get("body") or "", res.get("status"))
             if note:
                 body = body + "\n" + note
@@ -1078,7 +1127,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         except Exception:
             pass
         try:
-            from ..engine.hop_auth_gate import hop_auth_followup_note, maybe_record_http_delivery
+            from atkbrain_native import hop_auth_followup_note, maybe_record_http_delivery
             maybe_record_http_delivery(
                 ctx.workspace_dir,
                 method=method,
@@ -1097,8 +1146,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         except Exception:
             pass
         try:
-            from ..http_log import record_exchange
-            eid = await record_exchange(
+            from atkbrain_native import record_exchange
+            eid = record_exchange(
                 ctx.project_id, run_id=ctx.run_id, method=method, url=url,
                 request_headers=headers, request_body=data if isinstance(data, str) else "",
                 status=res.get("status"), response_headers=res.get("headers"),
@@ -1122,8 +1171,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         },
     )
     async def note_asset(args: dict) -> dict:
-        from ..engine.intent_gate import gate_intent
-        gated = await gate_intent(ctx)
+        gated = _gate_intent(ctx)
         if gated:
             return _text(gated, is_error=True)
         from ..assets import remember_host
@@ -1193,8 +1241,10 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             return halted
         ntype = args.get("type", "info")
         tags = args.get("tags", []) or []
-        from ..graph.model import agent_goal_reserved_error, coerce_declared_node_type, infer_node_type_from_key
-        from ..graph.model import SEVERITY_ORDER, is_placeholder_node
+        from atkbrain_native import (
+            SEVERITY_ORDER, agent_goal_reserved_error, coerce_declared_node_type,
+            infer_node_type_from_key, is_placeholder_node,
+        )
         ntype = coerce_declared_node_type(args["key"], ntype, tags)
         reserved = agent_goal_reserved_error(args["key"], ntype, tags)
         if reserved:
@@ -1249,7 +1299,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             detail=args.get("detail"), severity=sev,
             is_rce=bool(args.get("is_rce", False)) and confirmed_shell, tags=tags,
         )
-        row = await gstore.upsert_node(ctx.project_id, node, run_id=ctx.run_id)
+        row = gstore.upsert_node(ctx.project_id, node, run_id=ctx.run_id)
         if ntype == "credential":
             _write_creds_asset(ctx, host=_primary_host(ctx) or "unknown",
                                title=args["title"], detail=args.get("detail") or "")
@@ -1294,7 +1344,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                     + _oos_hint(oos),
                     is_error=True,
                 )
-            if not await gstore.is_verified_lateral_pivot(ctx.project_id, args["from"], args["to"]):
+            if not gstore.is_verified_lateral_pivot(ctx.project_id, args["from"], args["to"]):
                 return _text(
                     "⛔ 未记录为内网横向：PIVOTS_TO 仅在已控 RCE/shell 踏上另一台"
                     "且目标主机已验证 shell/RCE 时成立。仅发现服务、SSRF 可达或拿到凭证请用 LEADS_TO。",
@@ -1306,7 +1356,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             weight=float(args.get("weight", 0.5)),
             rationale=args.get("rationale"),
         )
-        await gstore.add_edge(ctx.project_id, edge, run_id=ctx.run_id)
+        gstore.add_edge(ctx.project_id, edge, run_id=ctx.run_id)
         if relation == "PIVOTS_TO":
             await _maybe_emit_lateral(ctx)
         return _text(f"边已记录: {args['from']} --{edge.relation}--> {args['to']} (w={edge.weight})")
@@ -1442,9 +1492,9 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                 + _oos_hint(oos),
                 is_error=True,
             )
-        from ..graph.cvss31 import attach_vector, base_score, metrics_from_args, nvd_reject_reason
-        from ..graph.finding_claim import claims_rce, execution_impact_proven
-        from ..graph.model import secondary_review_error
+        from atkbrain_native import attach_vector, base_score, metrics_from_args, nvd_reject_reason
+        from atkbrain_native import claims_rce, execution_impact_proven
+        from atkbrain_native import secondary_review_error
         metrics, attempted = metrics_from_args(args)
         scored = None
         if attempted and not metrics:
@@ -1499,17 +1549,17 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             report_repro=args.get("report_repro"),
             report_fix=args.get("report_fix"),
         )
-        row = await gstore.add_finding(ctx.project_id, f, run_id=ctx.run_id)
+        row = gstore.add_finding(ctx.project_id, f, run_id=ctx.run_id)
         if isinstance(row, dict) and args.get("http_refs"):
             try:
-                from ..http_log import bind_finding
-                bound = await bind_finding(str(row.get("id") or ""), args.get("http_refs"))
+                from atkbrain_native import bind_finding
+                bound = bind_finding(str(row.get("id") or ""), args.get("http_refs"))
                 row["http_bound"] = bound.get("bound")
                 row["http_skipped"] = bound.get("skipped")
             except Exception:
                 pass
         if isinstance(row, dict):
-            from ..graph.model import normalize_redteam_rating as _nrt
+            from atkbrain_native import normalize_redteam_rating as _nrt
             from ..review.flags import get_review_flags
             flags = get_review_flags()
             need_auto = (
@@ -1526,11 +1576,11 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             page_ok = bool(row.get("secondary_verified")) or not flags["secondary_verify"]
             if page_ok:
                 try:
-                    from ..projects import get_project as _gp_page
-                    from ..report.pi_finding_page import ensure_pi_page, has_pi_page
-                    if not has_pi_page(row):
-                        proj = await _gp_page(ctx.project_id)
-                        row = await ensure_pi_page(ctx.project_id, row, project=proj)
+                    from atkbrain_native import get_project as _gp_page
+                    from ..report.finding_page import ensure_page, has_page
+                    if not has_page(row):
+                        proj = _gp_page(ctx.project_id)
+                        row = await ensure_page(ctx.project_id, row, project=proj)
                 except Exception:
                     pass
         nk = str(args.get("node_key") or "").strip()
@@ -1540,11 +1590,11 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             or not src_impact_proven(f)
         )
         if nk:
-            from ..graph.model import infer_node_type_from_key
+            from atkbrain_native import infer_node_type_from_key
             inferred = infer_node_type_from_key(nk)
             if inferred in ("vuln", "danger", "foothold"):
                 ntype = "vuln" if inferred in ("vuln", "danger") else inferred
-                await gstore.fill_source_node(
+                gstore.fill_source_node(
                     ctx.project_id, nk,
                     title=str(args.get("title") or ""),
                     detail=str(args.get("evidence") or args.get("description") or ""),
@@ -1721,7 +1771,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             await persist_scope(ctx.project_id, ctx.scope)
         asset_key = ""
         try:
-            asset_key = await gstore.ensure_host_target(
+            asset_key = gstore.ensure_host_target(
                 ctx.project_id, to_host,
                 title=f"内网目标 {to_host}",
                 run_id=ctx.run_id,
@@ -1731,13 +1781,13 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             asset_key = ""
         src = ""
         try:
-            src = await gstore.find_pivot_vuln(ctx.project_id, from_host, mechanism)
+            src = gstore.find_pivot_vuln(ctx.project_id, from_host, mechanism)
         except Exception:
             src = ""
         if src and asset_key and src != asset_key:
             rel = "PIVOTS_TO" if mechanism == "shell_reachable" else "LEADS_TO"
             try:
-                await gstore.add_edge(
+                gstore.add_edge(
                     ctx.project_id,
                     EdgeIn(**{"from": src, "to": asset_key}, relation=rel,
                            weight=0.9,
@@ -1845,8 +1895,8 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         host = _norm_host(args.get("host") or "") or ctx.active_host or _primary_host(ctx)
         source_key = (args.get("node_key") or "").strip()
         if not source_key and host:
-            source_key = await gstore.find_host_source(ctx.project_id, host)
-        await gstore.upsert_node(
+            source_key = gstore.find_host_source(ctx.project_id, host)
+        gstore.upsert_node(
             ctx.project_id,
             NodeIn(key=gkey, type="goal", title=f"FLAG {flag[:48]}",
                    detail=args.get("evidence") or flag, severity="critical",
@@ -1854,23 +1904,23 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             run_id=ctx.run_id,
         )
         if source_key:
-            await gstore.fill_source_node(
+            gstore.fill_source_node(
                 ctx.project_id, source_key,
                 detail=(args.get("evidence") or flag)[:800],
                 run_id=ctx.run_id,
             )
-            await gstore.add_edge(
+            gstore.add_edge(
                 ctx.project_id,
                 EdgeIn(**{"from": source_key, "to": gkey}, relation="LEADS_TO",
                        weight=1.0, rationale="getflag"),
                 run_id=ctx.run_id,
             )
         elif host:
-            target_key = await gstore.ensure_host_target(
+            target_key = gstore.ensure_host_target(
                 ctx.project_id, host, title=f"主机 {host}", run_id=ctx.run_id,
             )
             if target_key:
-                await gstore.add_edge(
+                gstore.add_edge(
                     ctx.project_id,
                     EdgeIn(**{"from": target_key, "to": gkey}, relation="LEADS_TO",
                            weight=0.9, rationale="getflag"),
@@ -2025,10 +2075,10 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             # 人工意图也尽量带上可去重 strategy_key
             sk = it.get("strategy_key")
             if not sk and desc:
-                from ..graph.hypothesize import strategy_key
+                from atkbrain_native import strategy_key
                 src = (it.get("from") or ["manual"])[0]
                 sk = strategy_key(str(src), f"manual:{desc[:48]}")
-            await gstore.add_intent(
+            gstore.add_intent(
                 ctx.project_id,
                 IntentIn(
                     **{"from": it.get("from", [])},
@@ -2073,13 +2123,13 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
             return _text(refused, is_error=True)
         intent_row = None
         try:
-            intent_row = await gstore.get_intent(ctx.project_id, args.get("intent_id"))
+            intent_row = gstore.get_intent(ctx.project_id, args.get("intent_id"))
         except Exception:
             intent_row = None
         if not bool(args.get("verified")):
             try:
-                from ..engine.hop_auth_gate import refuse_hop_auth_disprove
-                graph = await gstore.get_graph(ctx.project_id)
+                from atkbrain_native import refuse_hop_auth_disprove
+                graph = gstore.get_graph(ctx.project_id)
                 hop_refuse = refuse_hop_auth_disprove(
                     intent_row,
                     verified=False,
@@ -2091,7 +2141,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
                 hop_refuse = None
             if hop_refuse:
                 return _text(hop_refuse, is_error=True)
-        row = await gstore.resolve_intent(
+        row = gstore.resolve_intent(
             ctx.project_id,
             args["intent_id"],
             verified=bool(args.get("verified")),
@@ -2117,7 +2167,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
         },
     )
     async def mark_honeypot(args: dict) -> dict:
-        await gstore.upsert_node(
+        gstore.upsert_node(
             ctx.project_id,
             NodeIn(key=args["key"], type="honeypot", title=args["title"],
                    detail=args.get("evidence"), severity="info", tags=["honeypot", "anti-reprisal"],
@@ -2160,7 +2210,7 @@ def build_atkbrain_tools(ctx: AgentContext) -> list:
     async def note_scan_coverage(args: dict) -> dict:
         hits_raw = str(args.get("hits") or "")
         hits = [x.strip() for x in re.split(r"[\n,]+", hits_raw) if x.strip()]
-        from ..engine.spiral import format_coverage_brief, note_coverage
+        from atkbrain_native import format_coverage_brief, note_coverage
         ledger = note_coverage(
             ctx.workspace_dir,
             face=str(args.get("face") or ""),

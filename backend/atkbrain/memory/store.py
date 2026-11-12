@@ -5,7 +5,7 @@ import hashlib
 import re
 
 from ..db import db, new_id, now, _dumps, _loads
-from ..objective import REDTEAM, ULTIMATE_GOALS, canon_goal, normalize_objective, objective_allows_flag
+from atkbrain_native import REDTEAM, ULTIMATE_GOALS, canon_goal, normalize_objective, objective_allows_flag
 from .achievements import ULTIMATE_ACHIEVEMENTS, detect_achievements
 from .generalize import generalize_chain_str, generalize_node_key
 

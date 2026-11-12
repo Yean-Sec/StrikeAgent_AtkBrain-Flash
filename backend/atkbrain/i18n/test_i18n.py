@@ -6,7 +6,7 @@ import unittest
 
 class LocaleTests(unittest.TestCase):
     def test_normalize_locale(self) -> None:
-        from .locale import normalize_locale
+        from atkbrain_native import normalize_locale
         self.assertEqual(normalize_locale("en-US"), "en")
         self.assertEqual(normalize_locale("EN"), "en")
         self.assertEqual(normalize_locale("zh-CN"), "zh")
@@ -14,7 +14,7 @@ class LocaleTests(unittest.TestCase):
         self.assertEqual(normalize_locale(None), "zh")
 
     def test_config_output_lang(self) -> None:
-        from .locale import config_output_lang
+        from atkbrain_native import config_output_lang
         self.assertEqual(config_output_lang({"output_lang": "en"}), "zh")
         self.assertEqual(config_output_lang('{"output_lang":"en-GB"}'), "zh")
         self.assertEqual(config_output_lang({}), "zh")
@@ -22,18 +22,18 @@ class LocaleTests(unittest.TestCase):
 
 class PromptContractTests(unittest.TestCase):
     def test_english_contract_on_system_prompt(self) -> None:
-        from ..scope import Scope
+        from atkbrain_native import Scope
         from ..agents.prompts import build_system_prompt
         text = build_system_prompt(
             Scope(targets=["example.com"]), "/tmp/ws", "redteam", "",
             output_lang="en",
         )
         self.assertIn("All human-visible text MUST be in English", text)
-        self.assertIn("This system prompt and the skills remain Chinese", text)
+        self.assertIn("This system prompt remains Chinese", text)
         self.assertIn("report_finding", text)
 
     def test_chinese_contract_default(self) -> None:
-        from ..scope import Scope
+        from atkbrain_native import Scope
         from ..agents.prompts import build_system_prompt
         text = build_system_prompt(
             Scope(targets=["example.com"]), "/tmp/ws", "redteam", "",
@@ -71,15 +71,15 @@ class ReportLangTests(unittest.TestCase):
         self.assertNotIn("<h2>执行摘要</h2>", html)
 
     def test_export_system_english(self) -> None:
-        from .prompts import export_system_prompt
+        from atkbrain_native import export_system_prompt
         en = export_system_prompt("en", "CHINESE_SYSTEM")
         self.assertIn("Not collected", en)
         self.assertIn("All prose in the JSON values MUST be English", en)
         self.assertEqual(export_system_prompt("zh", "CHINESE_SYSTEM"), "CHINESE_SYSTEM")
 
     def test_hunt_hard_stop_info_en_not_chinese(self) -> None:
-        from ..i18n.locale import set_locale
-        from ..project_status import hunt_hard_stop_info
+        from atkbrain_native import set_locale
+        from atkbrain_native import hunt_hard_stop_info
         set_locale("en")
         try:
             info = hunt_hard_stop_info("src", lang="en")

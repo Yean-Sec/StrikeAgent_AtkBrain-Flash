@@ -61,7 +61,8 @@ RUN set -eux; \
     curl -fsSL "https://npmmirror.com/mirrors/node/v${NODE_VER}/node-v${NODE_VER}-linux-x64.tar.xz" \
       | tar -xJ -C /usr/local --strip-components=1; \
     node --version; \
-    npm --version
+    npm --version; \
+    npm install -g @earendil-works/pi-coding-agent
 
 # 渗透工具：仓库没有的跳过，避免整层失败
 RUN set -eux; \
@@ -87,19 +88,14 @@ RUN set -eux; \
     grep -v -i weasyprint /opt/atkbrain/backend/requirements.txt > /tmp/req.txt; \
     /opt/atkbrain/venv/bin/pip install --no-cache-dir -r /tmp/req.txt; \
     /opt/atkbrain/venv/bin/pip install --no-cache-dir pwntools pycryptodome gmpy2 z3-solver ropper; \
-    npm install -g @earendil-works/pi-coding-agent; \
-    npm cache clean --force; \
-    rm -rf /root/.npm /tmp/req.txt; \
+    rm -rf /tmp/req.txt; \
     mkdir -p /opt/atkbrain/backend/data/workspaces \
              /opt/atkbrain/backend/data/loot \
              /opt/atkbrain/backend/data/reports \
-             /opt/atkbrain/backend/data/logs; \
-    command -v pi >/dev/null; \
-    pi --version || true
+             /opt/atkbrain/backend/data/logs
 
 COPY backend/atkbrain /opt/atkbrain/backend/atkbrain
-COPY skills /opt/atkbrain/skills
-COPY pi/extensions /opt/atkbrain/pi/extensions
+COPY pi /opt/atkbrain/pi
 COPY tools /opt/atkbrain/tools
 COPY scripts/docker-entrypoint.sh /opt/atkbrain/docker-entrypoint.sh
 

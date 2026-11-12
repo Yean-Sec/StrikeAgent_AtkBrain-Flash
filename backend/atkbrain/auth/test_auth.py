@@ -13,9 +13,9 @@ from starlette.requests import Request
 
 from .bootstrap import env_truthy
 from .cookies import cookie_kwargs, cookie_secure, remaining_cookie_max_age, session_ttl_sec, DEFAULT_SESSION_TTL_SEC
-from .crypto import decrypt_password_blob, encrypt_password_blob
+from atkbrain_native import auth_key_path, auth_use_dir, decrypt_password_blob, encrypt_password_blob
 from .routes import LoginBody, auth_login, totp_setup
-from . import crypto, rate
+from . import rate
 
 
 def http_request(
@@ -49,20 +49,10 @@ def http_request(
 class CryptoRoundtripTests(unittest.TestCase):
     def setUp(self) -> None:
         self.td = tempfile.TemporaryDirectory()
-        self.old_priv = crypto._PRIV
-        self.old_hmac = crypto._HMAC
-        crypto._PRIV = None
-        crypto._HMAC = None
-        self.p1 = patch.object(crypto, "_key_path", lambda: Path(self.td.name) / "auth-rsa.pem")
-        self.p2 = patch.object(crypto, "_hmac_path", lambda: Path(self.td.name) / "auth-session.key")
-        self.p1.start()
-        self.p2.start()
+        auth_use_dir(self.td.name)
 
     def tearDown(self) -> None:
-        self.p1.stop()
-        self.p2.stop()
-        crypto._PRIV = self.old_priv
-        crypto._HMAC = self.old_hmac
+        auth_use_dir("")
         self.td.cleanup()
 
     def test_roundtrip(self) -> None:
@@ -70,7 +60,7 @@ class CryptoRoundtripTests(unittest.TestCase):
         out = decrypt_password_blob(blob)
         self.assertEqual(out["p"], "s3cret!")
         self.assertEqual(out["c"], "c_abc123def456")
-        self.assertEqual(os.stat(crypto._key_path()).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(auth_key_path()).st_mode & 0o777, 0o600)
 
     def test_bad_cipher(self) -> None:
         with self.assertRaises(Exception):
@@ -131,7 +121,7 @@ class SessionTtlTests(unittest.IsolatedAsyncioTestCase):
         self.td.cleanup()
 
     async def test_touch_does_not_slide_expiry(self) -> None:
-        from .crypto import new_session_token
+        from atkbrain_native import new_session_token
         from .store import create_session, get_session, touch_session
 
         token = new_session_token()

@@ -11,9 +11,7 @@ from pathlib import Path
 
 from ..config import settings
 from ..db import new_id
-from ..i18n.locale import get_locale, normalize_locale
-from ..i18n.prompts import export_system_prompt
-from ..i18n.strings import msg
+from atkbrain_native import export_system_prompt, get_locale, msg, normalize_locale
 from . import generator as report_gen
 from .pdf_print import html_to_pdf
 from .slots import (
@@ -313,7 +311,7 @@ def _facts_payload(data: dict) -> dict:
 
 async def _export_enrich(facts: dict, *, project_id: str = "", lang: object = "zh") -> dict:
     """专职导出 Pi：无工具一次性会话，role=report-export。"""
-    from ..agents.pi_runtime import query_text, role_model
+    from atkbrain_native import query_text, role_model
 
     loc = normalize_locale(lang)
     if loc == "en":
@@ -349,15 +347,16 @@ async def _export_enrich(facts: dict, *, project_id: str = "", lang: object = "z
     system = export_system_prompt(loc, EXPORT_SYSTEM)
     for attempt in (1, 2):
         try:
-            blob = await query_text(
-                system_prompt=system,
-                user_prompt=prompt,
-                cwd=str(settings.data_dir),
-                timeout=wait,
-                tools=False,
-                model=model,
-                role=EXPORT_ROLE,
-                project_id=project_id,
+            blob = await asyncio.to_thread(
+                query_text,
+                system,
+                prompt,
+                str(settings.data_dir),
+                wait,
+                False,
+                model,
+                EXPORT_ROLE,
+                project_id,
             )
         except Exception as e:
             last_err = str(e)[:400]

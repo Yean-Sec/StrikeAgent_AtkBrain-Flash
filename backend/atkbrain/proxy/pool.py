@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ..config import settings
-from ..objective import FLAG, normalize_objective
+from atkbrain_native import FLAG, normalize_objective
 
 IP_ECHO_URLS = (
     "https://ipv4.icanhazip.com",

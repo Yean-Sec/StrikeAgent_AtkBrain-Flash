@@ -35,7 +35,6 @@ export type AuthMe = {
 };
 
 export type LlmProfile = {
-  format: "openai" | "anthropic" | string;
   model: string;
   base_url: string;
   api_key_set: boolean;
@@ -43,7 +42,6 @@ export type LlmProfile = {
 };
 
 export type LlmProfileInput = {
-  format: string;
   model: string;
   base_url: string;
   api_key?: string;
@@ -371,4 +369,27 @@ export const api = {
 
   bmImport: (id: string) => req<any>(`/api/projects/${id}/benchmark/import`, { method: "POST" }),
   scoreboard: (id: string) => req<any>(`/api/projects/${id}/benchmark/scoreboard`),
+  guardRules: () => req<{ builtin: any[]; custom: any[] }>("/api/guard/rules"),
+  createGuardRule: (body: { name: string; pattern: string; reason: string; enabled: boolean }) =>
+    req<any>("/api/guard/rules", { method: "POST", headers: J, body: JSON.stringify(body) }),
+  setGuardRuleEnabled: (id: string, enabled: boolean) =>
+    req<any>(`/api/guard/rules/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: J,
+      body: JSON.stringify({ enabled }),
+    }),
+  deleteGuardRule: (id: string) =>
+    req<{ ok: boolean }>(`/api/guard/rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  toolExplain: (id: string, body: { question: string; command: string; output: string }) =>
+    req<{ reply: string }>(`/api/projects/${id}/tool-explain`, {
+      method: "POST",
+      headers: J,
+      body: JSON.stringify(body),
+    }),
+  explain: (body: { question: string; command?: string; output?: string; page?: string; path?: string; project_id?: string }) =>
+    req<{ reply: string }>("/api/explain", {
+      method: "POST",
+      headers: J,
+      body: JSON.stringify(body),
+    }),
 };

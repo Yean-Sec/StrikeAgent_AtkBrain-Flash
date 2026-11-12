@@ -1,0 +1,3 @@
+[workspace]
+members = ["atkbrain-native", "atkbrain-api", "atkbrain-core"]
+resolver = "2"

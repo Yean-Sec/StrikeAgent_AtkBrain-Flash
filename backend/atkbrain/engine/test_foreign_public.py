@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import unittest
 
-from ..exec.guard import Guard
-from ..scope import Scope, unauthorized_public_host
+from atkbrain_native import Guard
+from atkbrain_native import Scope, unauthorized_public_host
 
 
 class ForeignPublicHostTests(unittest.TestCase):
@@ -41,14 +41,14 @@ class ForeignPublicHostTests(unittest.TestCase):
             )
 
     def test_code_attribute_not_host(self) -> None:
-        from ..scope import public_hosts_in_text
+        from atkbrain_native import public_hosts_in_text
         got = public_hosts_in_text("data = json.load(sys.stdin)")
         self.assertNotIn("json.load", got)
         self.assertNotIn("sys.stdin", got)
         self.assertIn("example.com", public_hosts_in_text("curl https://example.com/"))
 
     def test_path_suffix_not_host(self) -> None:
-        from ..scope import public_hosts_in_text
+        from atkbrain_native import public_hosts_in_text
         got = public_hosts_in_text("http:zenn.dev:443/robots.txt")
         self.assertIn("zenn.dev", got)
         self.assertNotIn("robots.txt", got)
@@ -57,7 +57,7 @@ class ForeignPublicHostTests(unittest.TestCase):
         )
 
     def test_embed_key_extracted(self) -> None:
-        from ..scope import public_hosts_in_text
+        from atkbrain_native import public_hosts_in_text
         got = public_hosts_in_text("svc:443/http@embed.zenn.studio")
         self.assertIn("embed.zenn.studio", got)
 

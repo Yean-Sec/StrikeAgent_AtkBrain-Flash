@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .config import settings
 from .db import db
-from .projects import get_project, update_config
+from atkbrain_native import get_project, update_config
 
 MAX_CHALLENGE_BYTES = 80 * 1024 * 1024
 MAX_CHALLENGE_FILES = 20
@@ -62,12 +62,12 @@ def _unique_path(dest: Path, name: str) -> Path:
 
 
 async def _set_attachment_names(project_id: str, names: list[str]) -> None:
-    project = await get_project(project_id)
+    project = get_project(project_id)
     if not project:
         return
     cfg = dict(project.get("config") or {})
     cfg["attachments"] = list(names)
-    await update_config(project_id, cfg)
+    update_config(project_id, cfg)
 
 
 def _list_files(project_id: str) -> list[Path]:

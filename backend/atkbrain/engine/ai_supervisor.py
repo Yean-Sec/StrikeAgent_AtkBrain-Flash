@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 
 from ..config import settings
-from ..agents.pi_runtime import query_text
-from ..agents.session import is_retryable_connect_error
+from atkbrain_native import query_text
+from atkbrain_native import is_retryable_connect_error
 
 SUPERVISOR_SYSTEM = """你是 StrikeAgent_AtkBrain-Flash 的御主，不是执行层。
 从者打完一轮后你再下令；根据简报里的全部信息判断局面，给出下一轮可执行任务。
@@ -148,8 +148,8 @@ _ENUM_SRC = (
 
 
 def supervisor_system_prompt(objective: str | None = None, *, output_lang: object = None) -> str:
-    from ..objective import objective_allows_flag, objective_is_src
-    from ..i18n.prompts import with_output_lang
+    from atkbrain_native import objective_allows_flag, objective_is_src
+    from atkbrain_native import with_output_lang
     if objective_allows_flag(objective):
         extra = _ENUM_CTF
     elif objective_is_src(objective):
@@ -320,7 +320,7 @@ def graph_has_login_or_surface(graph: dict | None) -> bool:
         if isinstance(n, dict) and str(n.get("type") or "").lower() == "credential":
             return True
     try:
-        from ..graph.hypothesize import surfaces_from_graph_nodes
+        from atkbrain_native import surfaces_from_graph_nodes
         if surfaces_from_graph_nodes(graph):
             return True
     except Exception:
@@ -350,7 +350,7 @@ def refine_supervisor_plan(
         if plan.stall == "none":
             plan.stall = "method"
     try:
-        from ..graph.hypothesize import needs_channel_oracle as _needs_oracle
+        from atkbrain_native import needs_channel_oracle as _needs_oracle
         oracle = bool(_needs_oracle(graph))
     except Exception:
         oracle = False
@@ -361,7 +361,7 @@ def refine_supervisor_plan(
         plan.defer_families = [
             t for t in (plan.defer_families or []) if t != "channel_oracle"
         ]
-        from .advisor_bind import (
+        from atkbrain_native import (
             ORACLE_DIAG, ORACLE_KEEP, strip_premature_timing_bans,
             surface_false_close,
         )
@@ -494,21 +494,22 @@ async def consult_supervisor(
     wait = float(timeout if timeout is not None else getattr(settings, "supervisor_timeout_sec", 360) or 360)
     attempt_cap = float(getattr(settings, "supervisor_attempt_timeout_sec", 90) or 90)
     inner = max(5.0, min(wait, attempt_cap if attempt_cap > 0 else wait))
-    from ..agents.pi_runtime import query_text, role_model
+    from atkbrain_native import query_text, role_model
     model = role_model(getattr(settings, "supervisor_model", None))
     retries = max(1, int(getattr(settings, "claude_connect_retries", 4) or 4))
     last_exc: BaseException | None = None
     for attempt in range(1, retries + 1):
         try:
-            blob = await query_text(
-                system_prompt=system_prompt or SUPERVISOR_SYSTEM,
-                user_prompt=brief,
-                cwd=_advisor_cwd(),
-                timeout=inner,
-                tools=False,
-                model=model,
-                role="supervisor",
-                project_id=project_id or "",
+            blob = await asyncio.to_thread(
+                query_text,
+                system_prompt or SUPERVISOR_SYSTEM,
+                brief,
+                _advisor_cwd(),
+                inner,
+                False,
+                model,
+                "supervisor",
+                project_id or "",
             )
             if blob:
                 return parse_supervisor_plan(blob)

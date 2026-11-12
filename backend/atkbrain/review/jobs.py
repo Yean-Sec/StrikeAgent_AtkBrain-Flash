@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from ..i18n.strings import msg
+from atkbrain_native import msg
 
 _JOBS: dict[str, dict[str, Any]] = {}
 _ACTIVE: dict[tuple[str, str, str], str] = {}
@@ -209,7 +209,7 @@ def _idle_lock(pid: str) -> asyncio.Lock:
 
 
 def live_hunt_agent(pid: str) -> Any | None:
-    from ..engine.scheduler import manager
+    from atkbrain_native import hunt_manager as manager
 
     if not manager.is_running(pid):
         return None
@@ -225,37 +225,15 @@ async def _run_on_live(agent: Any, finding: dict, mode: str, job_id: str = "") -
 
 
 async def _run_idle(project: dict, finding: dict, mode: str, job_id: str = "") -> None:
-    from ..agents.session import ProjectAgent
-    from ..projects import build_scope
-
-    pid = str(project.get("id") or "")
-    live = live_hunt_agent(pid)
-    if live is not None:
-        await _run_on_live(live, finding, mode, job_id)
-        return
-    agent = ProjectAgent(project, build_scope(project))
-    agent._owns_mcp = True
-    try:
-        await agent.connect()
-        await agent.review_one(finding, mode, job_id=job_id)
-    finally:
-        live_now = live_hunt_agent(pid)
-        if live_now is not None and live_now is not agent:
-            agent._owns_mcp = False
-        try:
-            await agent.close()
-        except Exception:
-            pass
+    from atkbrain_native import run_review_job
+    await asyncio.to_thread(run_review_job, project, finding, mode, job_id)
 
 
 async def _execute(job_id: str, project: dict, finding: dict, mode: str) -> None:
     pid = str(project.get("id") or "")
     try:
-        live = live_hunt_agent(pid)
-        if live is not None:
-            await _run_on_live(live, finding, mode, job_id)
-        else:
-            await _run_idle(project, finding, mode, job_id)
+        from atkbrain_native import run_review_job
+        await asyncio.to_thread(run_review_job, project, finding, mode, job_id)
         release(job_id, status="done")
     except Exception as e:
         release(job_id, status="error", error=str(e)[:240])
@@ -298,7 +276,7 @@ def schedule_drain(project: dict | None) -> None:
     if not pid or pid in _DRAINING:
         return
     try:
-        from ..engine.scheduler import manager
+        from atkbrain_native import hunt_manager as manager
         if getattr(manager, "shutting_down", False):
             return
     except Exception:
@@ -321,15 +299,17 @@ def schedule_drain(project: dict | None) -> None:
 
 
 async def _drain(project: dict) -> None:
-    from ..graph.store import findings_pending_review
+    from ..events import emit
+    from atkbrain_native import findings_pending_review
 
     pid = str(project.get("id") or "")
     attempts: dict[tuple[str, str], int] = {}
+    announced = False
     try:
         async with _DRAIN_SEM:
             while True:
                 try:
-                    from ..engine.scheduler import manager
+                    from atkbrain_native import hunt_manager as manager
                     if getattr(manager, "shutting_down", False):
                         return
                 except Exception:
@@ -344,7 +324,7 @@ async def _drain(project: dict) -> None:
                             pass
                     return
                 try:
-                    pending = await findings_pending_review(pid)
+                    pending = findings_pending_review(pid)
                 except Exception:
                     return
                 item = None
@@ -365,6 +345,15 @@ async def _drain(project: dict) -> None:
                     break
                 if item is None or not mode:
                     return
+                if not announced:
+                    announced = True
+                    try:
+                        await emit(
+                            pid, "log",
+                            {"level": "info", "message": "猎面已停，未完成的二次验证会继续做到队列结束。"},
+                        )
+                    except Exception:
+                        pass
                 fid = str(item.get("id") or "")
                 job = try_claim(pid, fid, mode, source="auto")
                 if job is None:
@@ -380,7 +369,7 @@ async def _drain(project: dict) -> None:
                     release(job["id"], status="error", error=str(e)[:240])
                 still = []
                 try:
-                    still = await findings_pending_review(pid)
+                    still = findings_pending_review(pid)
                 except Exception:
                     still = []
                 still_needs = False
@@ -402,14 +391,14 @@ async def resume_pending_reviews() -> None:
     """进程起来后，把空闲项目里没做完的复核接着做。正在跑的猎自己会拉起复核。"""
     await asyncio.sleep(3)
     try:
-        from ..engine.scheduler import manager
+        from atkbrain_native import hunt_manager as manager
         if getattr(manager, "shutting_down", False):
             return
     except Exception:
         return
     from ..db import db
-    from ..graph.store import findings_pending_review
-    from ..projects import get_project
+    from atkbrain_native import findings_pending_review
+    from atkbrain_native import get_project
 
     try:
         rows = await db.fetchall("SELECT id, status FROM projects")
@@ -422,13 +411,13 @@ async def resume_pending_reviews() -> None:
         if not pid:
             continue
         try:
-            pending = await findings_pending_review(pid)
+            pending = findings_pending_review(pid)
         except Exception:
             continue
         if not pending:
             continue
         try:
-            proj = await get_project(pid)
+            proj = get_project(pid)
         except Exception:
             proj = None
         if proj:

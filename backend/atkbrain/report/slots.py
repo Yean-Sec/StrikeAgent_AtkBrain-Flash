@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from .writeup import real_poc_text
-from ..graph.model import display_finding_severity, node_is_landed_shell
-from ..i18n.locale import get_report_lang, normalize_locale, set_report_lang
-from ..i18n.report_labels import apply_shell_chrome, kind_map, lab, pn_map, sev_map, verify_map
+from atkbrain_native import display_finding_severity, node_is_landed_shell
+from atkbrain_native import (
+    apply_shell_chrome, get_report_lang, kind_map, lab, normalize_locale,
+    pn_map, set_report_lang, sev_map, verify_map,
+)
 
 THEME_REV = "2026.09.02.1"
 PROMPT_REV = "2026.09.02.1"
@@ -370,22 +372,22 @@ def _asset_map_svg(assets: list[dict]) -> str:
         title = sanitize_visible(str(a.get("title") or a.get("key") or lab("asset")))[:28]
         raw_kind = str(a.get("kind") or "")
         kind = kind_map().get(raw_kind, lab("asset"))
-        stroke = "#c64545" if raw_kind in ("vuln", "danger") else ("#3E78C2" if raw_kind == "service" else "#cc785c")
+        stroke = "#c64545" if raw_kind in ("vuln", "danger") else ("#5db8a6" if raw_kind == "service" else "#4c7dff")
         boxes.append(
             f'<g filter="url(#am-shadow)">'
-            f'<rect x="{x}" y="{y}" width="240" height="62" rx="14" fill="#fffdf8" '
+            f'<rect x="{x}" y="{y}" width="240" height="62" rx="14" fill="#ffffff" '
             f'stroke="{stroke}" stroke-width="1.6"/>'
             f'<text x="{x + 120}" y="{y + 24}" text-anchor="middle" font-size="12" '
             f'font-weight="700" fill="{stroke}">{_esc(kind)}</text>'
             f'<text x="{x + 120}" y="{y + 44}" text-anchor="middle" font-size="14" '
-            f'font-weight="700" fill="#141413">{_esc(title)}</text></g>'
+            f'font-weight="700" fill="#243044">{_esc(title)}</text></g>'
         )
     return (
         '<div class="asset-map"><h4>' + _esc(lab("asset.map")) + '</h4>'
         f'<p class="am-sub">{lab("asset.map_sub", n=len(assets))}</p>'
         f'<svg viewBox="0 0 1120 {height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{_esc_attr(lab("asset.map"))}">'
         "<defs><filter id=\"am-shadow\" x=\"-12%\" y=\"-12%\" width=\"124%\" height=\"140%\">"
-        '<feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#141413" flood-opacity="0.07"/>'
+        '<feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#243044" flood-opacity="0.07"/>'
         "</filter></defs>"
         f"{''.join(boxes)}</svg></div>"
     )

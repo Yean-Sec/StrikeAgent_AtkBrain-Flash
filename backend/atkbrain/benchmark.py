@@ -16,7 +16,7 @@ import httpx
 
 from .config import benchmark_slot_limit, settings
 from .db import db, new_id, now, _dumps, _loads
-from .scope import Scope
+from atkbrain_native import Scope
 
 _IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 _UC_NUM_RE = re.compile(r"(\d+)")
@@ -384,13 +384,13 @@ async def _client_for_parent(parent: dict) -> BenchmarkClient:
 
 async def _client_for_sub(sub: dict) -> tuple[BenchmarkClient, str | None]:
     """子项目：token 从父 benchmark 项目取（不在子项目冗余存 token）。"""
-    from .projects import get_project
+    from atkbrain_native import get_project
     bm = _bm_cfg(sub)
     uc = bm.get("unique_code")
     base = bm.get("base_url") or settings.benchmark_base_url
     token = settings.benchmark_token
     if sub.get("parent_id"):
-        parent = await get_project(sub["parent_id"])
+        parent = get_project(sub["parent_id"])
         if parent:
             pbm = _bm_cfg(parent)
             base = pbm.get("base_url") or base
@@ -426,8 +426,8 @@ async def parent_env_closed(project: dict | None) -> bool:
     pid = project.get("parent_id")
     if not pid:
         return False
-    from .projects import get_project
-    parent = await get_project(pid)
+    from atkbrain_native import get_project
+    parent = get_project(pid)
     return bool(((parent or {}).get("config") or {}).get("env_closed"))
 
 
@@ -436,20 +436,20 @@ async def mark_environment_closed(sub_project: dict, reason: str) -> None:
     target_id = parent_id or sub_project.get("id")
     if not target_id:
         return
-    from .projects import get_project, update_config
-    p = await get_project(target_id)
+    from atkbrain_native import get_project, update_config
+    p = get_project(target_id)
     if not p:
         return
     cfg = dict(p.get("config") or {})
     cfg["env_closed"] = True
     cfg["env_closed_reason"] = (reason or "")[:240]
     cfg["autopilot"] = False
-    await update_config(target_id, cfg)
+    update_config(target_id, cfg)
 
 
 async def clear_environment_closed(project_id: str) -> None:
-    from .projects import get_project, update_config
-    p = await get_project(project_id)
+    from atkbrain_native import get_project, update_config
+    p = get_project(project_id)
     if not p:
         return
     cfg = dict(p.get("config") or {})
@@ -461,7 +461,7 @@ async def clear_environment_closed(project_id: str) -> None:
     # 否则误杀后 tick 会永远 skipped=autopilot_off。
     if cfg.get("autopilot") is False:
         cfg["autopilot"] = True
-    await update_config(project_id, cfg)
+    update_config(project_id, cfg)
 
 
 async def stop_parent_child_runs(
@@ -476,15 +476,19 @@ async def stop_parent_child_runs(
     """
     if not parent_id:
         return []
-    from .engine.scheduler import manager
-    from .projects import update_status
+    from atkbrain_native import hunt_manager as manager
+    from atkbrain_native import update_status
     rows = await db.fetchall("SELECT id, status FROM projects WHERE parent_id=?", (parent_id,))
     live_ids = [
         r["id"] for r in rows
         if r["id"] != except_id and manager.is_running(r["id"])
     ]
     if live_ids:
-        await asyncio.gather(*(manager.stop(sid) for sid in live_ids), return_exceptions=True)
+        for sid in live_ids:
+            try:
+                manager.stop(sid)
+            except Exception:
+                pass
     stopped = list(live_ids)
     for r in rows:
         kid = r["id"]
@@ -493,7 +497,7 @@ async def stop_parent_child_runs(
         st = str(r["status"] or "")
         if kid in stopped or st in ("running", "queued"):
             try:
-                await update_status(kid, "idle")
+                update_status(kid, "idle")
             except Exception:
                 pass
     return stopped
@@ -528,21 +532,21 @@ async def gate_start_against_closed_env(project: dict | None) -> str | None:
 
 
 async def _merge_parent_config(project_id: str, patch: dict) -> None:
-    from .projects import get_project, update_config
-    p = await get_project(project_id)
+    from atkbrain_native import get_project, update_config
+    p = get_project(project_id)
     if not p:
         return
     cfg = p.get("config") or {}
     cfg.update(patch)
-    await update_config(project_id, cfg)
+    update_config(project_id, cfg)
 
 
 # ---- 编排 -------------------------------------------------------------------
 
 async def import_challenges(project_id: str) -> dict:
     """拉题并为每道题创建 objective=flag 的子项目（去重）；题目清单缓存进父项目 config。"""
-    from .projects import get_project
-    parent = await get_project(project_id)
+    from atkbrain_native import get_project
+    parent = get_project(project_id)
     if not parent or parent.get("kind") != "benchmark":
         raise BenchmarkError("bad_project", "非 benchmark 项目")
     client = await _client_for_parent(parent)
@@ -577,7 +581,7 @@ async def _create_challenge_subproject(parent_id: str, ch: dict, base: str, pare
     if ch.get("correct_flag_count") is not None:
         benchmark["correct_flag_count"] = ch["correct_flag_count"]
     pcfg = (parent or {}).get("config") or {}
-    from .objective import cfg_is_lab_src
+    from atkbrain_native import cfg_is_lab_src
     lab_src = cfg_is_lab_src(pcfg)
     cfg = {
         "objective": "src" if lab_src else "flag",
@@ -858,8 +862,8 @@ async def fetch_hint(sub_project: dict) -> dict:
     cfg["hint"] = hint
     pid = sub_project.get("id")
     if pid:
-        from .projects import update_config
-        await update_config(pid, cfg)
+        from atkbrain_native import update_config
+        update_config(pid, cfg)
     out = {"hint": hint, "cached": False, "unique_code": uc}
     for key in ("cost", "penalty", "score_cost", "deduct"):
         if res.get(key) is not None:
@@ -889,10 +893,10 @@ async def submit_flag(sub_project: dict, flag: str) -> dict:
         if res.get(key) is not None
     }
     if cache:
-        from .projects import update_config
+        from atkbrain_native import update_config
         cfg = sub_project.get("config") or {}
         cfg.setdefault("benchmark", {}).update(cache)
-        await update_config(sub_project["id"], cfg)
+        update_config(sub_project["id"], cfg)
     return res
 
 
@@ -920,7 +924,7 @@ async def reconcile_orphan_containers(parent_id: str | None = None, *, timeout: 
     与 reconcile_open_containers（启动时全关）不同：运行中只关 keep 集合之外的容器，
     避免误杀正在攻击的题。返回 {closed, active_before, keep}。
     """
-    from .engine.scheduler import manager
+    from atkbrain_native import hunt_manager as manager
 
     closed = 0
     active_before = 0
@@ -1047,7 +1051,7 @@ async def reconcile_open_containers(timeout: int = 8, *, keep_unfinished: bool =
 
 async def _completed_sub_ids(subs: list[dict]) -> set[str]:
     """已通关子项目集合：flag 数齐即收工（平台总分差不是漏旗）。"""
-    from .objective import ctf_full_score
+    from atkbrain_native import ctf_full_score
     done: set[str] = set()
     for s in subs:
         cfg = _loads(s["config"]) or {}
@@ -1385,15 +1389,15 @@ async def autopilot_tick(parent_id: str) -> dict:
     时按该遍墙钟轮转（第 2 遍 120 分钟、第 3 遍 180 分钟、之后每次 +60）；
     能塞进并发槽后打到正确 flag 数齐或该遍硬上限。
     """
-    from .engine.scheduler import manager
-    from .engine.hunt_clock import (
+    from atkbrain_native import hunt_manager as manager
+    from atkbrain_native import (
         autopilot_env_gate_action,
         note_autopilot_watchdog,
         parent_keep_alive_status,
     )
-    from .projects import get_project, update_status
+    from atkbrain_native import get_project, update_status
 
-    parent = await get_project(parent_id)
+    parent = get_project(parent_id)
     if not parent or parent.get("kind") != "benchmark":
         return {"running": 0, "started": 0, "remaining": 0}
     marked_closed = bool((parent.get("config") or {}).get("env_closed"))
@@ -1411,7 +1415,7 @@ async def autopilot_tick(parent_id: str) -> dict:
                 await clear_environment_closed(parent_id)
             except Exception:
                 pass
-            parent = await get_project(parent_id) or parent
+            parent = get_project(parent_id) or parent
             print("[autopilot] 平台仍活，已清 env_closed 并恢复填槽")
     if (parent.get("config") or {}).get("autopilot") is False:
         return {"running": 0, "started": 0, "remaining": 0, "skipped": "autopilot_off"}
@@ -1463,7 +1467,7 @@ async def autopilot_tick(parent_id: str) -> dict:
     )
     if nxt_status:
         try:
-            await update_status(parent_id, nxt_status)
+            update_status(parent_id, nxt_status)
         except Exception:
             pass
     progress = await _flag_progress_map(subs)
@@ -1484,19 +1488,19 @@ async def autopilot_tick(parent_id: str) -> dict:
                 else:
                     await h.agent.interrupt()  # type: ignore[attr-defined]
             else:
-                await manager.stop(s["id"])
+                manager.stop(s["id"])
             released.append(s["id"])
         except Exception:
             pass
     for s in subs:
         if s["id"] in completed and s.get("status") != "completed" and not manager.is_running(s["id"]):
             try:
-                await update_status(s["id"], "completed")
+                update_status(s["id"], "completed")
                 cfg = _loads(s["config"]) or {}
                 if cfg.get("completion_reason") != "goal_reached":
                     cfg["completion_reason"] = "goal_reached"
-                    from .projects import update_config
-                    await update_config(s["id"], cfg)
+                    from atkbrain_native import update_config
+                    update_config(s["id"], cfg)
             except Exception:
                 pass
 
@@ -1514,7 +1518,7 @@ async def autopilot_tick(parent_id: str) -> dict:
     queued = [s for s in subs if manager.is_queued(s["id"])]
     running, slots = _live()
 
-    from .objective import cfg_is_lab_src
+    from atkbrain_native import cfg_is_lab_src
     lab_src = cfg_is_lab_src(parent.get("config") or {})
 
     def _cfg(s: dict) -> dict:
@@ -1551,7 +1555,7 @@ async def autopilot_tick(parent_id: str) -> dict:
         if not victim:
             return
         try:
-            await manager.stop(vid)
+            manager.stop(vid)
         except Exception:
             pass
         try:
@@ -1665,7 +1669,7 @@ async def autopilot_tick(parent_id: str) -> dict:
                 hard_cap = first_dwell
                 why = "覆盖预算到点，按题号让槽给尚未开过的题；猎程保留，回头接着打"
             else:
-                from .project_status import ctf_pass_hard_stop_sec, ctf_pass_index
+                from atkbrain_native import ctf_pass_hard_stop_sec, ctf_pass_index
                 ended_map = await real_attempt_counts(
                     [s["id"] for s in running], include_open=False,
                 )
@@ -1831,26 +1835,26 @@ def restart_confirm_detail(project: dict) -> dict:
 
 async def bump_attempt(sub_project: dict) -> None:
     """某题真正开始一次 run 时 +1 尝试次数（用于自动重试上限与调度优先级）。"""
-    from .projects import update_config
+    from atkbrain_native import update_config
     cfg = sub_project.get("config") or {}
     bm = cfg.setdefault("benchmark", {})
     bm["attempts"] = int(bm.get("attempts") or 0) + 1
     try:
-        await update_config(sub_project["id"], cfg)
+        update_config(sub_project["id"], cfg)
     except Exception:
         pass
 
 
 async def scoreboard(project_id: str) -> dict:
     """按平台缓存聚合；旧项目缺缓存时按本地 flags 表回退。"""
-    from .engine.scheduler import manager as _mgr
-    from .graph import store as gstore
-    from .objective import ctf_full_score, ctf_needed_flags
-    from .projects import get_project
-    parent = await get_project(project_id)
+    from atkbrain_native import hunt_manager as _mgr
+    import atkbrain_native as gstore
+    from atkbrain_native import ctf_full_score, ctf_needed_flags
+    from atkbrain_native import get_project
+    parent = get_project(project_id)
     env_closed = bool(((parent or {}).get("config") or {}).get("env_closed"))
     subs = await db.fetchall("SELECT * FROM projects WHERE parent_id=? ORDER BY created_at", (project_id,))
-    stats_map = await gstore.get_stats_batch([s["id"] for s in subs])
+    stats_map = gstore.get_stats_batch([s["id"] for s in subs])
     items = []
     cumulative = 0.0
     total_flags = 0

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .scope import (
+from atkbrain_native import (
     Scope, _IP_RE, _norm_host, forbidden_project_target_reason, is_attacker_identity,
     is_internal_tld, is_loopback, is_platform_endpoint, is_private, is_single_label,
     local_self_hosts,
@@ -120,7 +120,7 @@ def cluster_uses_peer_challenge(*cfgs: dict | None) -> bool:
     资产集群里兄弟子项目是另一台机器或另一个站点，不该出现在本题提示词里，
     也不该被当成「邻题」列出来。范围仍由本项目 Scope 卡住。
     """
-    from .objective import cfg_is_lab_src, objective_allows_flag
+    from atkbrain_native import cfg_is_lab_src, objective_allows_flag
 
     for c in cfgs:
         if not isinstance(c, dict):
@@ -399,7 +399,7 @@ async def try_expand_scope(
         result["reason"] = "attacker_or_loopback"
         return result
     try:
-        from .engine.intranet_reach import is_ssrf_canary_host, ssrf_evidence_is_oracle_only
+        from atkbrain_native import is_ssrf_canary_host, ssrf_evidence_is_oracle_only
         if is_ssrf_canary_host(dst):
             result["reason"] = "ssrf_canary"
             return result
@@ -453,20 +453,19 @@ async def try_expand_scope(
         pass
     try:
         if gstore is not None:
-            from .graph.model import NodeIn
-            await gstore.upsert_node(
+            gstore.upsert_node(
                 project_id,
-                NodeIn(
-                    key=f"target:{dst}",
-                    type="target",
-                    title=f"内网目标 {dst}",
-                    detail=(
+                {
+                    "key": f"target:{dst}",
+                    "type": "target",
+                    "title": f"内网目标 {dst}",
+                    "detail": (
                         f"通过 {mechanism} 触发扩容；跳板：{src or '未知'}；"
                         f"证据摘要：{(evidence or '')[:280]}"
                     ),
-                    tags=["scope", "pivot", f"host:{dst}", "internal", "scope-expanded"]
+                    "tags": ["scope", "pivot", f"host:{dst}", "internal", "scope-expanded"]
                     + (["ssrf"] if mechanism.startswith("ssrf") else []),
-                ),
+                },
                 run_id=run_id,
             )
     except Exception:

@@ -4,12 +4,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from contextvars import ContextVar
+
+# 本次工具调用来自哪个 Pi。二次验证要能重放，不能被猎洞写回后的意图闸挡住。
+tool_caller_role: ContextVar[str] = ContextVar("tool_caller_role", default="")
+
 import httpx
 
 from ..config import settings
-from ..exec.guard import Guard
+from atkbrain_native import Guard
 from ..exec.runner import CmdResult, run_shell
-from ..scope import (
+from atkbrain_native import (
     Scope,
     attacker_lan_forbidden,
     attacker_loopback_forbidden,
@@ -147,7 +152,7 @@ class AgentContext:
         if why:
             return f"越界：{why}。只打当前入口；邻题 IP/端口不是横向。"
         try:
-            from ..engine.hop_auth_gate import apply_kali_direct_reason
+            from atkbrain_native import apply_kali_direct_reason
             via_why = apply_kali_direct_reason(host, self.guard)
             if via_why:
                 return via_why
@@ -175,9 +180,9 @@ class AgentContext:
         if self._ssrf_gw_ts and (now - self._ssrf_gw_ts) < 20.0:
             return h in self._ssrf_gw_hosts
         try:
-            from ..graph import store as gstore
+            import atkbrain_native as gstore
             from ..scope_pivot import ssrf_gateway_hosts
-            g = await gstore.get_graph(self.project_id)
+            g = gstore.get_graph(self.project_id)
             self._ssrf_gw_hosts = ssrf_gateway_hosts(g)
         except Exception:
             self._ssrf_gw_hosts = set()
@@ -194,14 +199,14 @@ class AgentContext:
         if graph is None and (now - float(getattr(self, "_gate_mono", 0) or 0)) < 4.0:
             return
         try:
-            from ..engine.intranet_reach import apply_gate_to_guard
-            from ..graph import store as gstore
+            from atkbrain_native import apply_gate_to_guard
+            import atkbrain_native as gstore
             g = graph
             if g is None:
-                g = await gstore.get_graph(self.project_id)
+                g = gstore.get_graph(self.project_id)
             brief = ""
             try:
-                from .prompts import build_brief
+                from atkbrain_native import build_brief
                 brief = build_brief(self.project or {}, graph=g)
             except Exception:
                 brief = ""
@@ -308,8 +313,8 @@ class AgentContext:
         data: str | None = None,
         **_kw,
     ) -> dict:
-        from ..exec.guard import target_destructive_reason
-        from ..scope import public_hosts_in_text, sensitive_attack_reason
+        from atkbrain_native import target_destructive_reason
+        from atkbrain_native import public_hosts_in_text, sensitive_attack_reason
         blob = f"{method} {url} {data or ''}"
         for h in public_hosts_in_text(blob):
             why = sensitive_attack_reason(h)

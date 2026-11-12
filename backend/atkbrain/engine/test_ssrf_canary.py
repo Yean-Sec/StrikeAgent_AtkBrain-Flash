@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from .intranet_reach import (
+from atkbrain_native import (
     hop_auth_eligible,
     hosts_from_capability_observation,
     is_ssrf_canary_host,
@@ -94,7 +94,7 @@ class AbsorbAndHopTests(unittest.TestCase):
         self.assertFalse(node_is_live_intranet(node))
 
     def test_gadget_ignores_search_page_ssrf_word(self) -> None:
-        from ..graph.hypothesize import _node_looks_like_gadget
+        from atkbrain_native import _node_looks_like_gadget
         blob = (
             "auto from http_request https://html.duckduckgo.com/html/"
             "?q=Shopify+UCP+MCP+ucp-agent+profile+SSRF status=0"

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { NavLink, Navigate, useParams } from "react-router-dom";
+import { Navigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../AuthGate";
 import { Modal } from "../components/Modal";
 import { PasswordChangeForm } from "../components/PasswordChangeForm";
 import { useT } from "../i18n";
+import { GuardRules } from "../features/settings/GuardRules";
 
 type HuntClocks = {
   loop_max_turns: number;
@@ -37,7 +38,7 @@ function secToMin(sec: number) {
   return String(Math.round((Number(sec) || 0) / 60));
 }
 
-const SETTINGS_SECTIONS = ["account", "model", "hunt", "review", "proxy"] as const;
+const SETTINGS_SECTIONS = ["account", "model", "hunt", "review", "proxy", "guard"] as const;
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 function isSection(value: string | undefined): value is SettingsSection {
@@ -52,7 +53,6 @@ export function SettingsPage() {
   const [custom, setCustom] = useState("");
   const [proxy, setProxy] = useState<any>(null);
   const [llm, setLlm] = useState({
-    format: "openai" as "openai" | "anthropic",
     model: "",
     base_url: "",
     api_key: "",
@@ -82,7 +82,6 @@ export function SettingsPage() {
     load();
     api.getLlmProfile().then((r) => {
       setLlm({
-        format: r?.format === "anthropic" ? "anthropic" : "openai",
         model: String(r?.model || ""),
         base_url: String(r?.base_url || ""),
         api_key: "",
@@ -117,16 +116,14 @@ export function SettingsPage() {
   };
 
   const llmBody = () => ({
-    format: llm.format,
     model: llm.model.trim(),
     base_url: llm.base_url.trim(),
     api_key: llm.api_key,
   });
 
-  const applyLlm = (r: { format?: string; model?: string; base_url?: string; api_key_hint?: string; api_key_set?: boolean }) => {
+  const applyLlm = (r: { model?: string; base_url?: string; api_key_hint?: string; api_key_set?: boolean }) => {
     setLlm((cur) => ({
       ...cur,
-      format: r?.format === "anthropic" ? "anthropic" : cur.format,
       model: String(r?.model || cur.model),
       base_url: String(r?.base_url || cur.base_url),
       api_key: "",
@@ -289,14 +286,14 @@ export function SettingsPage() {
     { id: "hunt", label: t("settings.navHunt") },
     { id: "review", label: t("settings.navReview") },
     { id: "proxy", label: t("settings.navProxy") },
+    { id: "guard", label: t("settings.navGuard") },
   ];
 
   return (
     <div className="page-container settings-page">
       <header className="page-heading">
         <p className="eyebrow">SYSTEM</p>
-        <h1>{t("settings.title")}</h1>
-        <p>{t("settings.subtitle")}</p>
+        <h1>{nav.find((item) => item.id === section)?.label}</h1>
       </header>
       {message && <p className={/失败|Error|error|already/i.test(message) ? "error-text" : "muted"}>{message}</p>}
       {notice ? (
@@ -308,13 +305,6 @@ export function SettingsPage() {
         </Modal>
       ) : null}
       <div className="settings-shell">
-        <nav className="settings-sub" aria-label={t("settings.title")}>
-          {nav.map((item) => (
-            <NavLink key={item.id} to={`/settings/${item.id}`} className={({ isActive }) => (isActive ? "active" : undefined)}>
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
         <div className="settings-panel">
         {section === "account" && me?.authenticated ? (
           <section className="card-cream">
@@ -497,22 +487,11 @@ export function SettingsPage() {
           <p className="muted">{t("settings.piHint")}</p>
           <div style={{ display: "grid", gap: 12, marginTop: 14, maxWidth: 640 }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span className="muted">{t("settings.format")}</span>
-              <select
-                className="input"
-                value={llm.format}
-                onChange={(e) => setLlm((cur) => ({ ...cur, format: e.target.value === "anthropic" ? "anthropic" : "openai" }))}
-              >
-                <option value="openai">{t("settings.formatOpenai")}</option>
-                <option value="anthropic">{t("settings.formatAnthropic")}</option>
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
               <span className="muted">{t("settings.model")}</span>
               <input
                 className="input mono"
                 value={llm.model}
-                placeholder={llm.format === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1"}
+                placeholder="deepseek-v4-flash"
                 onChange={(e) => setLlm((cur) => ({ ...cur, model: e.target.value }))}
                 spellCheck={false}
               />
@@ -522,7 +501,7 @@ export function SettingsPage() {
               <input
                 className="input mono"
                 value={llm.base_url}
-                placeholder={llm.format === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1"}
+                placeholder="https://api.deepseek.com"
                 onChange={(e) => setLlm((cur) => ({ ...cur, base_url: e.target.value }))}
                 spellCheck={false}
               />
@@ -551,6 +530,7 @@ export function SettingsPage() {
           {llmTest ? <p className={llmTest.ok ? "muted" : "error-text"} style={{ marginTop: 10 }}>{llmTest.text}</p> : null}
         </section>
         ) : null}
+        {section === "guard" ? <GuardRules /> : null}
         </div>
       </div>
     </div>

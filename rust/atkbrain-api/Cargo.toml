@@ -1,0 +1,21 @@
+[package]
+name = "atkbrain-api"
+version = "1.1.0"
+edition = "2021"
+description = "控制台 HTTP 接口。权限在进程内判定。"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+tower-http = { version = "0.6", features = ["cors"] }
+hmac = "0.12"
+sha1 = "0.10"
+hex = "0.4"
+atkbrain-core = { path = "../atkbrain-core" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

@@ -1070,7 +1070,9 @@ export function AttackGraph({ graph, onSelect, selectedKey, onClear }: { graph: 
           <div className="node-popover-type">
             {graphNodeTypeLabel(selectedData)}
             {" · "}
-            {severityLabel(graphNodeDisplaySeverity(selectedData)) || graphNodeDisplaySeverity(selectedData)}
+            <span className="node-popover-sev" style={{ color: severityColor[graphNodeDisplaySeverity(selectedData)] || "var(--body)" }}>
+              {severityLabel(graphNodeDisplaySeverity(selectedData)) || graphNodeDisplaySeverity(selectedData)}
+            </span>
             {selectedData.status ? ` · ${selectedData.status}` : ""}
             {showsShellStar(selectedData) ? " · GETSHELL / RCE" : ""}
           </div>

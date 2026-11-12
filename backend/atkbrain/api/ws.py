@@ -5,9 +5,9 @@ import asyncio
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..engine.scheduler import manager
+from atkbrain_native import hunt_manager as manager
 from ..events import bus, emit
-from ..graph import store as gstore
+import atkbrain_native as gstore
 
 ws_router = APIRouter()
 
@@ -30,7 +30,7 @@ async def project_ws(ws: WebSocket, pid: str):
     await ws.accept()
     q = bus.subscribe(pid)
     try:
-        graph = await gstore.get_graph(pid)
+        graph = gstore.get_graph(pid)
         await ws.send_json({
             "type": "snapshot",
             "payload": graph,
@@ -56,26 +56,26 @@ async def project_ws(ws: WebSocket, pid: str):
                     await emit(pid, "steer", {"content": content, "queued": ok, "from": "chat"})
             elif mtype == "start":
                 if not manager.is_running(pid):
-                    from ..projects import ensure_project_target_safe
+                    from atkbrain_native import ensure_project_target_safe
                     from .. import benchmark as bmk
                     try:
-                        await ensure_project_target_safe(pid)
+                        ensure_project_target_safe(pid)
                     except ValueError as e:
                         await emit(pid, "log", {"level": "error", "message": str(e)})
                         continue
-                    from ..projects import get_project
-                    p = await get_project(pid)
+                    from atkbrain_native import get_project
+                    p = get_project(pid)
                     refuse = await bmk.gate_start_against_closed_env(p)
                     if refuse:
                         await emit(pid, "log", {"level": "warn", "message": refuse})
                         continue
-                    from ..agents.pi_runtime import llm_api_key_configured, llm_key_missing_message
+                    from atkbrain_native import llm_api_key_configured, llm_key_missing_message
                     if not llm_api_key_configured():
                         await emit(pid, "log", {"level": "error", "message": llm_key_missing_message()})
                         continue
                     manager.start(pid, hard_restart=bool(msg.get("confirm_restart")))
             elif mtype == "stop":
-                await manager.halt(pid)
+                manager.halt(pid)
             elif mtype == "ping":
                 await ws.send_json({"type": "pong"})
 

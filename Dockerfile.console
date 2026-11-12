@@ -73,7 +73,8 @@ RUN set -eux; \
     curl -fsSL "https://npmmirror.com/mirrors/node/v${NODE_VER}/node-v${NODE_VER}-${node_arch}.tar.xz" \
       | tar -xJ -C /usr/local --strip-components=1; \
     node --version; \
-    npm --version
+    npm --version; \
+    npm install -g @earendil-works/pi-coding-agent
 
 # 渗透工具：仓库没有的跳过，避免整层失败
 RUN set -eux; \
@@ -104,20 +105,14 @@ RUN set -eux; \
     python3 -m venv /opt/atkbrain/venv; \
     /opt/atkbrain/venv/bin/pip install --upgrade pip; \
     /opt/atkbrain/venv/bin/pip install --no-cache-dir -r /opt/atkbrain/backend/requirements.txt; \
-    npm install -g @earendil-works/pi-coding-agent; \
-    npm cache clean --force; \
-    rm -rf /root/.npm; \
     mkdir -p /opt/atkbrain/backend/data/workspaces \
              /opt/atkbrain/backend/data/loot \
              /opt/atkbrain/backend/data/reports \
              /opt/atkbrain/backend/data/logs \
-             /opt/atkbrain/frontend/dist; \
-    command -v pi >/dev/null; \
-    pi --version || true
+             /opt/atkbrain/frontend/dist
 
 COPY backend/atkbrain /opt/atkbrain/backend/atkbrain
-COPY skills /opt/atkbrain/skills
-COPY pi/extensions /opt/atkbrain/pi/extensions
+COPY pi /opt/atkbrain/pi
 COPY tools /opt/atkbrain/tools
 COPY --from=frontend /src/frontend/dist /opt/atkbrain/frontend/dist
 COPY VERSION /opt/atkbrain/VERSION
@@ -128,7 +123,6 @@ RUN chmod 0755 /opt/atkbrain/docker-console-entrypoint.sh /opt/atkbrain/scripts/
     && find /opt/atkbrain/backend/atkbrain -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true \
     && test -f /opt/atkbrain/frontend/dist/index.html \
     && test -f /opt/atkbrain/VERSION \
-    && test -f /opt/atkbrain/skills/recon-fanout/SKILL.md \
     && test -f /opt/atkbrain/pi/extensions/atkbrain-tools.ts
 
 EXPOSE 2333 2334

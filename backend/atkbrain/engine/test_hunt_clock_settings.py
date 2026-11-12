@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 class HuntClockSettingsTests(unittest.TestCase):
     def test_clamp(self):
-        from atkbrain.engine.hunt_clock_settings import MAX_WALL_SEC, _normalize
+        from atkbrain_native import MAX_WALL_SEC, _normalize
         got = _normalize({
             "redteam_runtime_hard_stop_sec": 99 * 3600,
             "loop_max_turns_redteam": 99999,
@@ -24,14 +24,13 @@ class HuntClockSettingsTests(unittest.TestCase):
 
     def test_persist_and_apply(self):
         from atkbrain.config import settings
-        from atkbrain.engine import hunt_clock_settings as hc
+        import atkbrain_native as hc
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
         p = Path(td.name) / "proxy-settings.json"
         old = {k: getattr(settings, k) for k in hc.CLOCK_KEYS}
         self.addCleanup(lambda: [setattr(settings, k, v) for k, v in old.items()])
-        with patch.object(hc, "_settings_path", lambda: p), \
-             patch("atkbrain.proxy.pool._settings_path", lambda: p):
+        with patch("atkbrain.proxy.pool._settings_path", lambda: p):
             out = hc.set_hunt_clocks({
                 "src_runtime_hard_stop_sec": 3600,
                 "loop_max_turns_src": 3,
@@ -44,7 +43,7 @@ class HuntClockSettingsTests(unittest.TestCase):
             self.assertEqual(data["loop_max_turns_agent"], 3)
 
     def test_redteam_max_turns(self):
-        from atkbrain.project_status import hunt_max_turns
+        from atkbrain_native import hunt_max_turns
         from atkbrain.config import settings
         old = settings.loop_max_turns_agent
         settings.loop_max_turns_agent = 7

@@ -9,7 +9,7 @@ from .config import REPO_ROOT, settings
 
 
 def live_hunt_ids() -> list[str]:
-    from .engine.scheduler import manager
+    from atkbrain_native import hunt_manager as manager
 
     snap = manager.snapshot()
     out: list[str] = []

@@ -6,7 +6,7 @@ import unittest
 
 class CtfPromptTests(unittest.TestCase):
     def test_each_category_has_a_prompt(self):
-        from atkbrain.agents.ctf_prompts import CTF_CATEGORIES, ctf_category_prompt
+        from atkbrain_native import CTF_CATEGORIES, ctf_category_prompt
 
         for key in CTF_CATEGORIES:
             text = ctf_category_prompt(key)
@@ -14,7 +14,7 @@ class CtfPromptTests(unittest.TestCase):
             self.assertGreater(len(text), 80)
 
     def test_brief_includes_category_and_files(self):
-        from atkbrain.agents.prompts import build_brief
+        from atkbrain_native import build_brief
 
         text = build_brief({
             "config": {
@@ -31,7 +31,7 @@ class CtfPromptTests(unittest.TestCase):
         self.assertIn("没有远程入口", text)
 
     def test_reverse_alias(self):
-        from atkbrain.agents.ctf_prompts import normalize_ctf_category
+        from atkbrain_native import normalize_ctf_category
         self.assertEqual(normalize_ctf_category("逆向"), "reverse")
         self.assertEqual(normalize_ctf_category("nope"), "")
 

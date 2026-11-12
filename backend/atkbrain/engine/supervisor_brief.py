@@ -271,7 +271,7 @@ def pending_loot_internal_hosts(
     current_entry: str = "",
 ) -> list[str]:
     """图上正文已出现、尚未进 Scope 的题目内网 IP（不是邻题入口、不是攻击机身份）。"""
-    from ..scope import is_attacker_identity, is_loopback
+    from atkbrain_native import is_attacker_identity, is_loopback
 
     skip: set[str] = set()
     for raw in list(scope_hosts or []) + list(peer_entries or []) + [current_entry]:
@@ -356,7 +356,7 @@ def highlight_chain_line(
     show_frontier_tag: bool = False,
 ) -> str:
     """CTF 不把橙线边权乘积写成「RCE 概率」；那不是夺旗进度。"""
-    from ..objective import FLAG, normalize_objective
+    from atkbrain_native import FLAG, normalize_objective
 
     ctf = normalize_objective(objective) == FLAG
     rce = rce or {}
@@ -1203,7 +1203,7 @@ async def assemble_supervisor_brief(
     compact: bool = False,
 ) -> str:
     """只拼图：节点/边/发现/Intent/否证/flag + 局面摘要。忽略流水参数。"""
-    from ..graph import store as gstore
+    import atkbrain_native as gstore
 
     # 不上御主长摘要：那是简报膨胀主因。当前方案是否跑完用工具次数和已执行轮次表达。
     del last_turn_text
@@ -1240,7 +1240,7 @@ async def assemble_supervisor_brief(
         open_intents = list((graph or {}).get("intents") or [])
         if not open_intents:
             try:
-                open_intents = await gstore.list_open_intents(project_id, limit=intent_limit * 2)
+                open_intents = gstore.list_open_intents(project_id, limit=intent_limit * 2)
             except Exception:
                 open_intents = []
     if facts.peer_entries:
@@ -1293,7 +1293,7 @@ async def assemble_supervisor_brief(
     ):
         facts.postex_pivot = True
     try:
-        from ..graph.hypothesize import live_gadget_tactics
+        from atkbrain_native import live_gadget_tactics
         _gadget = bool(live_gadget_tactics(graph))
     except Exception:
         _gadget = False
@@ -1306,7 +1306,7 @@ async def assemble_supervisor_brief(
     facts.chain_close = bool(facts.chain_live) and not bool(facts.postex_pivot)
     if not facts.channel_oracle_open:
         try:
-            from ..graph.hypothesize import needs_channel_oracle
+            from atkbrain_native import needs_channel_oracle
             facts.channel_oracle_open = bool(
                 needs_channel_oracle(graph) and not facts.chain_live and not facts.chain_close
             )
@@ -1402,11 +1402,11 @@ async def assemble_supervisor_brief(
     ]
     try:
         from ..config import settings as _st
-        from .spiral import format_coverage_brief, load_ledger, scan_ban_repeats
+        from atkbrain_native import format_coverage_brief, load_ledger, scan_ban_repeats
         ws = Path(_st.workspaces_dir) / project_id
         ledger = load_ledger(ws)
         cov = format_coverage_brief(ledger, objective=objective)
-        from ..objective import objective_allows_flag, objective_is_src
+        from atkbrain_native import objective_allows_flag, objective_is_src
         heading = "## 已覆盖（扫描账本）" if objective_is_src(objective) else "## 已覆盖（螺旋账本）"
         parts.extend([heading, cov, ""])
         if objective_allows_flag(objective):
@@ -1416,9 +1416,9 @@ async def assemble_supervisor_brief(
     except Exception:
         pass
     try:
-        from ..objective import objective_is_src as _is_src
+        from atkbrain_native import objective_is_src as _is_src
         if _is_src(objective):
-            from .src_surface import format_src_surface_brief
+            from atkbrain_native import format_src_surface_brief
             parts.extend(["## 本轮建议测的类型", format_src_surface_brief(graph), ""])
     except Exception:
         pass

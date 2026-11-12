@@ -9,12 +9,12 @@ export ATKBRAIN_HOST="${ATKBRAIN_HOST:-0.0.0.0}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export HOME="${HOME:-/root}"
 export PATH="/opt/atkbrain/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"
-export PI_TELEMETRY="${PI_TELEMETRY:-0}"
-export PI_SKIP_VERSION_CHECK="${PI_SKIP_VERSION_CHECK:-1}"
-export PI_OFFLINE="${PI_OFFLINE:-1}"
 export ATKBRAIN_PI_BIN="${ATKBRAIN_PI_BIN:-pi}"
 export ATKBRAIN_PI_PROVIDER="${ATKBRAIN_PI_PROVIDER:-deepseek}"
 export ATKBRAIN_PI_MODEL="${ATKBRAIN_PI_MODEL:-deepseek-flash}"
+export PI_TELEMETRY="${PI_TELEMETRY:-0}"
+export PI_SKIP_VERSION_CHECK="${PI_SKIP_VERSION_CHECK:-1}"
+export PI_OFFLINE="${PI_OFFLINE:-1}"
 
 cd /opt/atkbrain/backend
 

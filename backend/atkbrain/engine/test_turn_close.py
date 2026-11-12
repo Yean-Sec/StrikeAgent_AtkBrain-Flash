@@ -5,7 +5,7 @@ import inspect
 import unittest
 from pathlib import Path
 
-from .turn_close import role_wrote_turn_done, turn_must_close
+from atkbrain_native import role_wrote_turn_done, turn_must_close
 
 
 class RoleWroteTurnDoneTests(unittest.TestCase):
@@ -56,23 +56,18 @@ class TrackAgnosticCloseTests(unittest.TestCase):
             self.assertFalse(names & {"objective", "src", "flag", "redteam", "is_benchmark"})
 
     def test_session_waits_first_completed_not_gather_hunters(self) -> None:
-        src = Path(__file__).resolve().parents[1] / "agents" / "session.py"
+        src = Path(__file__).resolve().parents[3] / "rust" / "atkbrain-core" / "src" / "engine.rs"
         text = src.read_text(encoding="utf-8")
-        self.assertIn("asyncio.FIRST_COMPLETED", text)
-        self.assertIn("turn_must_close", text)
-        self.assertIn("WORKER_ABORT_GRACE_SEC", text)
-        self.assertIn("CTF / SRC / 红队同一条", text)
-        # gather 只允许用来关会话，禁止再用来等猎面工人。
-        hunt = text.split("async def run_turn", 1)[1]
-        self.assertNotIn("asyncio.gather(*", hunt)
-        self.assertIn("_abort_roles", hunt)
+        body = text.split("pub fn run_turn", 1)[1].split("fn abort_prompts", 1)[0]
+        self.assertIn("turn_must_close_sec", body)
+        self.assertNotIn("gather", body)
 
     def test_pi_aborts_on_wrapup_text(self) -> None:
-        src = Path(__file__).resolve().parents[1] / "agents" / "pi_runtime.py"
+        src = Path(__file__).resolve().parents[3] / "rust" / "atkbrain-core" / "src" / "pi.rs"
         text = src.read_text(encoding="utf-8")
         self.assertIn("role_wrote_turn_done", text)
-        self.assertIn("await self.abort()", text)
-        self.assertIn("_turn_closed", text)
+        self.assertIn("self.abort()", text)
+        self.assertIn("turn_closed", text)
 
     def test_config_cap_shared(self) -> None:
         from ..config import settings

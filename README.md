@@ -1,14 +1,8 @@
-<p align="center">
-  <img src="docs/assets/icon.svg" width="128" height="128" alt="StrikeAgent" />
-  <img src="docs/assets/times.svg" width="48" height="128" alt="×" />
-  <img src="docs/assets/brand.jpg" width="128" height="128" alt="夜安团队 SEC" />
-</p>
+![StrikeAgent](docs/assets/icon.svg)![×](docs/assets/times.svg)![夜安团队 SEC](docs/assets/brand.jpg)
 
-<p align="center">
-  <sub>StrikeAgent × 夜安团队 SEC</sub>
-</p>
+StrikeAgent × 夜安团队 SEC
 
-<h1 align="center">StrikeAgent_AtkBrain-Flash</h1>
+# StrikeAgent_AtkBrain-Flash
 
 ![本项目提出：自循环 · 自监督 · 自进化](docs/assets/coined-triad.gif)
 
@@ -28,23 +22,23 @@
 
 产品全貌：
 
-![产品全貌](docs/assets/main.gif)
+![产品全貌](docs/assets/projects-home.png)
 
-首页及新建任务：Agent测试与 CTF 两个入口。目标可单条填写，也可导入 txt / csv 批量创建，并填写附加信息。CTF 另选 Web、PWN、逆向、杂项、密码学，并可上传题目附件。
+首页是审计列表，可按形态、赛道和状态筛选。新建项目有 Agent测试 与 CTF 两个入口。目标可单条填写，也可导入 txt / csv 批量创建，并填写附加信息。CTF 另选 Web、PWN、逆向、杂项、密码学，并可上传题目附件。
 
-![首页及新建任务](docs/assets/create-project.png)
+![新建项目](docs/assets/create-project.png)
 
 项目控制台：攻击图、时间线、漏洞、对话。
 
 ![项目控制台](docs/assets/ScreenShot_2026-09-19_230912_075.png)
 
-漏洞库：
+漏洞管理：按赛道、项目和标题筛选，并对单条做二次验证或红队评级。
 
-![漏洞库](docs/assets/ScreenShot_2026-09-19_235824_031.png)
+![漏洞管理](docs/assets/vuln-library.png)
 
 ## 交付报告
 
-<p><i>报告模版</i></p>
+*报告模版*
 
 [打开 HTML](docs/demo/intranet-lab-report.html)
 
@@ -76,7 +70,7 @@ Tsecbench v1 **第 1 名**（`StrikeAgent_AtkBrain-Flash`，97.89 / 100）。腾
 
 两种搭法挑一种。Docker 把控制台、Pi 和常用探测工具打进镜像。Linux 实例不用容器，用 systemd 在这台机器上常驻。不要两套同时占 `2333` / `2334`。
 
-模型不在安装时选定。控制台起来之后，到设置里改 Pi 的 JSON。`.env` 只放本机口令和端口，不要把供应商密钥写进去。数据都在 `backend/data/`（gitignore），升级镜像或重装服务都不会盖掉库、入口和已保存的模型 JSON。
+模型不在安装时选定。控制台起来之后，到设置里填写模型、Base URL 和 API Key。`.env` 只放本机口令和端口，不要把供应商密钥写进去。数据都在 `backend/data/`（gitignore），升级镜像或重装服务都不会盖掉库、入口和已保存的模型配置。
 
 ### Docker 搭建
 
@@ -129,7 +123,7 @@ RHEL / TencentOS：
 sudo dnf install -y python3 python3-pip nodejs npm openssl ca-certificates gcc pkgconf-pkg-config libffi-devel cairo pango gdk-pixbuf2
 ```
 
-发行版自带的 Node 若低于 20，先换成 Node.js 20 再继续。然后装本仓库的 Python 依赖、前端和 Pi：
+发行版自带的 Node 若低于 20，先换成 Node.js 20 再继续。然后装本仓库的 Python 依赖、前端，以及猎面运行时 Pi：
 
 ```bash
 git clone <本仓库 URL>
@@ -137,8 +131,8 @@ cd StrikeAgent_AtkBrain-Flash
 cp .env.example .env
 
 python3 -m pip install -r backend/requirements.txt
-npm install -g @earendil-works/pi-coding-agent
 cd frontend && npm install && cd ..
+npm install -g @earendil-works/pi-coding-agent
 
 sudo scripts/atkbrain-up.sh
 ```
@@ -179,7 +173,7 @@ Docker 镜像里带了常用探测工具。Linux 实例只保证控制台和 Pi 
 
 首次用 `admin` / `admin` 进去，页面会要求马上改密。
 
-然后配置模型。打开控制台的 **设置 → 模型**，选择 OpenAI 或 Anthropic，填写模型、Base URL 和 API Key。OpenAI 走 Chat Completions，Anthropic 走 Messages API。保存后写入 `backend/data/pi-models.json`，之后拉起的 Pi 读这份文件。点「测试连通」会发一条最短请求，确认地址和密钥可用。
+然后配置模型。打开控制台的 **设置 → 模型**，填写模型、Base URL 和 API Key。Pi 使用提供方 `deepseek`，Base URL 可以指向兼容网关。保存后写入 `backend/data/pi-models.json`。点「测试连通」会发一条最短请求，确认地址和密钥可用。
 
 忘了入口或口令：再跑对应搭法的 `panel`。若提示没有明文副本，在 `.env` 设 `ATKBRAIN_ADMIN_PASSWORD` 与 `ATKBRAIN_ADMIN_PASSWORD_RESET=1`。Docker 再执行一次对应系统的 `docker compose ... up -d`。Linux 实例再执行 `sudo scripts/atkbrain-backend.sh restart`。确认能登录后把 RESET 改回 `false`。
 
@@ -189,9 +183,7 @@ Docker 镜像里带了常用探测工具。Linux 实例只保证控制台和 Pi 
 
 仅限已获明确授权的环境。使用即表示你已获得授权并自行承担后果，本项目已经写死了禁止对一些重要域名如：gov、edu等域名的测试，也加强了门卫规则，本项目无任何自带的代理和绕过、免杀等操作！
 
-交流群已满。关注公众号「夜安团队SEC」联系拉群。
+添加微信请备注当前项目，如：SAA。
 
-![夜安团队SEC 公众号名片](docs/assets/wechat-oa.png)
-
-<img src="docs/assets/wechat-group.jpg" alt="夜安-ai自动化交流二群" width="465">
+<img src="docs/assets/wechat-group.jpg" alt="夜安-ai自动化交流二群" width="220"> <img src="docs/assets/wechat-huashu.png" alt="花束" width="220">
 

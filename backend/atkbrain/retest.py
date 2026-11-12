@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .db import db, new_id, now
-from .http_log import bound_exchanges
+from atkbrain_native import bound_exchanges
 
 STILL = "still_reproducible"
 FIXED = "fixed"
@@ -54,7 +54,7 @@ async def retest_finding(project_id: str, finding_id: str) -> dict:
     )
     if not row:
         raise ValueError("漏洞不存在")
-    exchanges = await bound_exchanges(finding_id)
+    exchanges = bound_exchanges(finding_id)
     proof = [x for x in exchanges if x.get("role") == "证明"] or list(exchanges)
     rid = new_id("run_")
     await db.execute(

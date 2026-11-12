@@ -11,7 +11,7 @@ import re
 from urllib.parse import urlparse
 
 from .db import db, new_id, now
-from .scope import _IP_RE, _norm_host, registrable_domain, sensitive_domain_reason
+from atkbrain_native import _IP_RE, _norm_host, registrable_domain, sensitive_domain_reason
 
 KINDS = ("root_domain", "subdomain", "ip", "service", "endpoint", "app")
 _BODY_CAP = 200_000
@@ -215,9 +215,9 @@ async def upsert_asset(
 
 
 async def _project_cfg(project_id: str) -> tuple[dict, dict]:
-    from .projects import get_project
+    from atkbrain_native import get_project
 
-    proj = await get_project(project_id)
+    proj = get_project(project_id)
     if not proj:
         return {}, {}
     cfg = proj.get("config") if isinstance(proj.get("config"), dict) else {}
@@ -240,7 +240,7 @@ async def _vendor_id_for(project_id: str, vendor_name: str | None = None) -> str
 
 async def _authorize_host(project_id: str, host: str) -> None:
     """把这一台已经授权的主机写进 Scope，不带上根域或 www。"""
-    from .scope import Scope
+    from atkbrain_native import Scope
 
     proj, _cfg = await _project_cfg(project_id)
     if not proj:
@@ -496,7 +496,7 @@ def format_untested_brief(rows: list[dict]) -> str:
 
 async def confirm_expansion(project_id: str, *, mode: str, basis: str, value: str = "") -> dict:
     """整域、整段、整家厂商必须单独确认，并写下依据。"""
-    from .scope import Scope
+    from atkbrain_native import Scope
 
     why = (basis or "").strip()
     if not why:
@@ -587,7 +587,7 @@ async def confirm_expansion(project_id: str, *, mode: str, basis: str, value: st
 
 
 async def save_template(project_id: str, name: str) -> dict:
-    from .engine.hunt_clock_settings import get_hunt_clocks
+    from atkbrain_native import get_hunt_clocks
 
     proj, cfg = await _project_cfg(project_id)
     if not proj:

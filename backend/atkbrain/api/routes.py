@@ -7,16 +7,27 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, Response, Up
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..i18n.locale import get_locale, normalize_locale
-from ..i18n.strings import msg
+from atkbrain_native import get_locale, msg, normalize_locale
 from ..config import settings
 from ..db import db, _loads, now
-from ..engine.scheduler import _task_is_cancelling, manager
-from ..graph import store as gstore
-from ..project_status import displayed_status, hunt_hard_stop_info
+from atkbrain_native import hunt_manager as manager
+
+def _task_is_cancelling() -> bool:
+    task = asyncio.current_task()
+    if task is None:
+        return False
+    fn = getattr(task, "cancelling", None)
+    if not callable(fn):
+        return False
+    try:
+        return int(fn()) > 0
+    except Exception:
+        return False
+import atkbrain_native as gstore
+from atkbrain_native import displayed_status, hunt_hard_stop_info
 from ..app_version import check_latest, local_payload, local_version, normalize_ver
 from ..upgrade import live_hunt_ids, start_upgrade
-from ..projects import (
+from atkbrain_native import (
     assert_safe_project_target,
     create_benchmark_project,
     create_cluster_project,
@@ -41,7 +52,8 @@ from ..report.finding_report import (
 from ..report.poc import poc_for_finding
 from .. import cluster as cluster_mod
 from .. import benchmark as bmk
-from ..agents.mcp_http import router as mcp_router
+from ..agents.agent_tools import router as agent_tools_router
+from ..agents.agent_tools import unregister_project_tools
 
 
 def _project_http_target(p: dict | None) -> str:
@@ -54,7 +66,7 @@ def _project_http_target(p: dict | None) -> str:
 
 async def _load_reportable_finding(pid: str, fid: str) -> tuple[dict, dict | None, dict]:
     """加载 finding + 关联节点；rejected / 不存在则 404。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     row = await db.fetchone("SELECT * FROM findings WHERE id=? AND project_id=?", (fid, pid))
@@ -91,17 +103,17 @@ async def _load_reportable_finding(pid: str, fid: str) -> tuple[dict, dict | Non
     return finding, p, related
 
 router = APIRouter(prefix="/api")
-router.include_router(mcp_router)
+router.include_router(agent_tools_router)
 
 
 def _require_llm_key() -> None:
-    from ..agents.pi_runtime import llm_api_key_configured
+    from atkbrain_native import llm_api_key_configured
     if not llm_api_key_configured():
         raise HTTPException(400, msg("llm_key_missing"))
 
 
 async def _require_llm_key_for(pid: str) -> None:
-    from ..agents.pi_runtime import llm_api_key_configured
+    from atkbrain_native import llm_api_key_configured
     if llm_api_key_configured():
         return
     from ..events import emit
@@ -219,7 +231,7 @@ def _proxy_snap() -> dict:
 
 async def _stop_project_tree(pid: str) -> list[str]:
     """先停子项目再停自身，返回实际被 stop 的 id 列表。同级子树并行停，避免 400 个子项目串行卡死。"""
-    child_ids = await list_child_ids(pid)
+    child_ids = list_child_ids(pid)
     nested: list = []
     if child_ids:
         nested = await asyncio.gather(
@@ -231,28 +243,25 @@ async def _stop_project_tree(pid: str) -> list[str]:
         if isinstance(group, BaseException):
             continue
         stopped.extend(group)
-    await manager.halt(pid)
+    manager.halt(pid)
     stopped.append(pid)
     return stopped
 
 
 async def _set_benchmark_autopilot(pid: str, enabled: bool) -> None:
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p or p.get("kind") != "benchmark":
         return
     cfg = dict(p.get("config") or {})
     if bool(cfg.get("autopilot", True)) == bool(enabled):
         return
     cfg["autopilot"] = bool(enabled)
-    await update_config(pid, cfg)
+    update_config(pid, cfg)
 
 
 @router.get("/health")
 async def health(request: Request):
-    import shutil
-    import subprocess
-
-    from ..agents.pi_runtime import pi_bin
+    from atkbrain_native import pi_runtime_status
     from ..auth.entry import is_loopback_peer, peer_host
     from ..auth.gate import auth_ok
 
@@ -261,24 +270,8 @@ async def health(request: Request):
             return {"ok": True}
         raise HTTPException(401, "login-required")
 
-    from ..agents.pi_runtime import llm_api_key_configured
-
-    bin_path = shutil.which(pi_bin()) or shutil.which("pi")
-    try:
-        if not llm_api_key_configured():
-            raise RuntimeError("llm_key_missing")
-        if not bin_path:
-            raise FileNotFoundError("pi not found in PATH")
-        ver = subprocess.check_output(
-            [bin_path, "--version"], timeout=8, text=True, stderr=subprocess.STDOUT,
-        ).strip()
-        claude_sdk = {"state": "ready", "label": "Pi 就绪", "version": ver[:80], "bin": bin_path}
-    except Exception as exc:
-        if str(exc) == "llm_key_missing":
-            claude_sdk = {"state": "unavailable", "label": "未配置大模型密钥", "error": "DEEPSEEK_API_KEY missing"}
-        else:
-            claude_sdk = {"state": "unavailable", "label": "Pi 不可用", "error": str(exc)[:160]}
-    from ..agents.brief_creds import CREDS_MODE
+    claude_sdk = pi_runtime_status()
+    from atkbrain_native import CREDS_MODE
     return {
         "ok": True,
         "version": local_version(),
@@ -340,7 +333,7 @@ async def apply_version(request: Request):
 
 @router.get("/settings")
 async def get_settings():
-    from ..agents.pi_runtime import console_model, role_model
+    from atkbrain_native import console_model, role_model
     return {
         "concurrency": manager.snapshot(),
         "proxy": _proxy_snap(),
@@ -371,7 +364,7 @@ def _webhook_settings() -> dict:
 
 
 def _hunt_clocks() -> dict:
-    from ..engine.hunt_clock_settings import get_hunt_clocks
+    from atkbrain_native import get_hunt_clocks
     return get_hunt_clocks()
 
 
@@ -384,7 +377,7 @@ async def set_review_flags(req: ReviewFlagsReq):
 
 @router.post("/settings/hunt-clocks")
 async def set_hunt_clocks(req: HuntClocksReq):
-    from ..engine.hunt_clock_settings import set_hunt_clocks as _set
+    from atkbrain_native import set_hunt_clocks as _set
     clocks = _set(req.model_dump(exclude_none=True))
     return {
         "hunt_clocks": clocks,
@@ -398,7 +391,7 @@ async def set_hunt_clocks(req: HuntClocksReq):
 @router.post("/settings/concurrency")
 async def set_concurrency(req: ConcurrencyReq):
     """按赛道设置项目并发；顶栏只闸项目槽。"""
-    val = await manager.set_concurrency(req.value, track=req.track or "redteam")
+    val = manager.set_concurrency(req.value, track=req.track or "redteam")
     snap = manager.snapshot()
     return {
         "concurrency_limit": snap["concurrency_limit"],
@@ -442,29 +435,29 @@ async def api_proxy_verify():
 
 @router.get("/settings/pi-models")
 async def api_pi_models_get():
-    from ..agents.pi_runtime import pi_models_text
+    from atkbrain_native import pi_models_text
     return {"text": pi_models_text()}
 
 
 @router.post("/settings/pi-models")
 async def api_pi_models_set(req: PiModelsReq):
-    from ..agents.pi_runtime import save_pi_models_text
+    from atkbrain_native import pi_models_text, save_pi_models_text
     try:
         save_pi_models_text(req.text or "")
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"ok": True, "text": req.text or ""}
+    return {"ok": True, "text": pi_models_text()}
 
 
 @router.get("/settings/llm")
 async def api_llm_profile():
-    from ..agents.pi_runtime import llm_profile
+    from atkbrain_native import llm_profile
     return llm_profile()
 
 
 @router.post("/settings/llm")
 async def api_llm_profile_set(req: LlmProfileReq):
-    from ..agents.pi_runtime import save_llm_profile
+    from atkbrain_native import save_llm_profile
     try:
         view = save_llm_profile(
             fmt=req.format,
@@ -479,13 +472,97 @@ async def api_llm_profile_set(req: LlmProfileReq):
 
 @router.post("/settings/llm/test")
 async def api_llm_profile_test(req: LlmProfileReq):
-    from ..agents.pi_runtime import probe_llm
-    return await probe_llm(
-        fmt=req.format,
-        model=req.model,
-        base_url=req.base_url,
-        api_key=req.api_key,
+    from atkbrain_native import probe_llm
+    return await asyncio.to_thread(
+        probe_llm, req.model, req.base_url, req.api_key, req.format or "",
     )
+
+
+class GuardRuleIn(BaseModel):
+    name: str = ""
+    pattern: str = ""
+    reason: str = ""
+    enabled: bool = True
+
+
+class GuardEnabledIn(BaseModel):
+    enabled: bool = True
+
+
+class ToolExplainIn(BaseModel):
+    question: str = ""
+    command: str = ""
+    output: str = ""
+    page: str = ""
+    path: str = ""
+    project_id: str = ""
+
+
+@router.get("/guard/rules")
+async def api_guard_rules():
+    from atkbrain_native import builtin_guard_rules, guard_list_custom
+    return {"builtin": builtin_guard_rules(), "custom": guard_list_custom()}
+
+
+@router.post("/guard/rules")
+async def api_guard_rule_create(req: GuardRuleIn):
+    from atkbrain_native import guard_create_rule
+    try:
+        return guard_create_rule(
+            name=req.name, pattern=req.pattern, reason=req.reason, enabled=req.enabled,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/guard/rules/{rule_id}")
+async def api_guard_rule_enabled(rule_id: str, req: GuardEnabledIn):
+    from atkbrain_native import guard_set_enabled
+    try:
+        return guard_set_enabled(rule_id, req.enabled)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.delete("/guard/rules/{rule_id}")
+async def api_guard_rule_delete(rule_id: str):
+    from atkbrain_native import guard_delete_rule
+    try:
+        guard_delete_rule(rule_id)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    return {"ok": True}
+
+
+@router.post("/explain")
+async def api_explain(req: ToolExplainIn):
+    from ..tool_explain import explain
+    try:
+        reply = await explain(
+            req.project_id, req.question, req.command, req.output,
+            page=req.page, path=req.path,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    return {"reply": reply}
+
+
+@router.post("/projects/{pid}/tool-explain")
+async def api_tool_explain(pid: str, req: ToolExplainIn):
+    from ..tool_explain import explain
+    try:
+        reply = await explain(pid, req.question, req.command, req.output, page=req.page, path=req.path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    return {"reply": reply}
 
 
 def _slim_list_config(cfg: dict | None) -> dict:
@@ -528,7 +605,7 @@ def _trim_event_payload(payload: dict | None, limit: int = 400) -> dict:
 
 @router.get("/projects")
 async def api_list_projects():
-    projs = await list_projects()
+    projs = list_projects()
     parent_ids = [p["id"] for p in projs]
     child_rows = []
     if parent_ids:
@@ -540,7 +617,7 @@ async def api_list_projects():
     child_ids_by_parent: dict[str, list[str]] = {pid: [] for pid in parent_ids}
     for row in child_rows:
         child_ids_by_parent.setdefault(row["parent_id"], []).append(row["id"])
-    stats_map = await gstore.get_stats_batch(parent_ids + [r["id"] for r in child_rows])
+    stats_map = gstore.get_stats_batch(parent_ids + [r["id"] for r in child_rows])
 
     def rollup(items: list[dict]) -> dict:
         if not items:
@@ -611,13 +688,13 @@ async def api_create_project(req: CreateProjectReq):
         req.kind == "cluster" and bool(req.base_url and req.token)
     )
     if track == "ctf" and not bench:
-        from ..agents.ctf_prompts import normalize_ctf_category
+        from atkbrain_native import normalize_ctf_category
         category = normalize_ctf_category(req.ctf_category)
         if not category:
             raise HTTPException(400, "CTF 需要选择题型：Web、PWN、逆向、杂项、密码学")
         cfg["ctf_category"] = category
     if track == "agent":
-        from ..agents.brief_creds import extract_supplied_auth, merge_supplied_auth
+        from atkbrain_native import extract_supplied_auth, merge_supplied_auth
         supplied = merge_supplied_auth(
             extract_supplied_auth(hint),
             {"user": req.auth_user, "password": req.auth_password, "token": req.auth_token},
@@ -628,11 +705,11 @@ async def api_create_project(req: CreateProjectReq):
         if req.kind == "cluster" and track == "ctf" and req.base_url and req.token:
             cfg["track"] = "ctf"
             cfg["objective"] = "flag"
-            proj = await create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
+            proj = create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
         elif req.kind == "cluster" and track == "agent" and req.base_url and req.token:
             cfg["track"] = "agent"
             cfg["objective"] = "agent"
-            proj = await create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
+            proj = create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
         elif req.kind == "benchmark":
             if not req.base_url or not req.token:
                 raise HTTPException(400, "评测项目需要提供 base_url 与 token")
@@ -642,11 +719,11 @@ async def api_create_project(req: CreateProjectReq):
             else:
                 cfg["track"] = "ctf"
                 cfg["objective"] = "flag"
-            proj = await create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
+            proj = create_benchmark_project(req.name or "benchmark", req.base_url, req.token, cfg)
         elif req.kind == "cluster":
             if not req.assets:
                 raise HTTPException(400, "集群项目需要提供资产列表 assets")
-            proj = await create_cluster_project(req.name or "cluster", req.assets, cfg)
+            proj = create_cluster_project(req.name or "cluster", req.assets, cfg)
             assets = (proj.get("config") or {}).get("assets") or req.assets
             hosts, _ = cluster_mod._hosts_from_assets(assets)
             job = cluster_mod.schedule_cluster_import(
@@ -657,9 +734,9 @@ async def api_create_project(req: CreateProjectReq):
             if not (req.target or "").strip():
                 if track != "ctf":
                     raise HTTPException(400, "请至少填写一个目标")
-                proj = await create_offline_ctf_project(req.name, cfg)
+                proj = create_offline_ctf_project(req.name, cfg)
             else:
-                proj = await create_single_project(
+                proj = create_single_project(
                     req.name, req.target, req.ports,
                     allow_subdomains=False, mode=req.mode, config=cfg,
                 )
@@ -672,7 +749,7 @@ async def api_create_project(req: CreateProjectReq):
             "UPDATE projects SET category=COALESCE(?, category), updated_at=? WHERE id=?",
             ((str(req.category).strip()[:80] if req.category else None), now(), proj["id"]),
         )
-        fresh = await get_project(proj["id"])
+        fresh = get_project(proj["id"])
         if fresh:
             extra = {k: proj[k] for k in ("importing", "import_progress", "auto_started") if k in proj}
             proj = {**fresh, **extra}
@@ -682,7 +759,7 @@ async def api_create_project(req: CreateProjectReq):
 @router.post("/projects/{pid}/challenge-files")
 async def api_challenge_files(pid: str, files: list[UploadFile] = File(...)):
     """CTF 题目附件。写入 workspace/challenge，并抄给已有子项目。"""
-    project = await get_project(pid)
+    project = get_project(pid)
     if not project:
         raise HTTPException(404, msg("project_missing"))
     cfg = project.get("config") or {}
@@ -713,7 +790,7 @@ async def api_preview_assets(req: PreviewAssetsReq):
 
 @router.get("/projects/{pid}")
 async def api_get_project(pid: str):
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     # 评测/集群父项目不跑攻击图
@@ -726,7 +803,7 @@ async def api_get_project(pid: str):
             **p, "config": cfg, "graph": None,
             "running": False, "run_id": None,
         }
-    g = await gstore.get_graph(pid)
+    g = gstore.get_graph(pid)
     h = manager.get(pid)
     running = manager.is_running(pid)
     queued = manager.is_queued(pid)
@@ -739,7 +816,7 @@ async def api_get_project(pid: str):
         )
         if run_row and not run_row["ended_at"]:
             started_at = run_row["started_at"]
-    from ..project_status import anchor_hunt_elapsed
+    from atkbrain_native import anchor_hunt_elapsed
     cfg["hunt"] = anchor_hunt_elapsed(
         cfg.get("hunt") if isinstance(cfg.get("hunt"), dict) else {},
         running=running,
@@ -763,7 +840,9 @@ async def api_batch_delete_projects(req: BatchDeleteReq):
     stopped: list[str] = []
     for pid in dict.fromkeys(ids):  # 保序去重
         stopped.extend(await _stop_project_tree(pid))
-    result = await delete_projects(ids)
+    for gone in dict.fromkeys([*ids, *stopped]):
+        unregister_project_tools(gone)
+    result = delete_projects(ids)
     return {"ok": True, **result, "stopped": stopped}
 
 
@@ -778,7 +857,7 @@ async def api_batch_stop_projects(req: BatchRunReq):
         raise HTTPException(400, "ids 不能为空")
     for pid in dict.fromkeys(ids):
         try:
-            if not await get_project(pid):
+            if not get_project(pid):
                 missing.append(pid)
                 continue
             stopped.extend(await _stop_project_tree(pid))
@@ -799,13 +878,13 @@ async def api_batch_start_projects(req: BatchRunReq):
     skipped: list[dict] = []
     missing: list[str] = []
     for pid in dict.fromkeys(str(x).strip() for x in req.ids if str(x).strip()):
-        project = await get_project(pid)
+        project = get_project(pid)
         if not project:
             missing.append(pid)
             continue
-        target_ids = await list_child_ids(pid) if project["kind"] in ("cluster", "benchmark") else [pid]
+        target_ids = list_child_ids(pid) if project["kind"] in ("cluster", "benchmark") else [pid]
         for target_id in target_ids:
-            child = await get_project(target_id)
+            child = get_project(target_id)
             if not child:
                 continue
             if manager.is_running(target_id):
@@ -822,27 +901,29 @@ async def api_batch_start_projects(req: BatchRunReq):
 
 @router.delete("/projects/{pid}")
 async def api_delete_project(pid: str):
-    if not await get_project(pid):
+    if not get_project(pid):
         raise HTTPException(404, msg("project_missing"))
     stopped = await _stop_project_tree(pid)
-    await delete_project(pid)
+    for gone in stopped:
+        unregister_project_tools(gone)
+    delete_project(pid)
     return {"ok": True, "stopped": stopped}
 
 
 @router.patch("/projects/{pid}/output_lang")
 async def api_set_output_lang(pid: str, req: OutputLangReq):
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     cfg = dict(p.get("config") or {})
     cfg["output_lang"] = "zh"
-    await update_config(pid, cfg)
+    update_config(pid, cfg)
     return {"ok": True, "output_lang": "zh"}
 
 
 @router.post("/projects/{pid}/start")
 async def api_start(pid: str, confirm_restart: bool = Query(False)):
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     if p["kind"] in ("cluster", "benchmark"):
@@ -868,17 +949,17 @@ async def api_start(pid: str, confirm_restart: bool = Query(False)):
 
 @router.post("/projects/{pid}/stop")
 async def api_stop(pid: str):
-    await manager.halt(pid)
+    manager.halt(pid)
     return {"ok": True}
 
 
 @router.patch("/projects/{pid}")
 async def api_rename_project(pid: str, req: RenameProjectReq):
     """修改项目名称（集群会同步子项目「集群名 · host」前缀）。"""
-    if not await get_project(pid):
+    if not get_project(pid):
         raise HTTPException(404, msg("project_missing"))
     try:
-        return await rename_project(pid, req.name)
+        return rename_project(pid, req.name)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -895,7 +976,7 @@ async def api_steer(pid: str, req: SteerReq):
 
 @router.get("/projects/{pid}/graph")
 async def api_graph(pid: str):
-    return await gstore.get_graph(pid)
+    return gstore.get_graph(pid)
 
 
 _PINNED_EVENT_TYPES = ("steer", "drift_alert", "supervisor", "finding_review", "report_export")
@@ -953,7 +1034,7 @@ async def api_runs(pid: str):
 
 @router.get("/projects/{pid}/report")
 async def api_report(pid: str, format: str = Query("html"), lang: str | None = Query(None)):
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     fmt = (format or "html").lower()
@@ -988,7 +1069,7 @@ async def api_report_export_start(
     pid: str, format: str = Query("html"), lang: str | None = Query(None),
 ):
     """启动母版填槽报告任务，返回进度可轮询的 job。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     fmt = (format or "html").lower()
@@ -1038,7 +1119,7 @@ async def api_report_export_file(pid: str, jid: str):
 
 @router.post("/projects/{pid}/triage")
 async def api_triage(pid: str):
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     if p["kind"] != "cluster":
@@ -1049,7 +1130,7 @@ async def api_triage(pid: str):
 @router.post("/projects/{pid}/refold_machines")
 async def api_refold_machines(pid: str):
     """按同 FQDN / 同 DNS IP 折叠 idle/error 子项目。不自动开跑。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     if p["kind"] != "cluster":
@@ -1064,7 +1145,7 @@ async def api_refold_machines(pid: str):
 async def api_subprojects(pid: str):
     # 只用轻量 stats，禁止对每个子项目 get_graph
     subs = await cluster_mod.list_subprojects(pid)
-    stats_map = await gstore.get_stats_batch([s["id"] for s in subs])
+    stats_map = gstore.get_stats_batch([s["id"] for s in subs])
     out = []
     for s in subs:
         out.append({
@@ -1086,7 +1167,7 @@ class AddClusterAssetsReq(BaseModel):
 @router.post("/projects/{pid}/assets")
 async def api_add_cluster_assets(pid: str, req: AddClusterAssetsReq):
     """集群内新增资产：写入资产列表、按 host 补建子项目，默认立即启动新子项目。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     if p["kind"] != "cluster":
@@ -1094,7 +1175,7 @@ async def api_add_cluster_assets(pid: str, req: AddClusterAssetsReq):
     result = await cluster_mod.add_assets_to_cluster(pid, req.assets or [])
     if result.get("error") and not result.get("subprojects") and not result.get("added") and not result.get("importing"):
         raise HTTPException(400, result["error"])
-    project = await get_project(pid)
+    project = get_project(pid)
     prog = result.get("import_progress")
     if not isinstance(prog, dict):
         prog = {}
@@ -1104,7 +1185,7 @@ async def api_add_cluster_assets(pid: str, req: AddClusterAssetsReq):
 @router.get("/projects/{pid}/import_progress")
 async def api_import_progress(pid: str):
     """集群批量导入进度（创建/追加资产时轮询）。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     return await cluster_mod.import_progress_for(pid)
@@ -1113,7 +1194,7 @@ async def api_import_progress(pid: str):
 @router.post("/projects/{pid}/import_pause")
 async def api_import_pause(pid: str):
     """暂停集群导入：不再新建子项目，已建的保持原状。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     if p["kind"] != "cluster":
@@ -1124,7 +1205,7 @@ async def api_import_pause(pid: str):
 @router.post("/projects/{pid}/import_resume")
 async def api_import_resume(pid: str):
     """继续导入：补建尚未划分子项目的主机。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     if p["kind"] != "cluster":
@@ -1142,7 +1223,7 @@ async def api_start_all(
 
     unfinished_only=1 时跳过已完成子项目。
     """
-    parent = await get_project(pid)
+    parent = get_project(pid)
     if not parent:
         raise HTTPException(404, msg("project_missing"))
     if parent["kind"] not in ("cluster", "benchmark"):
@@ -1203,7 +1284,7 @@ async def api_start_all(
 @router.post("/projects/{pid}/stop_all")
 async def api_stop_all(pid: str):
     """批量暂停运行中/排队的子项目。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     if p["kind"] not in ("cluster", "benchmark"):
@@ -1214,7 +1295,11 @@ async def api_stop_all(pid: str):
         ids = [s["id"] for s in await cluster_mod.list_subprojects(pid) if manager.is_running(s["id"])]
         if not ids:
             break
-        await asyncio.gather(*(manager.halt(sid) for sid in ids), return_exceptions=True)
+        for sid in ids:
+            try:
+                manager.halt(sid)
+            except Exception:
+                pass
         stopped.extend(ids)
     uniq = list(dict.fromkeys(stopped))
     return {"stopped": uniq, "count": len(uniq), "autopilot": False if p["kind"] == "benchmark" else None}
@@ -1224,7 +1309,7 @@ async def api_stop_all(pid: str):
 
 @router.post("/projects/{pid}/benchmark/import")
 async def api_bm_import(pid: str):
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     if p["kind"] != "benchmark":
@@ -1237,7 +1322,7 @@ async def api_bm_import(pid: str):
 
 @router.get("/projects/{pid}/benchmark/scoreboard")
 async def api_bm_scoreboard(pid: str):
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     return await bmk.scoreboard(pid)
@@ -1263,7 +1348,7 @@ def _serialize_memory(r: dict) -> dict:
 @router.get("/projects/{pid}/memory")
 async def api_project_memory(pid: str):
     """返回项目 episode 与匹配的跨局剧本。"""
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     episodes = await db.fetchall(
@@ -1274,7 +1359,7 @@ async def api_project_memory(pid: str):
     playbook = []
     try:
         from ..memory.evolve import retrieve_lessons
-        graph = await gstore.get_graph(pid)
+        graph = gstore.get_graph(pid)
         playbook = await retrieve_lessons(p, graph, limit=12, bump_uses=False)
     except Exception:
         playbook = []
@@ -1300,7 +1385,7 @@ async def api_library_findings(
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
 ):
-    return await gstore.list_library_findings(
+    return gstore.list_library_findings(
         q=q, project=project, category=category, severity=severity, track=track,
         page=page, page_size=page_size,
     )
@@ -1317,19 +1402,19 @@ async def api_review_job(job_id: str):
 
 @router.post("/projects/{pid}/findings/{fid}/review")
 async def api_finding_review(pid: str, fid: str, req: FindingReviewReq):
-    from ..graph.verify import is_visible_finding
+    from atkbrain_native import is_visible_finding
     from ..review.jobs import ReviewBusy, start_manual
 
     mode = str(req.mode or "").strip().lower()
     if mode not in ("secondary", "rating"):
         raise HTTPException(400, msg("review_mode"))
-    p = await get_project(pid)
+    p = get_project(pid)
     if not p:
         raise HTTPException(404, msg("project_missing"))
     row = await db.fetchone("SELECT * FROM findings WHERE id=? AND project_id=?", (fid, pid))
     if not row or not is_visible_finding(row):
         raise HTTPException(404, msg("finding_missing"))
-    finding = gstore._serialize_finding(row)
+    finding = gstore.serialize_finding(row)
     finding["project_id"] = pid
     try:
         return start_manual(p, finding, mode)
@@ -1349,19 +1434,19 @@ async def api_finding_detail(pid: str, fid: str, retry: int = Query(0)):
     poc = poc_for_finding(finding, target)
     preview = prepare_finding_report(finding, poc=poc)
     progress = None
-    from ..report.pi_finding_page import has_pi_page
-    if preview.get("report_state") == "ready" and not has_pi_page(finding):
-        from ..report.pi_finding_page import schedule_pi_page
-        schedule_pi_page(pid, fid)
+    from ..report.finding_page import has_page
+    if preview.get("report_state") == "ready" and not has_page(finding):
+        from ..report.finding_page import schedule_page
+        schedule_page(pid, fid)
     if preview.get("report_state") == "writing":
-        from ..report.pi_finding_page import clear_page_failure, page_activity, schedule_pi_page
+        from ..report.finding_page import clear_page_failure, page_activity, schedule_page
         if retry:
             clear_page_failure(fid)
         activity = page_activity(fid)
         if activity == "failed":
             progress = "failed"
         elif activity != "writing":
-            schedule_pi_page(pid, fid)
+            schedule_page(pid, fid)
             if page_activity(fid) == "failed":
                 progress = "failed"
     if progress:
@@ -1381,7 +1466,7 @@ async def api_finding_report(pid: str, fid: str, format: str = Query("md"), lang
     finding, p, _related = await _load_reportable_finding(pid, fid)
     target = _project_http_target(p)
     poc = poc_for_finding(finding, target)
-    from ..report.pi_finding_page import page_activity
+    from ..report.finding_page import page_activity
     progress = "failed" if page_activity(fid) == "failed" else None
     body = render_finding_markdown(p, finding, poc=poc, lang=loc, progress=progress)
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in fid)[:48]
@@ -1394,7 +1479,7 @@ async def api_finding_report(pid: str, fid: str, format: str = Query("md"), lang
 
 @router.get("/projects/{pid}/findings/{fid}/poc")
 async def api_poc(pid: str, fid: str):
-    p = await get_project(pid)
+    p = get_project(pid)
     row = await db.fetchone("SELECT * FROM findings WHERE id=? AND project_id=?", (fid, pid))
     if not row:
         raise HTTPException(404, msg("finding_missing"))
@@ -1472,7 +1557,7 @@ async def api_import_assets(req: ImportAssetsReq):
 @router.post("/projects/{pid}/scope/confirm")
 async def api_confirm_scope(pid: str, req: ScopeConfirmReq):
     from ..assets import confirm_expansion
-    if not await get_project(pid):
+    if not get_project(pid):
         raise HTTPException(404, msg("project_missing"))
     try:
         return await confirm_expansion(pid, mode=req.mode, basis=req.basis, value=req.value)
@@ -1482,11 +1567,11 @@ async def api_confirm_scope(pid: str, req: ScopeConfirmReq):
 
 @router.post("/projects/{pid}/archive")
 async def api_archive_project(pid: str):
-    proj = await get_project(pid)
+    proj = get_project(pid)
     if not proj:
         raise HTTPException(404, msg("project_missing"))
     if manager.is_running(pid) or manager.is_queued(pid):
-        await manager.halt(pid)
+        manager.halt(pid)
     await db.execute(
         "UPDATE projects SET archived=1, status='idle', queued_at=NULL, updated_at=? WHERE id=?",
         (now(), pid),
@@ -1498,10 +1583,10 @@ async def api_archive_project(pid: str):
 async def api_archive_projects(req: BatchDeleteReq):
     done = []
     for pid in req.ids or []:
-        if not await get_project(pid):
+        if not get_project(pid):
             continue
         if manager.is_running(pid) or manager.is_queued(pid):
-            await manager.halt(pid)
+            manager.halt(pid)
         await db.execute(
             "UPDATE projects SET archived=1, status='idle', queued_at=NULL, updated_at=? WHERE id=?",
             (now(), pid),
@@ -1535,7 +1620,7 @@ async def api_from_template(req: TemplateReq):
     if not (req.target or "").strip():
         raise HTTPException(400, "从模板建项仍要填写主机或 IP")
     try:
-        return await create_single_project(req.name or "来自模板", req.target, config=cfg)
+        return create_single_project(req.name or "来自模板", req.target, config=cfg)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -1584,7 +1669,7 @@ async def api_steer_intent(pid: str, iid: str, req: IntentSteerReq):
 
 @router.post("/projects/{pid}/commands/{cid}")
 async def api_decide_command(pid: str, cid: str, req: CommandDecisionReq):
-    from ..engine.intent_gate import decide_command
+    from atkbrain_native import decide_command
     row = await db.fetchone(
         "SELECT id FROM command_confirms WHERE id=? AND project_id=?",
         (cid, pid),

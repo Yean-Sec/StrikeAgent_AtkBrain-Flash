@@ -1,6 +1,6 @@
 """仓库内真实存在的工具路径。
 
-清单本身是 skill `kali-kit`，由从者/角色工人在需要路径时调用。
+路径写在下面的短纪律里，不要再去读外部 skill 文件。
 不要把本模块的目录全文注入系统提示。环境不一定是某一发行版，
 正文不写系统词表或扫描器的绝对路径。
 """
@@ -8,13 +8,11 @@ from __future__ import annotations
 
 from ..config import REPO_ROOT
 
-# 写入从者/子智能体提示的短指针：清单在 skill 里，禁止把目录塞进系统提示。
 KIT_SKILL_HINT = (
-    "需要仓库里已有的工具路径时，调用 skill `kali-kit`。"
     "该环境不一定是某一发行版。禁止假设 /usr/bin 或 /usr/share 下有扫描器或词表，禁止去读这些路径。"
-    "未在该 skill 列出的文件当不存在。禁止 which / command -v / type / ls 词表目录 / 猜包名。"
-    "利用 payload 被 WAF 或 403/406 拦截页拦住时，调用 skill `waf-bypass-methodology`；"
-    "路径级 401/403 先走该 skill 里的 bypass-403。"
+    "仓库里确认存在的只有 JSFinder 和 bypass-403；未列出的文件当不存在。"
+    "禁止 which / command -v / type / ls 词表目录 / 猜包名。"
+    "路径级 401/403 先用仓库里的 bypass-403；没有这份脚本就停在已确认的状态码上。"
 )
 
 KIT_RULES = """# 本机工具纪律
@@ -23,7 +21,7 @@ KIT_RULES = """# 本机工具纪律
 - 未列出的文件当不存在。不要编造系统路径，也不要因为读不到词表就改去猜别的目录。
 - HTTP 优先 `http_request`。没有词表文件时不要开目录爆破。
 - 词表超过 10 万行一律不用：端口全表、账号密码、子目录、子域名、host 碰撞、哈希碰撞都算。
-- 开局策略见 skill `recon-fanout` / `recon-spiral`。本 skill 只给仓库内真实路径。
+- 开局策略在系统提示里。这里只给仓库内真实路径。
 """
 
 
@@ -32,7 +30,7 @@ def kit_web(repo_root: str) -> str:
     bypass = f"{repo_root}/tools/bypass-403/bypass-403.sh"
     return f"""# 仓库内工具
 - JS 接口：`python3 {jsfinder} -u <url> -ou js_urls.txt -os js_subs.txt`
-- 路径级 401/403：已确认后 `bash {bypass} http://<host> <path>`。载荷被 WAF/拦截页拦住时读 skill `waf-bypass-methodology`。
+- 路径级 401/403：已确认后 `bash {bypass} http://<host> <path>`。
 - HTTP：用 `http_request`。不要写死 curl、nmap、ffuf、sqlmap、nuclei 的系统路径。本仓库没有这些二进制，也没有系统词表。
 - 经开放代理或 SSRF 打内层登录：先读表单 action，把同一方法与 body 转发到认证处理接口。外层打在代理外壳或站点根路径上，不等于内层收到账密。
 """

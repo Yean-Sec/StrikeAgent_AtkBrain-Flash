@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from ..config import settings
-from .crypto import ensure_auth_keys, hash_password
+from atkbrain_native import ensure_auth_keys, hash_password
 from .store import any_user, get_user, upsert_admin
 
 

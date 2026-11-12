@@ -122,6 +122,7 @@ export interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   findings: Finding[];
+  finding_node_keys?: string[];
   intents?: GraphIntent[];
   frontier?: { open?: number; strategies?: number; disproved?: number; verified?: number; by_status?: Record<string, number> };
   rce_path: { path: string[]; paths?: string[][]; likelihood: number; frontier_mode?: boolean };

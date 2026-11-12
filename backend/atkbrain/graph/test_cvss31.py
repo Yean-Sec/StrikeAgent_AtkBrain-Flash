@@ -4,13 +4,13 @@ from __future__ import annotations
 import unittest
 from decimal import Decimal
 
-from .cvss31 import base_score, metrics_from_args, nvd_reject_reason, parse_vector, qualitative, roundup
+from atkbrain_native import base_score, metrics_from_args, nvd_reject_reason, parse_vector, qualitative, roundup
 
 
 class FormulaTests(unittest.TestCase):
     def test_roundup_spec_examples(self) -> None:
-        self.assertEqual(roundup(Decimal("4.02")), Decimal("4.1"))
-        self.assertEqual(roundup(Decimal("4.00")), Decimal("4.0"))
+        self.assertEqual(Decimal(str(roundup(Decimal("4.02")))), Decimal("4.1"))
+        self.assertEqual(Decimal(str(roundup(Decimal("4.00")))), Decimal("4.0"))
 
     def test_spec_vector_is_3_8(self) -> None:
         got = base_score(parse_vector("CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:L/I:L/A:N") or {})

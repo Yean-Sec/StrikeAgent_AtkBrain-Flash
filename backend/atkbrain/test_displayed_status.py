@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import unittest
 
-from .engine.hunt_resume import cancel_project_status
-from .project_status import displayed_status
+from atkbrain_native import cancel_project_status
+from atkbrain_native import displayed_status
 
 
 class DisplayedStatusTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class DisplayedStatusTests(unittest.TestCase):
         self.assertEqual(displayed_status("goal_reached"), "completed")
 
     def test_anchor_keeps_ticking_only_while_running(self) -> None:
-        from .project_status import anchor_hunt_elapsed
+        from atkbrain_native import anchor_hunt_elapsed
 
         parked = anchor_hunt_elapsed(
             {"elapsed_sec": 90, "elapsed_as_of": 1_000},
@@ -71,7 +71,7 @@ class DisplayedStatusTests(unittest.TestCase):
 
 class ProjectTrackTests(unittest.TestCase):
     def test_explicit_and_backfill(self) -> None:
-        from .projects import project_track
+        from atkbrain_native import project_track
         self.assertEqual(project_track("single", {"track": "src"}), "agent")
         self.assertEqual(project_track("single", {"track": "redteam"}), "agent")
         self.assertEqual(project_track("single", {"track": "ctf"}), "ctf")

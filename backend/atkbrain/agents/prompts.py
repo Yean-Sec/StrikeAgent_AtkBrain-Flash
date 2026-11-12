@@ -1,10 +1,40 @@
 """系统提示、每轮指令、角色工人：攻击图工作记忆 + Pi 自循环。"""
 from __future__ import annotations
 
-from ..engine.intranet_reach import SSRF_NEIGHBOR_RULE
-from ..graph.cvss31 import CVSS31_REVIEW
-from ..objective import normalize_objective, objective_allows_flag, objective_is_src
-from ..scope import Scope, authorized_registrable_domains
+from atkbrain_native import SSRF_NEIGHBOR_RULE
+from atkbrain_native import Scope, authorized_registrable_domains
+from atkbrain_native import normalize_objective, objective_allows_flag, objective_is_src
+
+CVSS31_REVIEW = """\
+二次验证的级别按 NVD 的 CVSS v3.1 评价（https://nvd.nist.gov/vuln-metrics/cvss）。不要用旧四级表，不要自己算分。
+NVD 只公布基础分，不要填时间分或环境分。八项基础指标都要填，系统按 NVD 的 CVSS v3.1 计算器写入分数和定性：
+低危 Low 0.1–3.9，中危 Medium 4.0–6.9，高危 High 7.0–8.9，严重 Critical 9.0–10.0。
+三项影响都是 N 时 NVD 不打分，不要提交。
+细节不够判断某一项时，按 NVD 的最坏情况取值。公开信息完全没有技术细节时，NVD 记 10.0（Critical）。已经能判断影响范围时，按这个漏洞本身打，不要把已知的有限影响改成 10.0。
+攻击者本来就懂这个洞，不算攻击复杂度高。所需权限是打之前就有的，不是打完拿到的。
+没有命令执行回显时，不要按代码执行的完全失控来打；能读全部数据、改全部数据或让服务不可用，仍然可以是 High。
+
+AV 攻击向量：N 跨网络（从内网其它机器远程打也算 N），A 必须在同一链路或相邻管理域，L 本地能力或要别人打开文件，P 要物理接触。
+AC 攻击复杂度：L 可以重复打成，H 还要攻击者控制不了的条件（竞态、中间人、先摸清目标环境）。
+PR 所需权限：N 未授权，L 普通用户，H 管理员。
+UI 用户交互：N 不需要别人配合，R 需要其他用户先做动作。
+S 范围：U 影响停在同一个安全域；C 打穿到另一个安全域。只给这个应用用的数据库仍算 U。
+C/I/A：H 这一类影响基本全部失去，或后果直接且严重；L 有限或部分；N 没有。只记相对攻击前新增加的影响。
+"""
+BUSINESS_SAFE_WRITE_BRIEF = """\
+红队与 SRC 共用：洞要报，状态不要改。http/https 同一套。
+可注册只用自己的 2 个测试号做越权；不可注册则停在证明能登，不改线上用户。
+越权读真实数据不超过 5 条，禁止脚本扫穿。
+条件竞争只证明缺锁，禁止对真实库存/优惠券/名额打爆。
+支付改价/重复支付/0 元购看回包差分，不提交落地、不真退款。
+改密/越权重置只证明 token/IDOR，不覆盖已有管理员口令。
+存储 XSS 用 console.log，禁止 alert 打到他人；测完删自己的 payload。
+禁止 hydra/medusa/ncrack/patator 喷口令，守卫会直接拒绝。禁止对有关系链的号做社交蠕虫。
+禁止批量注册/灌评论/刷单、短信邮件轰炸、改生产配置、关服务。
+禁止在目标上留账号、计划任务、authorized_keys 或开机项。
+RCE 只写无害短 txt canary，取回即删。
+"""
+SRC_POLICY_BRIEF = "agent测试的目的：发现更多漏洞，并提升已经证实的漏洞危害。\n" + BUSINESS_SAFE_WRITE_BRIEF
 from .kali_kit import KIT_SKILL_HINT
 from .tools import tool_names
 
@@ -18,7 +48,7 @@ def _spiral_recon_block(*, ctf: bool) -> str:
     )
     if ctf:
         return (
-            "- 开局资产收集：读 skill `recon-spiral`。三圈小/中/大，打过再扩，各面独立升档。"
+            "- 开局资产收集：三圈小/中/大，打过再扩，各面独立升档。"
             f"第 1 圈（小）：当前入口、`--top-ports 100`、`common.txt`，{ring1}"
             "打过或空转再升第 2 圈（中）：top-1000、中档目录、dnsmap。"
             f"{mid}"
@@ -26,7 +56,7 @@ def _spiral_recon_block(*, ctf: bool) -> str:
             "看简报「已覆盖」，相同扫描签名不要再跑。并行派出多个 `recon` 角色会话，每个只做一面；工人禁止再开子进程。"
         )
     return (
-        "- 开局资产收集：读 skill `recon-spiral`。三圈小/中/大。简报允许圈才升圈："
+        "- 开局资产收集：三圈小/中/大。简报允许圈才升圈："
         "连续 6 个御主方案无高质量增长（洞/凭证/立足/能力边）才进下一圈；有增长则留在当前圈。"
         f"第 1 圈（小）：当前入口、`--top-ports 100`、`common.txt`，{ring1}"
         "禁止抢跑 top-1000、-p-、中档目录、旁站。"
@@ -54,7 +84,7 @@ def _spiral_enum_block(*, ctf: bool) -> str:
 
 def _src_recon_block() -> str:
     return (
-        "- 开局：读 skill `src-hunt-playbook`。先发现漏洞：按入口形态选类型，低/中/高危/严重都要 report_finding。"
+        "- 开局先发现漏洞：按入口形态选类型，低/中/高危/严重都要 report_finding。"
         "同时把已证实的危害往 getshell 做。入口已确认时 `web-exploit`、`src-hunt` 与 recon 同一回合并行。"
         "禁止从者代替工人打完所有洞。静态 SPA 不是无攻击面。"
         "不要螺旋升圈，不要先看题交旗，不要委派 `flag-hunt`。"
@@ -170,15 +200,15 @@ def _flag_fragments(obj: str) -> dict[str, str]:
                 "送达后失败不要升级字典；邻机过门未完成则留在该 hop。\n"
             ),
             "recon_block": (
-                "- 开局：读 skill `recon-fanout`。**先看本题入口活体**（源码/注释/robots/题面路径/账号），"
+                "- 开局**先看本题入口活体**（源码/注释/robots/题面路径/账号），"
                 "像 flag 立刻 `report_flag`。立刻委派 `web-exploit` 打题面功能，不要先 nmap/ffuf。"
-                "题面已给出变换/编码/协议/文件时，工作区写脚本或 `http_request`/`python3`/`openssl`，不要调 `kali-kit` 开扫描。"
+                "题面已给出变换/编码/协议/文件时，工作区写脚本或 `http_request`/`python3`/`openssl`，不要先开扫描。"
                 "看完仍无旗且不知道攻击面在哪，再后台 `recon`（端口 top-1000、中档目录等）。每个 recon 工人只做一面；禁止再开子进程。"
                 "recon 不能挡交旗，也不能当本轮主线。"
             ),
             "enum_block": (
                 "- CTF 不走螺旋。开局禁止把扫描当主线。没有旗才允许 recon：端口 `--top-ports 1000`，"
-                "目录中型字典（词表路径见 skill `kali-kit`），必须 timeout。禁止开局 `-p-`。评测邻题始终越界。"
+                "目录中型字典（本仓库没有系统词表就不要爆破），必须 timeout。禁止开局 `-p-`。评测邻题始终越界。"
             ),
             "private_net_block": (
                 "- 本机网卡和物机网关是守卫，不是目标。只有在授权入口上已有 shell 或已核实 SSRF 之后，"
@@ -258,7 +288,7 @@ SYSTEM_PROMPT_TMPL = """你是 StrikeAgent_AtkBrain-Flash 的主智能体（从�
 # 作业对象
 {scope_desc}
 - 基础设施（pypi/github）可用于下载工具。
-- Python 仅 `z3` / `Crypto` / `sympy` / `PIL` / `capstone` / `pwntools`（库名单见 skill `kali-kit`）。非 HTTP 交互服务先拉脚本用这些库在本地建模，不要先当网站打。
+- Python 仅 `z3` / `Crypto` / `sympy` / `PIL` / `capstone` / `pwntools`。非 HTTP 交互服务先拉脚本用这些库在本地建模，不要先当网站打。
 {ssrf_block}
 - 不要打本机控制台（API/前端端口）、本机网卡 IP 和物机网关。
 - 邻题入口（同评测其它 unique_code 的入口 IP/端口）越界。本题入口不通时不要改打邻题端口。
@@ -353,119 +383,6 @@ _GOAL_TOOL_HINTS["redteam"] = _GOAL_TOOL_HINTS["src"]
 _GOAL_TOOL_HINTS["getshell"] = _GOAL_TOOL_HINTS["src"]
 
 
-def _project_vhosts(project: dict | None) -> list[str]:
-    cfg = (project or {}).get("config") or {}
-    scope = (project or {}).get("scope") or {}
-    raw = cfg.get("vhosts") if isinstance(cfg.get("vhosts"), list) else None
-    names = [str(x).strip() for x in (raw or scope.get("targets") or []) if str(x).strip()]
-    tgt = str((project or {}).get("target") or "").strip()
-    out: list[str] = []
-    seen: set[str] = set()
-    for h in ([tgt] if tgt else []) + names:
-        k = h.lower().rstrip(".")
-        if k and k not in seen:
-            seen.add(k)
-            out.append(h)
-    return out
-
-
-def _project_ports(project: dict | None) -> list[int]:
-    raw = (project or {}).get("ports") or []
-    out: list[int] = []
-    for p in raw:
-        try:
-            n = int(p)
-        except (TypeError, ValueError):
-            continue
-        if n > 0 and n not in out:
-            out.append(n)
-    return out
-
-
-def build_brief(project: dict | None, graph: dict | None = None) -> str:
-    cfg = (project or {}).get("config") or {}
-    desc = str(cfg.get("description") or "").strip()
-    hint = str(cfg.get("hint") or cfg.get("tip") or "").strip()
-    entry_url = str(cfg.get("entry_url") or "").strip()
-    _obj = cfg.get("objective")
-    vhosts = _project_vhosts(project)
-    ports = _project_ports(project)
-    machine_note = len(vhosts) > 1 or bool(vhosts and ports)
-    from .brief_creds import (
-        credential_candidates_from_brief,
-        format_supplied_auth_brief,
-        graph_cred_blob,
-        normalize_supplied_auth,
-    )
-    from ..objective import objective_is_src
-    supplied = normalize_supplied_auth(cfg.get("supplied_auth"))
-    supplied_block = format_supplied_auth_brief(supplied, src=objective_is_src(_obj or cfg.get("track")))
-    ctf_block = ""
-    if objective_allows_flag(str(_obj or cfg.get("track") or "")):
-        from .ctf_prompts import brief_for_category
-        ctf_block = brief_for_category(
-            cfg.get("ctf_category"),
-            attachments=cfg.get("attachments"),
-            offline=bool(cfg.get("offline")),
-        )
-    if not desc and not hint and not entry_url and not machine_note and not supplied_block and not ctf_block:
-        return ""
-    meta: list[str] = []
-    if cfg.get("flag_count") and (_obj is None or objective_allows_flag(_obj)):
-        meta.append(f"flag 数={cfg.get('flag_count')}")
-    if cfg.get("difficulty"):
-        meta.append(f"难度={cfg.get('difficulty')}")
-    if cfg.get("total_score"):
-        meta.append(f"总分={cfg.get('total_score')}")
-    meta_line = "（" + "、".join(meta) + "）" if meta else ""
-    parts: list[str] = []
-    if desc:
-        parts.append(f"{desc}{meta_line}")
-    if hint:
-        parts.append(f"平台提示：{hint}")
-    if entry_url:
-        parts.append(f"入口 URL：{entry_url}")
-    ips = list(((project or {}).get("scope") or {}).get("ips") or [])
-    if machine_note:
-        ip_txt = f"源站 IP {', '.join(str(x) for x in ips)}" if ips else "本机 IP"
-        port_txt = ",".join(str(p) for p in ports) if ports else "全端口"
-        scan_note = (
-            "第 1 圈（小）只打当前入口：nmap --top-ports 100，目录 common.txt，旁站关。"
-            "打过或空转再升第 2 圈（中）top-1000/中档。第 3 圈才 -p-；目录大圈是递归/扩展名不是更大词表。"
-            "禁止开局 -p-。"
-        )
-        if objective_allows_flag(str(cfg.get("objective") or "")):
-            scan_note = (
-                "先看入口源码/注释/robots/题面路径，像 flag 立刻交。"
-                "立刻打题面功能，不要先扫描。没有旗再 recon：nmap --top-ports 1000、目录中型字典。"
-                "不要螺旋升圈。禁止开局 -p-。评测邻题始终越界。"
-            )
-        parts.append(
-            f"同机资产：vhost={', '.join(vhosts)}；端口={port_txt}；{ip_txt}。"
-            f"{scan_note}"
-        )
-    extra = graph_cred_blob(graph)
-    cands = credential_candidates_from_brief(
-        "\n".join(x for x in (desc, hint, extra, supplied_block) if x)
-    )
-    if cands:
-        parts.append("题面已出现的账密（禁止合成、禁止扩字典）：" + "；".join(cands[:8]))
-    if supplied_block:
-        parts.append(supplied_block)
-    if ctf_block:
-        parts.append(ctf_block)
-    pending = [
-        f for f in ((graph or {}).get("findings") or [])
-        if isinstance(f, dict) and not f.get("secondary_verified")
-    ]
-    if pending:
-        titles = [str(f.get("title") or f.get("id") or "finding")[:40] for f in pending[:6]]
-        parts.append(
-            "未二次验证（pending_review，不能当已结案）：" + "；".join(titles)
-        )
-    return "\n".join(parts)
-
-
 def attach_parent_brief_hint(project: dict | None, parent: dict | None) -> dict | None:
     if not isinstance(project, dict):
         return project
@@ -543,7 +460,7 @@ def build_system_prompt(
         kali_kit=KIT_SKILL_HINT,
         **frags,
     )
-    from ..i18n.prompts import with_output_lang
+    from atkbrain_native import with_output_lang
     return with_output_lang(text, output_lang)
 
 
@@ -562,45 +479,6 @@ def builtin_disallowed_tools(objective: str = "getshell") -> list[str]:
 def tool_list_for_prompt(objective: str = "getshell") -> str:
     return ", ".join(tool_names(objective))
 
-
-def default_fanout_roles(objective: str = "getshell") -> list[str]:
-    """开局只派 web-exploit 和 recon，和能打出文件接口的那次一样。已有漏洞后再加 rce-hunt。"""
-    del objective
-    return ["web-exploit", "recon"]
-
-
-def ensure_live_page_reader(
-    roles: list[str], objective: str | None, *, http: bool, keep_rce: bool = False,
-) -> list[str]:
-    """HTTP 的 agent 测试保持 web-exploit 和 recon。已有漏洞或凭证时把 rce-hunt 留在名额里。"""
-    cleaned = [str(r).strip() for r in roles if str(r).strip()]
-    if not http or objective_allows_flag(objective) or not objective_is_src(objective):
-        return cleaned
-    if keep_rce and "rce-hunt" not in cleaned and "privesc" not in cleaned:
-        cleaned = ["rce-hunt", *cleaned]
-    preferred = ["web-exploit", "rce-hunt", "recon", "src-hunt"]
-    head = [r for r in preferred if r in cleaned or r in ("web-exploit", "recon")]
-    rest = [r for r in cleaned if r not in head]
-    out: list[str] = []
-    for role in head + rest:
-        if role not in out:
-            out.append(role)
-    return out
-
-
-def graph_needs_rce_hunter(graph: dict | None) -> bool:
-    """已经有漏洞或凭证、还没有立足点时，要留命令执行方向的工人。"""
-    nodes = (graph or {}).get("nodes") or []
-    interesting = False
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        kind = str(node.get("type") or "")
-        if kind in ("foothold", "goal"):
-            return False
-        if kind in ("vuln", "credential"):
-            interesting = True
-    return interesting
 
 
 FINDING_REVIEW_ROLE = "finding-review"
@@ -690,7 +568,7 @@ def finding_review_system_prompt(
         f"工作目录：{workspace_dir}\n"
         "可用工具：run_cmd, http_request, report_finding, note。"
     )
-    from ..i18n.prompts import with_output_lang
+    from atkbrain_native import with_output_lang
     return with_output_lang(text, output_lang)
 
 
@@ -870,7 +748,7 @@ def build_turn_instruction(
                 "踏上新主机时 report_shell 填 host。"
             )
     kind = (entry_kind or "").strip().lower()
-    from ..graph.hypothesize import looks_like_served_binary
+    from atkbrain_native import looks_like_served_binary
     if looks_like_served_binary("", "", brief or ""):
         early = (
             "- 早期：题面要求分析可执行文件/固件/字节码。并行 `recon` + `reverse`（可兼 `protocol-model`）："
@@ -1042,7 +920,7 @@ def build_subagents(objective: str = "getshell") -> dict[str, dict]:
     if allows_flag:
         recon_nmap = (
             "已知 HTTP 入口：先确认从者/web-exploit 已经看过首页和题面路径。"
-            "没有旗才做 nmap --top-ports 1000 找其它服务，目录用中型字典（词表路径见 skill `kali-kit`）；"
+            "没有旗才做 nmap --top-ports 1000 找其它服务，目录用中型字典（本仓库没有系统词表就不要爆破）；"
             "不要开局 -p- 或超 10 万行的表。不要螺旋升圈。不要把扫描排在看题前面。"
         )
         recon_fallback = (
@@ -1050,7 +928,7 @@ def build_subagents(objective: str = "getshell") -> dict[str, dict]:
             "没有旗再并行 nmap（run_cmd timeout=90）+ whatweb + wafw00f；"
             "首页和题面路径都没有攻击面时才中档 ffuf（timeout=120）；有域名立刻 gobuster dns（dnsmap.txt）。"
             "端口：nmap --top-ports 1000，确认活体后再考虑全端口。"
-            "目录与文件：中型字典（中档，词表路径见 skill `kali-kit`），无新命中再升一档；必须 timeout，同一面只升一档。"
+            "目录与文件：中型字典（中档，本仓库没有系统词表就不要爆破），无新命中再升一档；必须 timeout，同一面只升一档。"
             "CTF 评测邻题始终越界。禁止把扫描当开局主线。"
         )
         web_ctf = (
@@ -1059,7 +937,7 @@ def build_subagents(objective: str = "getshell") -> dict[str, dict]:
         )
     elif is_src:
         recon_nmap = (
-            "nmap --top-ports 1000 找服务，目录用中型字典（词表路径见 skill `kali-kit`）；"
+            "nmap --top-ports 1000 找服务，目录用中型字典（本仓库没有系统词表就不要爆破）；"
             "不要开局 -p- 或超 10 万行的表。不要螺旋升圈。"
             "不要 Kali 直连内网、不要 socks/shell 横向；已验证 SSRF 必须 report_pivot_capability。"
         )
@@ -1077,7 +955,7 @@ def build_subagents(objective: str = "getshell") -> dict[str, dict]:
         )
         web_ctf = (
             "agent测试：低/中/高危/严重都要 report_finding。已证实危害做到命令执行后 report_shell 收工，不要 report_flag。"
-            "读 skill `src-hunt-playbook`。禁止破坏业务。"
+            "按入口形态选类型，禁止破坏业务。"
             "已验证 SSRF 必须 report_pivot_capability 扩网；禁止 Kali 直连与 socks/shell 横向。"
         )
     else:
@@ -1196,7 +1074,7 @@ def build_subagents(objective: str = "getshell") -> dict[str, dict]:
         agents["src-hunt"] = {
             "description": "按入口形态挖还没报的漏洞，低/中/高危/严重都报。",
             "prompt": (
-                "你按 skill `src-hunt-playbook` 挖厂商类型（XSS/注入/RCE/文件/越权/逻辑/泄露/后门/N-day）。"
+                "你按入口形态挖厂商类型（XSS/注入/RCE/文件/越权/逻辑/泄露/后门/N-day）。"
                 "按当前入口形态选类型，不要把 11 类全打一遍。"
                 "低/中/高危/严重都要 report_finding 进漏洞页，附最小 PoC。评级按四级表对号入座，禁止抬级或压级。业务报错不能评高危或严重，但仍要报。"
                 "活页面上的文件参数、上传和写入不要标成无输入面后丢掉，交给深入利用做到命令执行。"

@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import unittest
 
-from .brief_creds import (
+from atkbrain_native import (
     credential_candidates_from_brief,
     extract_supplied_auth,
     format_supplied_auth_brief,
     merge_steering_supplied_auth,
     password_values,
 )
-from .prompts import build_brief
-from ..engine.intranet_reach import apply_gate_to_guard
+from atkbrain_native import build_brief
+from atkbrain_native import apply_gate_to_guard
 
 
 class BriefTokenTests(unittest.TestCase):
@@ -91,8 +91,8 @@ class BriefTokenTests(unittest.TestCase):
 
 class HuntHardStopCopyTests(unittest.TestCase):
     def test_src_label_english(self) -> None:
-        from ..i18n.locale import set_locale
-        from ..project_status import hunt_hard_stop_info
+        from atkbrain_native import set_locale
+        from atkbrain_native import hunt_hard_stop_info
         prev = set_locale("en")
         try:
             info = hunt_hard_stop_info("src", lang="en")

@@ -10,17 +10,17 @@ from unittest.mock import AsyncMock, patch
 
 class GateTests(unittest.TestCase):
     def test_merged_duplicate_title_is_not_a_new_vuln(self) -> None:
-        from ..graph.model import is_merged_duplicate_title
+        from atkbrain_native import is_merged_duplicate_title
         self.assertTrue(is_merged_duplicate_title("（重复节点，已并入 vuln:crossdomain-wildcard）通配策略"))
         self.assertFalse(is_merged_duplicate_title("crossdomain.xml 通配 domain=*"))
 
     def test_first_ingest_empty_ok(self) -> None:
-        from ..graph.model import secondary_review_error
+        from atkbrain_native import secondary_review_error
         self.assertIsNone(secondary_review_error(False, None, None))
         self.assertIsNone(secondary_review_error(False, "", "  "))
 
     def test_secondary_only_needs_rationale(self) -> None:
-        from ..graph.model import secondary_review_error
+        from atkbrain_native import secondary_review_error
         self.assertIsNotNone(secondary_review_error(True, None, "太短"))
         why = "换通道重放 PoC，对照首次回显，命令未打成，二次确认仍是任意文件写而非 RCE。"
         self.assertGreaterEqual(len(why), 40)
@@ -28,7 +28,7 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(secondary_review_error(True, "", why))
 
     def test_rating_only_needs_rationale(self) -> None:
-        from ..graph.model import secondary_review_error
+        from atkbrain_native import secondary_review_error
         self.assertIsNotNone(secondary_review_error(False, "high", "高危"))
         why = "任意文件读默认中危：可拉取配置但无命令执行回显，按四级表评 medium 而不是高危。"
         self.assertGreaterEqual(len(why), 40)
@@ -36,28 +36,28 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(secondary_review_error(False, "中危", why))
 
     def test_both_still_require_three(self) -> None:
-        from ..graph.model import secondary_review_error
+        from atkbrain_native import secondary_review_error
         why = "独立重放并对照回显后仍可写任意文件，按四级表中危，不抬成高危，也不压成低危处理。"
         self.assertGreaterEqual(len(why), 40)
         self.assertIsNotNone(secondary_review_error(True, "high", "短"))
         self.assertIsNone(secondary_review_error(True, "medium", why))
 
     def test_pending_stays_pending_when_rating_claims_it_left_status(self) -> None:
-        from ..graph.verify import merge_verification_status
+        from atkbrain_native import merge_verification_status
         why = "本条只做 NVD CVSS 3.1 基础分，本轮未再动手二次验证，故二次验证状态保持原状不改。"
         status, sec = merge_verification_status("pending", False, "excluded", False, why)
         self.assertEqual(status, "pending")
         self.assertFalse(sec)
 
     def test_failed_secondary_cannot_become_verified(self) -> None:
-        from ..graph.verify import merge_verification_status
+        from atkbrain_native import merge_verification_status
         why = "二次验证换了三条独立通道，再次看到同样的属性回显。"
         status, sec = merge_verification_status("excluded", False, "verified", True, why)
         self.assertEqual(status, "excluded")
         self.assertFalse(sec)
 
     def test_blocked_recheck_is_not_a_failure(self) -> None:
-        from ..graph.verify import is_real_secondary_failure, merge_verification_status
+        from atkbrain_native import is_real_secondary_failure, merge_verification_status
         why = (
             "本回合二次验证失败：run_cmd 与 http_request 全部回了"
             "「本条意图已经写回，这次会话不再改打别的类型。」"
@@ -69,22 +69,10 @@ class GateTests(unittest.TestCase):
         self.assertFalse(sec)
 
     def test_review_role_can_recheck_after_intent_closed(self) -> None:
-        import asyncio
-        from types import SimpleNamespace
-        from ..engine.intent_gate import gate_intent, tool_caller_role
+        from atkbrain_native import gate_intent
 
-        ctx = SimpleNamespace(intent_closed=True)
-
-        async def go():
-            blocked = await gate_intent(ctx)
-            token = tool_caller_role.set("finding-review:f_x:secondary")
-            try:
-                opened = await gate_intent(ctx)
-            finally:
-                tool_caller_role.reset(token)
-            return blocked, opened
-
-        blocked, opened = asyncio.run(go())
+        blocked = gate_intent("", True)
+        opened = gate_intent("", True, role="finding-review:f_x:secondary")
         self.assertIn("本条意图已经写回", blocked or "")
         self.assertIsNone(opened)
 
@@ -93,7 +81,7 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("ctx.intent_closed = True", text)
 
     def test_real_secondary_failure_sticks(self) -> None:
-        from ..graph.verify import merge_verification_status
+        from atkbrain_native import merge_verification_status
         why = "本回合二次验证失败：两条新通道都没有再看到同样的反射回显。"
         status, sec = merge_verification_status("pending", False, "excluded", False, why)
         self.assertEqual(status, "excluded")
@@ -103,18 +91,18 @@ class GateTests(unittest.TestCase):
         self.assertFalse(sec)
 
     def test_pending_becomes_verified_only_after_real_recheck(self) -> None:
-        from ..graph.verify import merge_verification_status
+        from atkbrain_native import merge_verification_status
         why = "换了两条新观测通道，再次看到同样的异常栈。"
         status, sec = merge_verification_status("pending", False, None, True, why)
         self.assertEqual(status, "verified")
         self.assertTrue(sec)
 
     def test_rationale_without_intent_rejected(self) -> None:
-        from ..graph.model import secondary_review_error
+        from atkbrain_native import secondary_review_error
         self.assertIsNotNone(secondary_review_error(False, None, "x" * 50))
 
     def test_exclude_closes_without_pass(self) -> None:
-        from ..graph.model import secondary_review_error
+        from atkbrain_native import secondary_review_error
         why = "换通道重放后没有再看到同样的文件内容，这一条排除。排除只表示本条没被二次证明，不是否定这类漏洞。"
         self.assertGreaterEqual(len(why), 40)
         self.assertIsNone(secondary_review_error(False, None, why, status="excluded"))
@@ -124,7 +112,7 @@ class GateTests(unittest.TestCase):
 
 class NeedTests(unittest.TestCase):
     def test_need_by_flags(self) -> None:
-        from ..graph.model import finding_review_need
+        from atkbrain_native import finding_review_need
         row = {"secondary_verified": 0, "redteam_rating": None}
         self.assertEqual(finding_review_need(row, want_secondary=True, want_rating=True), "both")
         self.assertEqual(finding_review_need(row, want_secondary=True, want_rating=False), "secondary")
@@ -192,58 +180,56 @@ class FlagTests(unittest.TestCase):
 
 class PendingFilterTests(unittest.IsolatedAsyncioTestCase):
     async def test_flags_split_pending(self) -> None:
-        from ..graph import store as gstore
+        import os
+        import tempfile
+        from pathlib import Path
 
-        rows = [
-            {
-                "id": "f1", "project_id": "p1", "node_key": "n1", "severity": "high",
-                "category": "xss", "title": "stored xss", "description": "", "evidence": "e",
-                "poc_curl": "", "poc_python": "", "cvss": None, "created_at": 1,
-                "verification_status": "verified", "verified_at": 1,
-                "proof_type": None, "proof_canary": None, "proof_url": None, "proof_detail": None,
-                "secondary_verified": 0, "redteam_rating": None, "redteam_rating_rationale": None,
-                "report_summary": None, "report_impact": None, "report_rating": None,
-                "report_repro": None, "report_fix": None,
-            },
-            {
-                "id": "f2", "project_id": "p1", "node_key": "n2", "severity": "medium",
-                "category": "sqli", "title": "sqli", "description": "", "evidence": "e",
-                "poc_curl": "", "poc_python": "", "cvss": None, "created_at": 2,
-                "verification_status": "verified", "verified_at": 2,
-                "proof_type": None, "proof_canary": None, "proof_url": None, "proof_detail": None,
-                "secondary_verified": 1, "redteam_rating": None, "redteam_rating_rationale": "x" * 50,
-                "report_summary": None, "report_impact": None, "report_rating": None,
-                "report_repro": None, "report_fix": None,
-            },
-            {
-                "id": "f3", "project_id": "p1", "node_key": "n3", "severity": "low",
-                "category": "info", "title": "banner", "description": "", "evidence": "e",
-                "poc_curl": "", "poc_python": "", "cvss": None, "created_at": 3,
-                "verification_status": "rejected", "verified_at": None,
-                "proof_type": None, "proof_canary": None, "proof_url": None, "proof_detail": None,
-                "secondary_verified": 0, "redteam_rating": None, "redteam_rating_rationale": None,
-                "report_summary": None, "report_impact": None, "report_rating": None,
-                "report_repro": None, "report_fix": None,
-            },
+        from ..config import settings
+        from ..db import db, now
+        import atkbrain_native as gstore
+
+        td = tempfile.TemporaryDirectory()
+        old_path, old_conn, old_db = db.path, db._conn, settings.db_path
+        db._conn = None
+        db.path = os.path.join(td.name, "rev.db")
+        settings.db_path = Path(db.path)
+        await db.connect()
+        ts = now()
+        await db.execute(
+            "INSERT INTO projects(id, name, kind, status, created_at, updated_at) VALUES(?,?,?,?,?,?)",
+            ("p1", "t", "single", "idle", ts, ts),
+        )
+        specs = [
+            ("f1", "n1", "high", "xss", "stored xss", "verified", 0, None, None),
+            ("f2", "n2", "medium", "sqli", "sqli", "verified", 1, None, "x" * 50),
+            ("f3", "n3", "low", "info", "banner", "rejected", 0, None, None),
         ]
-
-        async def fake_fetchall(sql, params=()):
-            return list(rows)
-
-        with patch.object(gstore.db, "fetchall", fake_fetchall), \
-             patch("atkbrain.projects.get_project", new=AsyncMock(return_value={"config": {}})):
-            both = await gstore.findings_pending_review("p1", want_secondary=True, want_rating=True)
+        for fid, key, sev, cat, title, status, secondary, rating, why in specs:
+            await db.execute(
+                """INSERT INTO findings(id, project_id, node_key, severity, category, title, evidence,
+                   verification_status, secondary_verified, redteam_rating, redteam_rating_rationale, created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (fid, "p1", key, sev, cat, title, "e", status, secondary, rating, why, ts),
+            )
+        try:
+            both = gstore.findings_pending_review("p1", want_secondary=True, want_rating=True)
             ids = {x["id"]: x["_review_mode"] for x in both}
             self.assertEqual(ids["f1"], "both")
             self.assertEqual(ids["f2"], "rating")
             self.assertNotIn("f3", ids)
-            sec = await gstore.findings_pending_review("p1", want_secondary=True, want_rating=False)
+            sec = gstore.findings_pending_review("p1", want_secondary=True, want_rating=False)
             self.assertEqual([x["id"] for x in sec], ["f1"])
             self.assertEqual(sec[0]["_review_mode"], "secondary")
-            rate = await gstore.findings_pending_review("p1", want_secondary=False, want_rating=True)
+            rate = gstore.findings_pending_review("p1", want_secondary=False, want_rating=True)
             self.assertEqual({x["id"] for x in rate}, {"f1", "f2"})
-            none = await gstore.findings_pending_review("p1", want_secondary=False, want_rating=False)
+            none = gstore.findings_pending_review("p1", want_secondary=False, want_rating=False)
             self.assertEqual(none, [])
+        finally:
+            await db.close()
+            db.path = old_path
+            db._conn = old_conn
+            settings.db_path = old_db
+            td.cleanup()
 
 
 class JobBusyTests(unittest.TestCase):

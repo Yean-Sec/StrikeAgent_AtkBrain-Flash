@@ -4,6 +4,7 @@ CTF 与红队共用同一份 lesson（project_id 为空）。不写机械路线�
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from ..config import settings
@@ -30,7 +31,7 @@ _HIGH = frozenset({"high", "critical"})
 
 
 async def _output_lang_for_project(project_id: object) -> str:
-    from ..i18n.locale import config_output_lang
+    from atkbrain_native import config_output_lang
     pid = str(project_id or "")
     if not pid:
         return "zh"
@@ -80,7 +81,7 @@ def finding_qualifies_for_evolve(row: dict | None) -> bool:
     vs = str(row.get("verification_status") or "verified").strip().lower()
     if vs not in ("verified", "flaky", ""):
         return False
-    from ..graph.model import normalize_redteam_rating
+    from atkbrain_native import normalize_redteam_rating
     rt = normalize_redteam_rating(row.get("redteam_rating"))
     if rt:
         return rt in _HIGH
@@ -622,7 +623,7 @@ async def ai_refine_playbook(
     """用一次性 Pi 蒸馏合格 episode。失败返回空，不回退机械映射。"""
     if not bool(getattr(settings, "evolve_ai", True)):
         return []
-    from ..agents.pi_runtime import query_text
+    from atkbrain_native import query_text
 
     ep_lines = []
     for e in recent_episodes[:4]:
@@ -670,23 +671,24 @@ async def ai_refine_playbook(
         + ("\n".join(pb_lines) or "（空）")
         + "\n\n请蒸馏最多 3 条：思想、方式方法、路线。只消耗上面列出的栈/线索/手法，不要补链上没有的 hop。"
     )
-    from ..agents.pi_runtime import query_text, role_model
+    from atkbrain_native import query_text, role_model
     model = role_model(
         getattr(settings, "evolve_model", None),
         getattr(settings, "supervisor_model", None),
     )
     wait = float(getattr(settings, "evolve_timeout_sec", 90) or 90)
     applied: list[dict] = []
-    from ..i18n.prompts import with_output_lang
-    blob = await query_text(
-        system_prompt=with_output_lang(EVOLVE_SYSTEM, output_lang),
-        user_prompt=prompt,
-        cwd=str(settings.data_dir),
-        timeout=max(15.0, wait),
-        tools=False,
-        model=model,
-        role="evolve",
-        project_id=str(project_id or ""),
+    from atkbrain_native import with_output_lang
+    blob = await asyncio.to_thread(
+        query_text,
+        with_output_lang(EVOLVE_SYSTEM, output_lang),
+        prompt,
+        str(settings.data_dir),
+        max(15.0, wait),
+        False,
+        model,
+        "evolve",
+        str(project_id or ""),
     )
     for spec in parse_evolve_lessons(blob):
         if spec.get("action") == "retire":

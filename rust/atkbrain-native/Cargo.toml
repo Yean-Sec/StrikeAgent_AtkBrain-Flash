@@ -1,0 +1,28 @@
+[package]
+name = "atkbrain-native"
+version = "1.1.0"
+edition = "2021"
+description = "StrikeAgent judgment kernels called from the Python console"
+
+[lib]
+name = "atkbrain_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module"] }
+rust_decimal = "1"
+regex = "1"
+fancy-regex = "0.14"
+shlex = "1.3"
+argon2 = "0.5"
+base64 = "0.22"
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+ipnet = "2"
+atkbrain-core = { path = "../atkbrain-core" }

@@ -1,8 +1,8 @@
 """每个高危发现一键导出可复现脚本（curl / python）。"""
 from __future__ import annotations
 
-from ..graph.model import normalize_severity
-from ..graph.verify import is_high_severity
+from atkbrain_native import normalize_severity
+from atkbrain_native import is_high_severity
 
 
 def poc_for_finding(finding: dict, target: str = "") -> dict:

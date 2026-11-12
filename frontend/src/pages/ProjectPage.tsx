@@ -11,6 +11,7 @@ import { FindingsPanel, collectVulns, filterVisibleFindings, latestFindingReview
 import { ServicesPanel } from "../features/services/ServicesPanel";
 import { MemoryPanel } from "../features/memory/MemoryPanel";
 import { ChatDock } from "../features/chat/ChatDock";
+import { useHuntView } from "../features/chat/huntView";
 import { ClusterDashboard } from "../features/cluster/ClusterDashboard";
 import { BenchmarkDashboard } from "../features/benchmark/BenchmarkDashboard";
 import { ReportExportControls } from "../features/report/ExportReport";
@@ -139,6 +140,7 @@ function capEvents(evs: RTEvent[]): RTEvent[] {
 export function ProjectPage() {
   const { t, locale } = useT();
   const { id } = useParams();
+  const { setView } = useHuntView();
   const [project, setProject] = useState<Project | null>(null);
   const [graph, setGraph] = useState<Graph>(EMPTY);
   const [events, setEvents] = useState<RTEvent[]>([]);
@@ -153,6 +155,16 @@ export function ProjectPage() {
   const pendingEvs = useRef<RTEvent[]>([]);
   const flushRaf = useRef<number | null>(null);
   const needGraphRefetch = useRef(false);
+
+  useEffect(() => {
+    if (!id) {
+      setView(null);
+      return;
+    }
+    setView({ projectId: id, events, running });
+  }, [id, events, running, setView]);
+
+  useEffect(() => () => setView(null), [setView]);
 
   useEffect(() => {
     if (!id) return;
@@ -275,15 +287,21 @@ export function ProjectPage() {
     if (flushRaf.current != null) cancelAnimationFrame(flushRaf.current);
   }, []);
 
-  // 运行中兜底轮询：WS 丢包时关系图仍能跟上
+  // 打开页面就拉全图，并在猎面进行时补齐。项目详情里的图可能还是只有入口目标。
   useEffect(() => {
-    if (!id || !liveWs || !running || queued) return;
-    const t = setInterval(() => {
+    if (!id || !liveWs) return;
+    let stop = false;
+    const pull = () => {
       api.graph(id).then((g) => {
-        setGraph((prev) => keepLayoutIfUnchanged(prev, g));
+        if (!stop) setGraph((prev) => keepLayoutIfUnchanged(prev, g));
       }).catch(() => {});
-    }, 8000);
-    return () => clearInterval(t);
+    };
+    pull();
+    const t = setInterval(pull, running || queued ? 4000 : 12000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
   }, [id, liveWs, running, queued]);
 
   /** 默认续跑（保留攻击图）。重新开题才清图。 */
@@ -372,7 +390,7 @@ export function ProjectPage() {
 
   const isFlag = project.config?.objective === "flag" || project.config?.track === "ctf";
   const isSrc = !isFlag;
-  const visibleFindings = collectVulns(graph.findings, graph.nodes, { src: isSrc });
+  const visibleFindings = collectVulns(graph.findings, graph.nodes, { src: isSrc, linkedNodeKeys: graph.finding_node_keys });
   const reviewState = latestFindingReview(events);
   const reviewLive = reviewState;
   const visibleHigh = visibleFindings.filter(
@@ -519,6 +537,7 @@ export function ProjectPage() {
                 projectId={id!}
                 findings={graph.findings}
                 nodes={graph.nodes}
+                linkedNodeKeys={graph.finding_node_keys}
                 onSelectNode={onSelect}
                 src={isSrc}
                 review={reviewLive}

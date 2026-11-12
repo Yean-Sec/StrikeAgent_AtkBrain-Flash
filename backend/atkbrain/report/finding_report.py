@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..graph.model import display_finding_severity, redteam_rating_block
+from atkbrain_native import display_finding_severity, redteam_rating_block
 from .poc import poc_for_finding
 from .writeup import real_poc_text
 
@@ -77,8 +77,7 @@ def serialize_finding_full(row: Any, *, related_node: dict | None = None,
 
 
 def _verify_label(st: str | None, lang: str | None = None) -> str:
-    from ..i18n.locale import normalize_locale
-    from ..i18n.report_labels import lab
+    from atkbrain_native import lab, normalize_locale
     s = (st or "verified").lower()
     loc = normalize_locale(lang)
     extra = {
@@ -127,7 +126,7 @@ def _page_state(finding: dict) -> str:
     ready：二次已有结论。五段没落库时也展示验证写下的信息，不再盖成「正在撰写」。
     writing：二次还没有可展示的正文。
     """
-    from .pi_finding_page import has_pi_page
+    from .finding_page import has_page
     from ..review.flags import get_review_flags
 
     need_sec = bool(get_review_flags().get("secondary_verify", True))
@@ -135,7 +134,7 @@ def _page_state(finding: dict) -> str:
     failed = _secondary_failed(finding)
     if need_sec and not sec and not failed:
         return "pending"
-    if has_pi_page(finding) or ((sec or failed) and _has_verified_body(finding)):
+    if has_page(finding) or ((sec or failed) and _has_verified_body(finding)):
         return "ready"
     return "writing"
 
@@ -163,7 +162,7 @@ def prepare_finding_report(finding: dict, *, poc: dict | None = None, progress: 
 
     progress=failed：二次还没有任何正文、撰写也失败了，才显示撰写失败。
     """
-    from .pi_finding_page import FAILED_COPY, PENDING_COPY, WRITING_COPY
+    from .finding_page import FAILED_COPY, PENDING_COPY, WRITING_COPY
 
     out = dict(finding)
     _ = poc
@@ -235,7 +234,7 @@ def render_finding_markdown(
     progress: str | None = None,
 ) -> str:
     """单漏洞 Markdown：简介、危害、红队评级、手动复现、修复方式。"""
-    from ..i18n.locale import normalize_locale
+    from atkbrain_native import normalize_locale
     loc = normalize_locale(lang)
     heads = {
         "zh": {

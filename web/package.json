@@ -1,0 +1,22 @@
+{
+  "name": "atkbrain-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "test:anime": "node --experimental-strip-types lib/animeControl.test.ts"
+  },
+  "dependencies": {
+    "animejs": "^4.2.2",
+    "next": "^15.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "typescript": "^5.9.2"
+  }
+}

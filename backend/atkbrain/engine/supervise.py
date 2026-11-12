@@ -17,8 +17,8 @@ from urllib.parse import urlsplit
 from ..config import settings
 from ..db import db
 from ..events import emit
-from ..graph import store as gstore
-from ..graph.hypothesize import (
+import atkbrain_native as gstore
+from atkbrain_native import (
     LIVE_SURFACE_TACTICS,
     graph_has_unmounted_secret,
     live_gadget_tactics,
@@ -27,8 +27,8 @@ from ..graph.hypothesize import (
     plan_blocks_live_surface,
     surfaces_from_graph_nodes,
 )
-from ..graph.verify import is_non_exploit_finding_category
-from .advisor_bind import (
+from atkbrain_native import is_non_exploit_finding_category
+from atkbrain_native import (
     AdvisorBinding,
     CLOSEOUT_OVERRIDE,
     GADGET_KEEP,
@@ -47,7 +47,7 @@ from .advisor_bind import (
     starves_chain_close,
     tighten_binding,
 )
-from .advisor_schedule import should_review_advisor
+from atkbrain_native import should_review_advisor
 from .ai_supervisor import (
     SupervisorPlan,
     await_supervisor_plan,
@@ -617,7 +617,7 @@ def _internal_graph_hosts(graph: dict | None) -> set[str]:
     if not graph:
         return set()
     import ipaddress
-    from ..scope import _IP_RE, _norm_host, is_loopback, is_private
+    from atkbrain_native import _IP_RE, _norm_host, is_loopback, is_private
 
     def _host_from_key(key: str, *, prefixes: tuple[str, ...]) -> str:
         kid = str(key or "")
@@ -880,7 +880,7 @@ class LoopSupervisor:
     def _binding_graph_flags(
         self, graph: dict | None, *, correct_flags: int = 0, flag_count: int = 0,
     ) -> dict:
-        from ..objective import objective_allows_flag
+        from atkbrain_native import objective_allows_flag
         from .supervisor_brief import (
             needs_postex_pivot_guidance, pending_loot_internal_hosts,
             needs_proxy_auth_guidance,
@@ -1012,7 +1012,7 @@ class LoopSupervisor:
 
     def _apply_plan(self, plan: SupervisorPlan, *, repeats: list[str], invert_ops: bool = False, postex_pivot: bool = False, open_intents: list | None = None, bind_flags: dict | None = None) -> None:
         extra_parts: list[str] = []
-        from ..objective import objective_is_src
+        from atkbrain_native import objective_is_src
         cycle = objective_is_src(self.objective)
         flags = bind_flags or {}
         if invert_ops:
@@ -1082,7 +1082,7 @@ class LoopSupervisor:
         self.plan_exec_turns = 0
         if skip_close_guide:
             try:
-                from .advisor_bind import surface_false_close
+                from atkbrain_native import surface_false_close
                 if surface_false_close(raw_blob):
                     self.force_bundle_review = True
             except Exception:
@@ -1173,7 +1173,7 @@ class LoopSupervisor:
             nflags = 0
         quality = "none"
         if graph is not None and self.last_sig[0] >= 0:
-            quality = await gstore.quality_progress_delta(
+            quality = gstore.quality_progress_delta(
                 self.last_sig, (nodes, edges, findings, nflags), graph,
             )
         self.note_progress(
@@ -1184,11 +1184,11 @@ class LoopSupervisor:
 
     async def _note_redteam_empty_plan(self, quality: str) -> None:
         """红队：从者打完一轮后记御主方案空转；满 6 升圈。CTF / SRC 不走。"""
-        from ..objective import objective_allows_flag, objective_is_src
+        from atkbrain_native import objective_allows_flag, objective_is_src
         if objective_allows_flag(self.objective) or objective_is_src(self.objective):
             return
         from pathlib import Path
-        from .spiral import RING_LABELS, note_empty_plan
+        from atkbrain_native import RING_LABELS, note_empty_plan
         ws = Path(settings.workspaces_dir) / self.project_id
         grew = quality in ("flag", "finding", "capability_edge")
         infra = self.stall_class == "infra"
@@ -1341,9 +1341,9 @@ class LoopSupervisor:
         postex_pivot = False
         opens: list = []
         try:
-            from ..graph import store as gstore
+            import atkbrain_native as gstore
             from .supervisor_brief import needs_invert_ops_guidance, needs_postex_pivot_guidance
-            graph = await gstore.get_graph(self.project_id)
+            graph = gstore.get_graph(self.project_id)
             invert_ops = needs_invert_ops_guidance(graph=graph, claim_unverified=False)
             row = await db.fetchone("SELECT config FROM projects WHERE id=?", (self.project_id,))
             cfg = {}
@@ -1359,7 +1359,7 @@ class LoopSupervisor:
             )
             try:
                 opens = [
-                    it for it in await gstore.list_open_intents(self.project_id, limit=50)
+                    it for it in gstore.list_open_intents(self.project_id, limit=50)
                     if str(it.get("status") or "") != "deferred"
                 ]
             except Exception:
@@ -1421,7 +1421,7 @@ class LoopSupervisor:
 
         quality = "none"
         if graph is not None and self.last_sig[0] >= 0:
-            quality = await gstore.quality_progress_delta(
+            quality = gstore.quality_progress_delta(
                 self.last_sig, (nodes, edges, findings, flags), graph,
             )
         if record_progress:
@@ -1443,7 +1443,7 @@ class LoopSupervisor:
             self.human_override = False
 
         try:
-            from .scheduler import manager as run_manager
+            from atkbrain_native import hunt_manager as run_manager
             pending_human = run_manager.has_pending_human(self.project_id)
         except Exception:
             pending_human = False
@@ -1491,8 +1491,8 @@ class LoopSupervisor:
                         run_id=self.run_id,
                     )
                     try:
-                        from .advisor_bind import EXPLORE_REFRESH_TACTICS
-                        await gstore.reopen_advisor_deferred_tactics(
+                        from atkbrain_native import EXPLORE_REFRESH_TACTICS
+                        gstore.reopen_advisor_deferred_tactics(
                             self.project_id, EXPLORE_REFRESH_TACTICS,
                             run_id=self.run_id,
                         )
@@ -1526,7 +1526,7 @@ class LoopSupervisor:
                         if fam in protect:
                             continue
                         try:
-                            await gstore.defer_strategy_family(
+                            gstore.defer_strategy_family(
                                 self.project_id, fam,
                                 reason=f"advisor-bind deny family={fam}",
                                 run_id=self.run_id,
@@ -1841,7 +1841,7 @@ class LoopSupervisor:
         plan = None
         consult_error = ""
         obj = self.objective
-        from ..i18n.locale import config_output_lang
+        from atkbrain_native import config_output_lang
         olang = "zh"
         try:
             crow = await db.fetchone("SELECT config FROM projects WHERE id=?", (self.project_id,))
@@ -1897,9 +1897,9 @@ class LoopSupervisor:
 
         try:
             from pathlib import Path
-            from ..objective import objective_allows_flag
+            from atkbrain_native import objective_allows_flag
             if plan is not None and objective_allows_flag(self.objective):
-                from .spiral import load_ledger, scan_ban_repeats
+                from atkbrain_native import load_ledger, scan_ban_repeats
                 ws = Path(settings.workspaces_dir) / self.project_id
                 extra = scan_ban_repeats(load_ledger(ws), objective=self.objective)
                 plan.ban_repeats = list(dict.fromkeys(list(plan.ban_repeats or []) + extra))[:12]
@@ -2023,7 +2023,7 @@ class LoopSupervisor:
                 continue
             seen_fam.add(fam)
             try:
-                await gstore.defer_strategy_family(
+                gstore.defer_strategy_family(
                     self.project_id, fam,
                     reason=f"ai-supervisor defer family={fam}",
                     run_id=self.run_id,
@@ -2090,3 +2090,39 @@ class LoopSupervisor:
         )
         tacs = [t for t in tacs if t]
         return set(tacs) if tacs else None
+
+
+_CONSULT: dict[str, LoopSupervisor] = {}
+
+
+async def consult_after_turn(project_id: str, turn: int, summary: str, run_id: str) -> str:
+    """一轮打完后问御主。失败只返回空方案，不打断猎面。"""
+    from atkbrain_native import get_graph, get_project
+
+    project = get_project(project_id) or {}
+    graph = get_graph(project_id) or {}
+    stats = graph.get("stats") or {}
+    cfg = project.get("config") if isinstance(project.get("config"), dict) else {}
+    sup = _CONSULT.get(project_id)
+    if sup is None or sup.run_id != run_id:
+        sup = LoopSupervisor(
+            project_id=project_id,
+            run_id=run_id or "",
+            objective=str((cfg or {}).get("objective") or (cfg or {}).get("track") or "flag"),
+        )
+        _CONSULT[project_id] = sup
+    try:
+        await sup.evaluate(
+            nodes=int(stats.get("nodes") or 0),
+            edges=int(stats.get("edges") or 0),
+            findings=int(stats.get("findings") or 0),
+            flags=int(stats.get("flags") or 0),
+            graph=graph,
+            project=project,
+            brief=str((cfg or {}).get("brief") or ""),
+            last_turn_text=summary or "",
+            turn=int(turn or 0),
+        )
+    except Exception:
+        return ""
+    return str(sup.active_steer or "")

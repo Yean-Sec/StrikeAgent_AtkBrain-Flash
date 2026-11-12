@@ -170,7 +170,7 @@ def main() -> None:
         (
             70,
             310,
-            "Pi 与 MCP",
+            "Pi 扩展",
             "Pi runtime  控制台所选模型\n图工具  本机 HTTP 扩展\nrun_cmd / http_request / report_*",
         ),
         (

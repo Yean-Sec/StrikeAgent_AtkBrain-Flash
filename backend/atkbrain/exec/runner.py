@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 
 from ..config import settings
-from .guard import Guard, GuardDecision
+from atkbrain_native import Guard, GuardDecision
 
 _LIVE_CMDS: dict[int, str] = {}
 
@@ -76,7 +76,7 @@ async def run_shell(
     t0 = time.monotonic()
     env = None
     if extra_env or project_id:
-        from ..objective import objective_allows_flag
+        from atkbrain_native import objective_allows_flag
         if extra_env and objective_allows_flag(getattr(guard, "objective", None)):
             extra_env = None
     if extra_env or project_id:

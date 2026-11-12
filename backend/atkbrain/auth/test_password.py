@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from .password_policy import generate_bootstrap_password, password_policy_code
+from atkbrain_native import generate_bootstrap_password, password_policy_code
 
 
 class PolicyTests(unittest.TestCase):
@@ -29,37 +29,27 @@ class PolicyTests(unittest.TestCase):
 class BootstrapOnceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from ..db import db
-        from . import crypto
+        from atkbrain_native import auth_use_dir
 
         self.db = db
+        self._auth_use_dir = auth_use_dir
         self.td = tempfile.TemporaryDirectory()
         self.old_path = db.path
         self.old_conn = db._conn
         db._conn = None
         db.path = os.path.join(self.td.name, "auth-test.db")
         await db.connect()
-        self.old_priv = crypto._PRIV
-        self.old_hmac = crypto._HMAC
-        crypto._PRIV = None
-        crypto._HMAC = None
-        self.p1 = patch.object(crypto, "_key_path", lambda: Path(self.td.name) / "auth-rsa.pem")
-        self.p2 = patch.object(crypto, "_hmac_path", lambda: Path(self.td.name) / "auth-session.key")
-        self.p1.start()
-        self.p2.start()
+        self._auth_use_dir(self.td.name)
 
     async def asyncTearDown(self):
-        from . import crypto
-        self.p1.stop()
-        self.p2.stop()
-        crypto._PRIV = self.old_priv
-        crypto._HMAC = self.old_hmac
+        self._auth_use_dir("")
         await self.db.close()
         self.db.path = self.old_path
         self.db._conn = self.old_conn
         self.td.cleanup()
 
     async def test_consume_once(self):
-        from .crypto import hash_password
+        from atkbrain_native import hash_password
         from .store import consume_bootstrap_login, upsert_admin, user_by_id
 
         u = await upsert_admin("admin", hash_password("admin"))

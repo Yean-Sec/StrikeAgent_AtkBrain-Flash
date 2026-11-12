@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .llm_gateway import (
+from atkbrain_native import (
     apply_llm_gateway,
     apply_platform_env_aliases,
     gateway_enabled,
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     max_concurrency: int = 8                  # 默认展示：红队 5 + CTF 3 项目槽
     max_concurrency_cap: int = 40             # 红队 cap 20 + CTF cap 20
 
-    # 整机同时活着的 `pi --mode rpc`（含从者/工人/复核/御主一次性）。
+    # 整机同时活着的 Pi 进程（含从者/工人/复核/御主一次性）。
     pi_max_live: int = 32
     pi_max_live_cap: int = 96
     # 每个猎面：从者 + 工人。finding-review / 御主一次性另占全局闸，不算进这一项。
@@ -132,9 +132,8 @@ class Settings(BaseSettings):
     redteam_runtime_hard_stop_sec: int = 6 * 60 * 60  # 旧键，读入后并进 agent 钟
     entry_unreachable_yield_sec: int = 0
 
-    claude_model: str = "deepseek-flash"  # 历史名，与 pi_model 同义；控制台 pi-models.json 优先
+    claude_model: str = "deepseek-flash"  # 历史名。只在 Pi 模型仍是内置值时当种子
     claude_fallback_model: str = "deepseek-flash"
-    claude_bin: str = os.environ.get("ATKBRAIN_PI_BIN", os.environ.get("ATKBRAIN_CLAUDE_BIN", "pi"))
     pi_bin: str = os.environ.get("ATKBRAIN_PI_BIN", "pi")
     pi_provider: str = os.environ.get("ATKBRAIN_PI_PROVIDER", "deepseek")
     pi_model: str = os.environ.get("ATKBRAIN_PI_MODEL", "deepseek-flash")

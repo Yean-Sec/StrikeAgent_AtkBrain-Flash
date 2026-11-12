@@ -9,13 +9,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..config import settings
-from ..i18n.strings import msg
+from atkbrain_native import msg
 from .bootstrap import (
     login_required,
     write_bootstrap_secret,
 )
 from .cookies import apply_session_cookie, clear_session_cookie
-from .crypto import (
+from atkbrain_native import (
     decrypt_password_blob,
     dummy_verify,
     hash_password,
@@ -24,7 +24,7 @@ from .crypto import (
     verify_password,
 )
 from .gate import auth_ok, client_ip, origin_ok, session_from_request
-from .password_policy import generate_bootstrap_password, password_policy_code
+from atkbrain_native import generate_bootstrap_password, password_policy_code
 from .rate import assert_not_locked, clear_fails, record_login_fail
 from .store import (
     consume_bootstrap_login,

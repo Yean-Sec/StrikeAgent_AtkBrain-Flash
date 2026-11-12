@@ -1,7 +1,7 @@
 """托管运行：容器启动后自行拉题开打。"""
 from __future__ import annotations
 
-from .llm_gateway import hosted_enabled
+from atkbrain_native import hosted_enabled
 
 
 def hosted_focus_codes() -> list[str]:
@@ -25,16 +25,16 @@ async def _apply_focus_to_parent(parent_id: str) -> None:
     focus = hosted_focus_codes()
     if not focus:
         return
-    from .projects import get_project, update_config
+    from atkbrain_native import get_project, update_config
 
-    parent = await get_project(parent_id)
+    parent = get_project(parent_id)
     if not parent:
         return
     cfg = dict(parent.get("config") or {})
     if parse_focus_equal(cfg.get("focus_codes"), focus):
         return
     cfg["focus_codes"] = focus
-    await update_config(parent_id, cfg)
+    update_config(parent_id, cfg)
     print(f"[startup] hosted：限题 {len(focus)} 道 unique_code")
 
 
@@ -50,7 +50,7 @@ async def ensure_hosted_benchmark() -> dict | None:
         return None
     from .config import settings
     from .db import db
-    from .projects import create_benchmark_project
+    from atkbrain_native import create_benchmark_project
 
     base = (settings.benchmark_base_url or "").strip()
     token = (settings.benchmark_token or "").strip()
@@ -69,7 +69,7 @@ async def ensure_hosted_benchmark() -> dict | None:
         print(f"[startup] hosted：复用评测项目 {pid}")
         return None
     extra = hosted_parent_extra()
-    proj = await create_benchmark_project(
+    proj = create_benchmark_project(
         "StrikeAgent_AtkBrain-Flash",
         base,
         token,

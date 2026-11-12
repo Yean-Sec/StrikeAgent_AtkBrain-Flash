@@ -1,6 +1,7 @@
 # runtime: projects, loot, reports, sqlite, logs, local secrets
 backend/data/
 backend/data/**
+backend/backend/
 *.db
 *.db-wal
 *.db-shm
@@ -11,7 +12,18 @@ atkbrain-claude.env
 **/*.env
 !**/.env.example
 **/*.pem
+**/*.key
 admin_bootstrap.secret
+security_entry
+pi-models.json
+harness-models.json
+
+# rust extension build
+rust/target/
+**/*.rlib
+**/*.so
+**/*.dylib
+backend/atkbrain_native.so
 
 # python / node
 __pycache__/
@@ -23,6 +35,9 @@ backend/.pytest_cache/
 .pytest_cache/
 frontend/node_modules/
 frontend/dist/
+web/node_modules/
+web/.next/
+web/out/
 frontend/*.tsbuildinfo
 
 # local IDE / debug

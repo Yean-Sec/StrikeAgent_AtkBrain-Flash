@@ -4,9 +4,9 @@ from __future__ import annotations
 import unittest
 
 from ..agents.context import AgentContext
-from ..exec.guard import Guard, target_destructive_reason
-from ..projects import assert_safe_project_target
-from ..scope import Scope, sensitive_attack_reason, sensitive_domain_reason
+from atkbrain_native import Guard, target_destructive_reason
+from atkbrain_native import assert_safe_project_target
+from atkbrain_native import Scope, sensitive_attack_reason, sensitive_domain_reason
 
 
 def _scope() -> Scope:

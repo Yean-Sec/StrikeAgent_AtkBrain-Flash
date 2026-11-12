@@ -17,7 +17,7 @@ from .auth.routes import router as auth_router
 from .config import REPO_ROOT, settings
 from .db import db, now
 from .app_version import local_version
-from .i18n.locale import locale_from_request, set_locale
+from atkbrain_native import locale_from_request, set_locale
 
 
 def _raise_nofile_limit() -> None:
@@ -63,12 +63,12 @@ async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     _raise_nofile_limit()
     try:
-        from .agents.pi_runtime import ensure_pi_agent_dir
+        from atkbrain_native import ensure_pi_agent_dir
         ensure_pi_agent_dir()
     except Exception as e:
         print(f"[startup] 写入 Pi 配置失败：{e}")
     try:
-        from .engine.hunt_clock_settings import apply_hunt_clocks_to_settings
+        from atkbrain_native import apply_hunt_clocks_to_settings
         apply_hunt_clocks_to_settings()
     except Exception as e:
         print(f"[startup] 猎面撞墙钟读取失败：{e}")
@@ -88,15 +88,15 @@ async def lifespan(app: FastAPI):
     ]
     await db.execute("UPDATE runs SET status='stopped', ended_at=? WHERE status='running'", (now(),))
     try:
-        from .projects import unstick_transient_resource_errors
-        n = await unstick_transient_resource_errors()
+        from atkbrain_native import unstick_transient_resource_errors
+        n = unstick_transient_resource_errors()
         if n:
             print(f"[startup] 已将 {n} 个资源抖动误标 error 的项目改回 idle")
     except Exception as e:
         print(f"[startup] 解开资源误标失败，跳过：{e}")
     try:
-        from .projects import reclassify_hunt_failures
-        n = await reclassify_hunt_failures()
+        from atkbrain_native import reclassify_hunt_failures
+        n = reclassify_hunt_failures()
         if n:
             print(f"[startup] 已将 {n} 个图空转/硬停项目改记失败")
     except Exception as e:
@@ -111,7 +111,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[startup] 安全入口打印失败：{e}")
     try:
-        from .agents.brief_creds import CREDS_MODE
+        from atkbrain_native import CREDS_MODE
         print(f"[startup] creds_mode={CREDS_MODE}（只摘录已出现账密，不合成厂商默认口令）")
     except Exception as e:
         print(f"[startup] creds_mode 打印失败：{e}")
@@ -121,11 +121,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[startup] hosted 自动建评测项目失败：{e}")
     try:
-        from .engine.hunt_resume import start_saved_hunts
-        from .engine.scheduler import manager as _run_manager
-        resumed = await start_saved_hunts(_run_manager, db_running)
-        from .engine.hunt_resume import resume_queued
-        queued_n = await resume_queued(_run_manager)
+        from atkbrain_native import hunt_manager as _run_manager
+        resumed = _run_manager.start_saved_hunts(db_running)
+        queued_n = _run_manager.resume_queued()
         if queued_n:
             print(f"[startup] 按提交顺序恢复 {queued_n} 个排队项目")
         if resumed:
@@ -162,14 +160,12 @@ async def lifespan(app: FastAPI):
     yield
     autopilot_task.cancel()
     try:
-        from .engine.hunt_resume import save_resume_ids
-        from .engine.scheduler import manager as _run_manager
+        from atkbrain_native import hunt_manager as _run_manager
         _run_manager.shutting_down = True
         live = list((_run_manager.snapshot().get("running") or []))
         if live:
-            save_resume_ids(live)
             print(f"[shutdown] 记下 {len(live)} 个在跑项目，下次启动续跑")
-        await _run_manager.checkpoint_for_shutdown(timeout=8.0)
+        _run_manager.checkpoint_for_shutdown(timeout=8.0)
     except Exception as e:
         print(f"[shutdown] 记录续跑清单失败：{e}")
     await db.close()
